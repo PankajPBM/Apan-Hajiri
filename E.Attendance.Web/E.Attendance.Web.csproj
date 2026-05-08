@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\E.Attendance.Core\E.Attendance.Core.csproj" />
+    <ProjectReference Include="..\E.Attendance.Data\E.Attendance.Data.csproj" />
+    <ProjectReference Include="..\E.Attendance.Services\E.Attendance.Services.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.3.0" />
+    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="8.0.1" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>..\icon\E_Att.ico</ApplicationIcon>
+    <FrontendExportDir>..\pb-attendance-next\out</FrontendExportDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Update="wwwroot\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
+    </Content>
+    <Content Update="appsettings*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
+  <Target Name="SyncBundledFrontend" BeforeTargets="PrepareForBuild;ComputeFilesToPublish" Condition="Exists('$(MSBuildProjectDirectory)\$(FrontendExportDir)\index.html')">
+    <ItemGroup>
+      <BundledFrontendFiles Include="$(MSBuildProjectDirectory)\$(FrontendExportDir)\**\*" />
+    </ItemGroup>
+
+    <Message Importance="High" Text="Syncing bundled frontend from $(FrontendExportDir) to wwwroot." />
+    <Copy
+      SourceFiles="@(BundledFrontendFiles)"
+      DestinationFiles="@(BundledFrontendFiles->'$(MSBuildProjectDirectory)\wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="false"
+      OverwriteReadOnlyFiles="true" />
+  </Target>
+
+</Project>

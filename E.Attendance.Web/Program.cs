@@ -75,8 +75,8 @@ var deviceAllowUnknownEmployeeAutoCreate = builder.Configuration.GetValue<bool?>
 var personnelPath = Path.Combine(appDataRoot, "personnel.json");
 
 var repository = new PostgresAttendanceRepository(postgresConnectionString);
-var service = new AttendanceService(repository);
 var protocolService = new DeviceProtocolService();
+var service = new AttendanceService(repository, protocolService);
 var personnelStore = LoadPersonnelStoreFromDb(postgresConnectionString);
 if (IsPersonnelStoreEmpty(personnelStore) && File.Exists(personnelPath))
 {
@@ -257,6 +257,7 @@ app.Use(async (context, next) =>
 });
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapGet("/api-config.json", () => Results.Json(new { apiPort = settings.Port, webPort = settings.FrontendPort }));
 app.Use(async (context, next) =>
 {
     await next();

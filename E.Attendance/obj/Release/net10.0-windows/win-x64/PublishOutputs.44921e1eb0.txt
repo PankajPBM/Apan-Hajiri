@@ -1,0 +1,6 @@
+D:\pankaj\project\e-attendance\artifacts\single-exe\E.Attendance.Controller\appsettings.json
+D:\pankaj\project\e-attendance\artifacts\single-exe\E.Attendance.Controller\bs-calendar-map.json
+D:\pankaj\project\e-attendance\artifacts\single-exe\E.Attendance.Controller\E.Attendance.Core.pdb
+D:\pankaj\project\e-attendance\artifacts\single-exe\E.Attendance.Controller\E.Attendance.Services.pdb
+D:\pankaj\project\e-attendance\artifacts\single-exe\E.Attendance.Controller\E.Attendance.Data.pdb
+D:\pankaj\project\e-attendance\artifacts\single-exe\E.Attendance.Controller\E.Attendance.exe

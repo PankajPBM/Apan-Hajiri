@@ -1,0 +1,1146 @@
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\app.js.gz
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\styles.css.gz
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\index.html.gz
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\app.js
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\index.html
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\styles.css
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\appsettings.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.staticwebassets.runtime.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.staticwebassets.endpoints.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.exe
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.deps.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.runtimeconfig.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.pdb
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\HealthChecks.NpgSql.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\DocumentFormat.OpenXml.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\DocumentFormat.OpenXml.Framework.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Humanizer.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.Framework.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.Tasks.Core.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.Utilities.Core.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.CSharp.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.CSharp.Workspaces.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.Workspaces.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.ExternalAccess.RazorCompiler.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.Workspaces.MSBuild.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Data.Sqlite.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Abstractions.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Design.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Relational.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Sqlite.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Extensions.DependencyModel.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.NET.StringTools.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.OpenApi.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Mono.TextTemplating.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Newtonsoft.Json.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Npgsql.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Npgsql.EntityFrameworkCore.PostgreSQL.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.AspNetCore.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Extensions.Hosting.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Extensions.Logging.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Formatting.Compact.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Settings.Configuration.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Sinks.Console.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Sinks.Debug.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Sinks.File.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\SQLitePCLRaw.batteries_v2.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\SQLitePCLRaw.core.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\SQLitePCLRaw.provider.e_sqlite3.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Swashbuckle.AspNetCore.Swagger.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerGen.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerUI.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.CodeDom.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.AttributedModel.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.Convention.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.Hosting.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.Runtime.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.TypedParts.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Configuration.ConfigurationManager.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Formats.Nrbf.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.IO.Packaging.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Reflection.MetadataLoadContext.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Resources.Extensions.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Security.Cryptography.ProtectedData.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Security.Permissions.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Windows.Extensions.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\browser-wasm\nativeassets\net9.0\e_sqlite3.a
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-arm\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-arm64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-armel\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-mips64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-arm\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-arm64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-riscv64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-s390x\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-x64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-ppc64le\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-riscv64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-s390x\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-x64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-x86\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\maccatalyst-arm64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\maccatalyst-x64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\osx-arm64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\osx-x64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-arm\native\e_sqlite3.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-arm64\native\e_sqlite3.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-x64\native\e_sqlite3.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-x86\native\e_sqlite3.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win\lib\net9.0\System.Windows.Extensions.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Core.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Data.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Services.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Core.pdb
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Data.pdb
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Services.pdb
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.csproj.AssemblyReference.cache
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rpswa.dswa.cache.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.GeneratedMSBuildEditorConfig.editorconfig
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.AssemblyInfoInputs.cache
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.AssemblyInfo.cs
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.csproj.CoreCompileInputs.cache
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.MvcApplicationPartsAssemblyInfo.cs
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.MvcApplicationPartsAssemblyInfo.cache
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rjimswa.dswa.cache.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rjsmrazor.dswa.cache.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rjsmcshtml.dswa.cache.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\scopedcss\bundle\PB.Attendance.Web.styles.css
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\3vj1if9wl5-{0}-5xw3b6x7uy-5xw3b6x7uy.gz
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\xh0qdepvmp-{0}-gynmebinha-gynmebinha.gz
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\epcderzy2z-{0}-ygkl6d7a1r-ygkl6d7a1r.gz
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.build.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.build.json.cache
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.development.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.build.endpoints.json
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\swae.build.ex.cache
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.upToDateCheck.txt
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Atten.AA45FCBE.Up2Date
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\refint\PB.Attendance.Web.dll
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.pdb
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.genruntimeconfig.cache
+D:\Pankaj\Project\PB Attendance\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\ref\PB.Attendance.Web.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\app.js.gz
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\styles.css.gz
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\index.html.gz
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\app.js
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\index.html
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\styles.css
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\appsettings.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.staticwebassets.endpoints.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.staticwebassets.runtime.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.exe
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.deps.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.runtimeconfig.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.pdb
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\HealthChecks.NpgSql.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\DocumentFormat.OpenXml.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\DocumentFormat.OpenXml.Framework.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Humanizer.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.Framework.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.Tasks.Core.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.Utilities.Core.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.CSharp.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.CSharp.Workspaces.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.Workspaces.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.ExternalAccess.RazorCompiler.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.Workspaces.MSBuild.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Data.Sqlite.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Abstractions.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Design.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Relational.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Sqlite.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Extensions.DependencyModel.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.NET.StringTools.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.OpenApi.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Mono.TextTemplating.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Newtonsoft.Json.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Npgsql.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Npgsql.EntityFrameworkCore.PostgreSQL.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.AspNetCore.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Extensions.Hosting.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Extensions.Logging.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Formatting.Compact.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Settings.Configuration.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Sinks.Console.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Sinks.Debug.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Sinks.File.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\SQLitePCLRaw.batteries_v2.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\SQLitePCLRaw.core.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\SQLitePCLRaw.provider.e_sqlite3.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Swashbuckle.AspNetCore.Swagger.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerGen.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerUI.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.CodeDom.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.AttributedModel.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.Convention.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.Hosting.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.Runtime.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.TypedParts.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Configuration.ConfigurationManager.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Formats.Nrbf.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.IO.Packaging.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Reflection.MetadataLoadContext.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Resources.Extensions.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Security.Cryptography.ProtectedData.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Security.Permissions.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Windows.Extensions.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\browser-wasm\nativeassets\net9.0\e_sqlite3.a
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-arm\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-arm64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-armel\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-mips64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-arm\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-arm64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-riscv64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-s390x\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-x64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-ppc64le\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-riscv64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-s390x\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-x64\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-x86\native\libe_sqlite3.so
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\maccatalyst-arm64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\maccatalyst-x64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\osx-arm64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\osx-x64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-arm\native\e_sqlite3.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-arm64\native\e_sqlite3.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-x64\native\e_sqlite3.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-x86\native\e_sqlite3.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win\lib\net9.0\System.Windows.Extensions.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Core.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Data.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Services.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Core.pdb
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Data.pdb
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Services.pdb
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.csproj.AssemblyReference.cache
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rpswa.dswa.cache.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.GeneratedMSBuildEditorConfig.editorconfig
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.AssemblyInfoInputs.cache
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.AssemblyInfo.cs
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.csproj.CoreCompileInputs.cache
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.MvcApplicationPartsAssemblyInfo.cs
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.MvcApplicationPartsAssemblyInfo.cache
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rjimswa.dswa.cache.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rjsmrazor.dswa.cache.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rjsmcshtml.dswa.cache.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\scopedcss\bundle\PB.Attendance.Web.styles.css
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\3vj1if9wl5-{0}-5xw3b6x7uy-5xw3b6x7uy.gz
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\xh0qdepvmp-{0}-gynmebinha-gynmebinha.gz
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\epcderzy2z-{0}-ygkl6d7a1r-ygkl6d7a1r.gz
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.build.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.build.json.cache
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.development.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.build.endpoints.json
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\swae.build.ex.cache
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.upToDateCheck.txt
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Atten.AA45FCBE.Up2Date
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\refint\PB.Attendance.Web.dll
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.pdb
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.genruntimeconfig.cache
+D:\Pankaj\Project\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\ref\PB.Attendance.Web.dll
+D:\Pankaj\Project\P\PBBuildCheck\wwwroot\app.js
+D:\Pankaj\Project\P\PBBuildCheck\wwwroot\index.html
+D:\Pankaj\Project\P\PBBuildCheck\wwwroot\styles.css
+D:\Pankaj\Project\P\PBBuildCheck\appsettings.json
+D:\Pankaj\Project\P\PBBuildCheck\PB.Attendance.Web.staticwebassets.runtime.json
+D:\Pankaj\Project\P\PBBuildCheck\PB.Attendance.Web.staticwebassets.endpoints.json
+D:\Pankaj\Project\P\PBBuildCheck\PB.Attendance.Web.deps.json
+D:\Pankaj\Project\P\PBBuildCheck\PB.Attendance.Web.runtimeconfig.json
+D:\Pankaj\Project\P\PBBuildCheck\PB.Attendance.Web.dll
+D:\Pankaj\Project\P\PBBuildCheck\PB.Attendance.Web.pdb
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next.!KGRhc2hib2FyZCk\leaves\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next.!KGRhc2hib2FyZCk\logs.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next.!KGF1dGgp\login\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next.!KGRhc2hib2FyZCk\devices.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next.!KGRhc2hib2FyZCk\setup.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next.!KGRhc2hib2FyZCk\employees.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next.!KGRhc2hib2FyZCk\employees\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next.!KGRhc2hib2FyZCk\logs\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next.!KGRhc2hib2FyZCk\notifications.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next.!KGRhc2hib2FyZCk\shifts\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\ddd0aadb03882a1e.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next.!KGRhc2hib2FyZCk\leaves.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\4cdb1479783849d3.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next.!KGRhc2hib2FyZCk\settings\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next.!KGRhc2hib2FyZCk\reports\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\404\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next.!KGRhc2hib2FyZCk\devices\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\a6dad97d9634a72d.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next.!KGRhc2hib2FyZCk\reports.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\404.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\82abf2d65f5428ae.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next.!KGRhc2hib2FyZCk\settings.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\turbopack-7d5090a425800f71.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\ff1a16fafef87110.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next.!KGRhc2hib2FyZCk\notifications\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\d59f830a2b8e768c.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next.!KGRhc2hib2FyZCk\setup\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next.!KGRhc2hib2FyZCk\departments.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next.!KGRhc2hib2FyZCk\departments\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\76294240183e6582.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._not-found.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next.!KGRhc2hib2FyZCk\shifts.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\f2f58a7e93290fbb.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next.!KGRhc2hib2FyZCk\attendance.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._not-found\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next.!KGF1dGgp.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\28acffc9b64ec068.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next.!KGF1dGgp\login.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next.!KGRhc2hib2FyZCk\attendance\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\a6dad97d9634a72d.js.map.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next.!KGRhc2hib2FyZCk\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\404.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\404\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next.!KGRhc2hib2FyZCk\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\28acffc9b64ec068.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\4cdb1479783849d3.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\76294240183e6582.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\82abf2d65f5428ae.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\a6dad97d9634a72d.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\a6dad97d9634a72d.js.map
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\d59f830a2b8e768c.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\ddd0aadb03882a1e.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\f2f58a7e93290fbb.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\ff1a16fafef87110.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\turbopack-7d5090a425800f71.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._not-found.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._not-found\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_not-found\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next.!KGRhc2hib2FyZCk\attendance.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next.!KGRhc2hib2FyZCk\attendance\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\attendance\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next.!KGRhc2hib2FyZCk\departments.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next.!KGRhc2hib2FyZCk\departments\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\departments\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next.!KGRhc2hib2FyZCk\devices.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next.!KGRhc2hib2FyZCk\devices\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\devices\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next.!KGRhc2hib2FyZCk\employees.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next.!KGRhc2hib2FyZCk\employees\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\employees\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next.!KGRhc2hib2FyZCk\leaves.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next.!KGRhc2hib2FyZCk\leaves\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\leaves\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next.!KGF1dGgp.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next.!KGF1dGgp\login.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next.!KGF1dGgp\login\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\login\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next.!KGRhc2hib2FyZCk\logs.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next.!KGRhc2hib2FyZCk\logs\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logs\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next.!KGRhc2hib2FyZCk\notifications.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next.!KGRhc2hib2FyZCk\notifications\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\notifications\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next.!KGRhc2hib2FyZCk\reports.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next.!KGRhc2hib2FyZCk\reports\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\reports\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next.!KGRhc2hib2FyZCk\settings.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next.!KGRhc2hib2FyZCk\settings\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\settings\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next.!KGRhc2hib2FyZCk\setup.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next.!KGRhc2hib2FyZCk\setup\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\setup\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next.!KGRhc2hib2FyZCk\shifts.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next.!KGRhc2hib2FyZCk\shifts\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shifts\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\appsettings.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.staticwebassets.runtime.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.staticwebassets.endpoints.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.exe
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.deps.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.runtimeconfig.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Web.pdb
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\HealthChecks.NpgSql.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\DocumentFormat.OpenXml.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\DocumentFormat.OpenXml.Framework.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Humanizer.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.Framework.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.Tasks.Core.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Build.Utilities.Core.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.CSharp.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.CSharp.Workspaces.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.Workspaces.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.ExternalAccess.RazorCompiler.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.CodeAnalysis.Workspaces.MSBuild.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Data.Sqlite.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Abstractions.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Design.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Relational.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.EntityFrameworkCore.Sqlite.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.Extensions.DependencyModel.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.NET.StringTools.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Microsoft.OpenApi.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Mono.TextTemplating.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Newtonsoft.Json.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Npgsql.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Npgsql.EntityFrameworkCore.PostgreSQL.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.AspNetCore.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Extensions.Hosting.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Extensions.Logging.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Formatting.Compact.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Settings.Configuration.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Sinks.Console.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Sinks.Debug.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Serilog.Sinks.File.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\SQLitePCLRaw.batteries_v2.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\SQLitePCLRaw.core.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\SQLitePCLRaw.provider.e_sqlite3.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Swashbuckle.AspNetCore.Swagger.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerGen.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerUI.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.CodeDom.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.AttributedModel.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.Convention.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.Hosting.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.Runtime.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Composition.TypedParts.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Configuration.ConfigurationManager.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Formats.Nrbf.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.IO.Packaging.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Reflection.MetadataLoadContext.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Resources.Extensions.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Security.Cryptography.ProtectedData.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Security.Permissions.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\System.Windows.Extensions.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.CSharp.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.Workspaces.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\cs\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\de\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\es\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\fr\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\it\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ja\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ko\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pl\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\pt-BR\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\ru\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\tr\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hans\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\zh-Hant\Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\browser-wasm\nativeassets\net9.0\e_sqlite3.a
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-arm\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-arm64\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-armel\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-mips64\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-arm\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-arm64\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-riscv64\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-s390x\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-musl-x64\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-ppc64le\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-riscv64\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-s390x\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-x64\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\linux-x86\native\libe_sqlite3.so
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\maccatalyst-arm64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\maccatalyst-x64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\osx-arm64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\osx-x64\native\libe_sqlite3.dylib
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-arm\native\e_sqlite3.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-arm64\native\e_sqlite3.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-x64\native\e_sqlite3.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win-x86\native\e_sqlite3.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\runtimes\win\lib\net9.0\System.Windows.Extensions.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Core.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Data.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Services.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Core.pdb
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Data.pdb
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\PB.Attendance.Services.pdb
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.csproj.AssemblyReference.cache
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rpswa.dswa.cache.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.GeneratedMSBuildEditorConfig.editorconfig
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.AssemblyInfoInputs.cache
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.AssemblyInfo.cs
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.csproj.CoreCompileInputs.cache
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.MvcApplicationPartsAssemblyInfo.cs
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.MvcApplicationPartsAssemblyInfo.cache
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rjimswa.dswa.cache.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rjsmrazor.dswa.cache.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\rjsmcshtml.dswa.cache.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\scopedcss\bundle\PB.Attendance.Web.styles.css
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\yg3883p5g2-{0}-gtt3og2jd8-gtt3og2jd8.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\gx0vx2sz5p-{0}-old01zl7ca-old01zl7ca.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\ukx7wg6nd3-{0}-5bxxbs2b42-5bxxbs2b42.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\ogykby0kgz-{0}-zu2hsrze7j-zu2hsrze7j.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\n5kon6y8vu-{0}-zhv6gihoa8-zhv6gihoa8.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\z9ks4t0tr1-{0}-yj45phdaxp-yj45phdaxp.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\refcl7bd9l-{0}-tboro2smzo-tboro2smzo.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\gcfipms4e5-{0}-l47pmtjyns-l47pmtjyns.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\wczqh5oc4b-{0}-aopdsh0eac-aopdsh0eac.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\qkaby8qbn7-{0}-l1jy8bh3eu-l1jy8bh3eu.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\pv5khjoyzu-{0}-r3daktzmbq-r3daktzmbq.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.build.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.build.json.cache
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.development.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\staticwebassets.build.endpoints.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\swae.build.ex.cache
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Atten.AA45FCBE.Up2Date
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\refint\PB.Attendance.Web.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.pdb
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\PB.Attendance.Web.genruntimeconfig.cache
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\ref\PB.Attendance.Web.dll
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\883896d63438e796.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\883896d63438e796.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\t91ah8fbiw-{0}-yli7salfgg-yli7salfgg.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\823f1b23f580edcd.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\6ad77616f626ec16.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\31270fa867245902.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\d261ecb19090b112.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\46b334ca3410349e.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next.!KGRhc2hib2FyZCk\shift\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next.!KGRhc2hib2FyZCk\assign.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\f80fc903108a1619.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\a17a74ba7f179a43.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\5e18d748346f522f.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\d032e5d1b9eeda6f.css.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\1932a1cfbee0296f.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\72dd279c5dc8886d.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next.!KGRhc2hib2FyZCk\assign\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next.!KGRhc2hib2FyZCk\timetable\__PAGE__.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\46f98fa8486261d1.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\f8f7264859423721.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next.!KGRhc2hib2FyZCk\shift.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next._full.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\27c2e012fc94318c.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\85e98f53e4c24200.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\1HdZQoeCUHbuG0--fbLXh\_ssgManifest.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logo_pb.ico.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\6268bb87a75e263a.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\f9a4eca87e75a791.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\3da05cf9b7957639.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\672c9b7d9bbf73c7.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next.!KGRhc2hib2FyZCk\timetable.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\1HdZQoeCUHbuG0--fbLXh\_buildManifest.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next.!KGRhc2hib2FyZCk.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\index.html.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\1HdZQoeCUHbuG0--fbLXh\_clientMiddlewareManifest.json.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next._tree.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\10050b64c9eebd37.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next._head.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next._index.txt.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\11ce8fb18ba3cc62.js.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\1HdZQoeCUHbuG0--fbLXh\_buildManifest.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\1HdZQoeCUHbuG0--fbLXh\_clientMiddlewareManifest.json
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\1HdZQoeCUHbuG0--fbLXh\_ssgManifest.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\10050b64c9eebd37.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\11ce8fb18ba3cc62.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\1932a1cfbee0296f.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\27c2e012fc94318c.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\31270fa867245902.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\3da05cf9b7957639.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\46b334ca3410349e.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\46f98fa8486261d1.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\5e18d748346f522f.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\6268bb87a75e263a.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\672c9b7d9bbf73c7.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\6ad77616f626ec16.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\72dd279c5dc8886d.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\823f1b23f580edcd.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\85e98f53e4c24200.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\a17a74ba7f179a43.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\d032e5d1b9eeda6f.css
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\d261ecb19090b112.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\f80fc903108a1619.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\f8f7264859423721.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\_next\static\chunks\f9a4eca87e75a791.js
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next.!KGRhc2hib2FyZCk\assign.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next.!KGRhc2hib2FyZCk\assign\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\assign\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\logo_pb.ico
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next.!KGRhc2hib2FyZCk\shift.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next.!KGRhc2hib2FyZCk\shift\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\shift\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next.!KGRhc2hib2FyZCk.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next.!KGRhc2hib2FyZCk\timetable.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next.!KGRhc2hib2FyZCk\timetable\__PAGE__.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next._full.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next._head.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next._index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\__next._tree.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\index.html
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\bin\Debug\net10.0\wwwroot\timetable\index.txt
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\o8szoulb7q-{0}-br1l318jlh-br1l318jlh.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\kbd186wofx-{0}-br1l318jlh-br1l318jlh.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\w8x8phlqn5-{0}-cm31ulmhuu-cm31ulmhuu.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\5prs60plby-{0}-xw8ggjsi59-xw8ggjsi59.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\vqnpkbpvc0-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\85imd35alw-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\c68swutev2-{0}-z1ytsi07dg-z1ytsi07dg.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\bhmh5zgpr7-{0}-xw8ggjsi59-xw8ggjsi59.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\ygthojq0it-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\ewmd2p8vxc-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\rpweqqqqfj-{0}-v73kxkspeo-v73kxkspeo.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\2lyc2oxnve-{0}-e7xpzfqqzr-e7xpzfqqzr.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\4u7xufwb4x-{0}-ycmegfuxww-ycmegfuxww.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\zfpv6ckvyu-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\we9d1kqheb-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\yrp73y69wv-{0}-be5427we5a-be5427we5a.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\isvbzfx4i0-{0}-ycmegfuxww-ycmegfuxww.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\8tvq2w1ava-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\wf4xl2w3lg-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\76po1935p4-{0}-kzn8xj3cv8-kzn8xj3cv8.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\964ly3vs1q-{0}-y1n95lhr4c-y1n95lhr4c.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\v7opf2ybzp-{0}-194tvztx9w-194tvztx9w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\022alsremt-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\suu0gabmxy-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\sz1kzob27z-{0}-cb8k6dqcv2-cb8k6dqcv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\x88bnai1ma-{0}-194tvztx9w-194tvztx9w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\wy8esjkg3o-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\r62poq5m9o-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\iz7vrcbeu8-{0}-wloztmplxm-wloztmplxm.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\o0n0bsbjio-{0}-awzfdhdhi5-awzfdhdhi5.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\mzxmsbwxut-{0}-gcitv9b41u-gcitv9b41u.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\pwgvi77lwq-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\6p2kbdumtb-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\n4v8qy76gy-{0}-zl1co1kgok-zl1co1kgok.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\kd31bkrei0-{0}-gcitv9b41u-gcitv9b41u.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\6kk5xnucir-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\67ae6z13s7-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\thy9cx7ur8-{0}-22ui1k0iy7-22ui1k0iy7.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\sbco1y00r3-{0}-02k6hfo0w5-02k6hfo0w5.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\iej36w5knz-{0}-rxzl7nmvuk-rxzl7nmvuk.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\cvbjy6o5c4-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\bxvdwl1kjn-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\cjqmiee8rd-{0}-0rrbzbc77r-0rrbzbc77r.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\7s31g9406a-{0}-rxzl7nmvuk-rxzl7nmvuk.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\hc8c37iyk2-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\jmp78cmyxn-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\2mwnudxywj-{0}-3pjxqlto77-3pjxqlto77.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\xh0qdepvmp-{0}-ro8ld615m4-ro8ld615m4.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\vuuwe6yqds-{0}-weo78zjxki-weo78zjxki.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\vwop43hswe-{0}-btq929a2xj-btq929a2xj.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\3zi30dr9dj-{0}-fvmb9n0g63-fvmb9n0g63.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\2nnta2jvm6-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\gei6v0mtzr-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\07iyfcmbxf-{0}-yst5prtgck-yst5prtgck.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\0ei7yxa8qi-{0}-fvmb9n0g63-fvmb9n0g63.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\4x5i3a080u-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\vp5hst9huz-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\j1k71rzngj-{0}-2rx4da3yvy-2rx4da3yvy.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\85sasjsiwm-{0}-ju117p86w5-ju117p86w5.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\8vz3bvxoiz-{0}-q2x976i6vh-q2x976i6vh.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\xwmlc5srz2-{0}-qcrp2foxxr-qcrp2foxxr.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\yp052fmxd9-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\0z0f1i9wmc-{0}-mxp2uf7w82-mxp2uf7w82.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\xc6fvhw8m2-{0}-q2x976i6vh-q2x976i6vh.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\5oj01zck5q-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\5xen6ra8dg-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\hgqzrzvmq2-{0}-isg7l28mzk-isg7l28mzk.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\onxtrhpcr2-{0}-2jamkmg6p5-2jamkmg6p5.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\an1l2qrxlx-{0}-zuf2hevpvo-zuf2hevpvo.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\k5oa6il5oz-{0}-ngx31i74i1-ngx31i74i1.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\u390hy6y58-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\0vsveue7r7-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\dfwfpun9bj-{0}-12orui429g-12orui429g.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\3vqlnyrp9b-{0}-ngx31i74i1-ngx31i74i1.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\mdklwaxblf-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\bmzqlzfqlk-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\qm9h8w9uuk-{0}-g4kg0xosth-g4kg0xosth.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\cueyxz21gn-{0}-zjqabosztu-zjqabosztu.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\glkzft1p7o-{0}-fx1dypwnv7-fx1dypwnv7.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\7fv0m6ed5y-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\enfo6n7z00-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\rapcjdrgks-{0}-12orui429g-12orui429g.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\dffpgwaf5s-{0}-fx1dypwnv7-fx1dypwnv7.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\cu6f9wgamr-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\7n22julare-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\yq46mgtex4-{0}-yiti3irzon-yiti3irzon.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\pruuxsl1ug-{0}-94lqfo1wrs-94lqfo1wrs.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\fj1n3tiu7k-{0}-9e7b67j8au-9e7b67j8au.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\58psqeacmb-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\nftrb9c4at-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\jn0hivno5u-{0}-p3lpi9dgv8-p3lpi9dgv8.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\37uiplxlqk-{0}-9e7b67j8au-9e7b67j8au.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\nllhefbvzz-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\z7nmiqi6g5-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\tbjituc667-{0}-46yu6hiw91-46yu6hiw91.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\kuuccij20i-{0}-gsnpmayay8-gsnpmayay8.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\9dkade3bxg-{0}-lx8kgn8zi8-lx8kgn8zi8.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\7wtkxxkr78-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\pu4nxeedaw-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\gz2194yntj-{0}-u14vkjtksn-u14vkjtksn.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\606v1byfnr-{0}-lx8kgn8zi8-lx8kgn8zi8.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\zdchh5acng-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\wngi8bpzg0-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\44fpoia3kg-{0}-7txxiylvbh-7txxiylvbh.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\0xu5f2qowb-{0}-fnwvv0s78v-fnwvv0s78v.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\v9o88yay73-{0}-njkapafkex-njkapafkex.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\b9uuos6chu-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\apv6lcwom4-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\rx04vbaen8-{0}-cb8k6dqcv2-cb8k6dqcv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\qx5vd0nwx0-{0}-njkapafkex-njkapafkex.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\3tl8nkbru0-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\s5dwzjrv5f-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\2mtgetq42d-{0}-q2t57d66k2-q2t57d66k2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\9i56i3vdj9-{0}-s7c3hwltts-s7c3hwltts.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\deh8ethw3a-{0}-gnq9988pdq-gnq9988pdq.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\y21h7foer7-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\vmvco0czr7-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\etikf1qh16-{0}-nhfcbw7z9s-nhfcbw7z9s.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\3ja983iql6-{0}-gnq9988pdq-gnq9988pdq.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\xe8mebmgo6-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\k0ddh6uzva-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\r80hu4ounx-{0}-j8iy942pwr-j8iy942pwr.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\rze3myr1z3-{0}-0eblugh2k0-0eblugh2k0.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\jxiworuays-{0}-8ovhv0bc3z-8ovhv0bc3z.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\roeasm685h-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\lbibzixphk-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\7dp4477xfe-{0}-nhfcbw7z9s-nhfcbw7z9s.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\ltrno5po1m-{0}-8ovhv0bc3z-8ovhv0bc3z.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\0v71zij6u3-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\yl8myqfn0x-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\xq988xxp2a-{0}-su5ui4xln4-su5ui4xln4.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\vsddyrhmgw-{0}-smc9cxnvw3-smc9cxnvw3.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\x8g79teanu-{0}-3yrhitgs7t-3yrhitgs7t.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\1ptpwqph3r-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\v7pudxnn8x-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\iygg03dw7f-{0}-nhfcbw7z9s-nhfcbw7z9s.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\e8rorgs21d-{0}-3yrhitgs7t-3yrhitgs7t.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\2dtr5ktq2h-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\9nxjfd5axs-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\qffw5xtw7c-{0}-9n6bfnir5r-9n6bfnir5r.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\vgvk9umc3k-{0}-wzm4c0frui-wzm4c0frui.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\wrvnany4n3-{0}-b9g4ogp5tr-b9g4ogp5tr.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\onlplueor4-{0}-jtojrcy382-jtojrcy382.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\xv0d1nv3sy-{0}-26eeovxy4n-26eeovxy4n.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\ys48hflw36-{0}-m5vpuis15g-m5vpuis15g.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\awc9v54vzw-{0}-124orhvoe2-124orhvoe2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\mm1s91qdfa-{0}-mkkjpfhep8-mkkjpfhep8.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\4fc8tnh04w-{0}-zf83gv0ybz-zf83gv0ybz.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\uak8mpqgdc-{0}-3tllz477w9-3tllz477w9.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\5lpwszw2og-{0}-8bjxzpgjr5-8bjxzpgjr5.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\kj30c5egiu-{0}-lvwiam061k-lvwiam061k.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\acr1tkivyv-{0}-w522o897eu-w522o897eu.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\qmqs4b3gkw-{0}-u99hbdtye0-u99hbdtye0.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\upjroxfc0p-{0}-qqo5ewscg8-qqo5ewscg8.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\35ha3svjqx-{0}-ltelljqakc-ltelljqakc.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\b70uzxikfr-{0}-0fdel5lkkd-0fdel5lkkd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\0wupjyvno6-{0}-x2me4duyka-x2me4duyka.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\o8i3q6w4x6-{0}-tr1q8m6dhq-tr1q8m6dhq.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\abfhlqur2u-{0}-56hef71i7n-56hef71i7n.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\adz5inmyds-{0}-4iv5f9ki08-4iv5f9ki08.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\5f2d7deyv9-{0}-ty25mcfc3k-ty25mcfc3k.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\a9yb761imi-{0}-fvryencnxz-fvryencnxz.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\kw58ae76i7-{0}-k5lfzi9ljy-k5lfzi9ljy.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\quxy15zadk-{0}-z85ke79mzh-z85ke79mzh.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\tf8jzoz9hi-{0}-br1l318jlh-br1l318jlh.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\eabucpl874-{0}-zhygbagpqd-zhygbagpqd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\20krlsrdgn-{0}-zhygbagpqd-zhygbagpqd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\a62u5hsryp-{0}-421yg4xm2p-421yg4xm2p.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\3rox32qwzi-{0}-j7xta46yi2-j7xta46yi2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\venflbj9ny-{0}-dnuypz6lv2-dnuypz6lv2.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\wpcidlzd5m-{0}-gl0xvh1ovh-gl0xvh1ovh.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\lkyx2hhrkm-{0}-sxjclhedfm-sxjclhedfm.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\70oa1ks856-{0}-81z53tvvzd-81z53tvvzd.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\zqlzg645d2-{0}-ryp4w4rixo-ryp4w4rixo.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\3s7fx76gz4-{0}-weo78zjxki-weo78zjxki.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\7pcs4b9ys3-{0}-1cgds4m85w-1cgds4m85w.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\xlngzdsl08-{0}-2qahknzraw-2qahknzraw.gz
+D:\Pankaj\Project\P\PB Attendance\PB.Attendance.Web\obj\Debug\net10.0\compressed\rghism6nsp-{0}-5k0g1pnpk6-5k0g1pnpk6.gz

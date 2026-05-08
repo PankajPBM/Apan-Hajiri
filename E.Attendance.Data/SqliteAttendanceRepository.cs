@@ -16,7 +16,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
     private static readonly string[] PostgresIdentifiers =
     [
         "Employees", "Devices", "AttendanceRecords", "DeviceCommands", "SyncLogs", "DeviceTableStamps",
-        "Id", "EmployeeCode", "FullName", "Area", "Department", "DepartmentsJson", "Position", "CardNumber", "Password", "MobileNumber", "Gender",
+        "Id", "EmployeeCode", "FullName", "Area", "Department", "DepartmentId", "DepartmentsJson", "Position", "CardNumber", "Password", "MobileNumber", "Gender",
         "Privilege", "FaceTemplateVisible", "FaceTemplateInfrared", "ProfilePhoto", "FingerprintTemplates",
         "CreatedAt", "SyncedAt", "IsActive", "SerialNumber", "Name", "Model", "IpAddress", "Location",
         "TimeZone", "SupportsVisibleLightFace", "SupportsInfraredFace", "SupportsFingerprint",
@@ -131,7 +131,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
     public IReadOnlyList<Employee> GetEmployees()
     {
         const string sql = """
-            SELECT Id, EmployeeCode, FullName, Area, Department, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive
+            SELECT Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive
             FROM Employees
             ORDER BY EmployeeCode
             """;
@@ -143,29 +143,30 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             FullName = reader.GetString(2),
             Area = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
             Department = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
-            Departments = DeserializeDepartments(reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(4) ? string.Empty : reader.GetString(4)),
-            Position = reader.IsDBNull(6) ? string.Empty : reader.GetString(6),
-            CardNumber = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
-            Password = reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
-            MobileNumber = reader.IsDBNull(9) ? string.Empty : reader.GetString(9),
-            Gender = reader.IsDBNull(10) ? string.Empty : reader.GetString(10),
-            Privilege = reader.IsDBNull(11) ? UserPrivilege.User : (UserPrivilege)ReadInt32(reader, 11),
-            VerifyMode = reader.IsDBNull(12) ? 0 : ReadInt32(reader, 12),
-            FaceTemplateVisible = reader.IsDBNull(13) ? null : reader.GetString(13),
-            FaceTemplateInfrared = reader.IsDBNull(14) ? null : reader.GetString(14),
-            ProfilePhoto = reader.IsDBNull(15) ? null : reader.GetString(15),
-            FingerprintTemplates = reader.IsDBNull(16) ? null : reader.GetString(16),
-            CreatedAt = reader.IsDBNull(17) ? DateTime.UtcNow : ReadDateTime(reader, 17),
-            SyncedAt = reader.IsDBNull(18) ? null : ReadDateTime(reader, 18),
-            IsActive = ReadInt32(reader, 19) == 1
+            DepartmentId = reader.IsDBNull(5) ? null : ReadInt32(reader, 5),
+            Departments = DeserializeDepartments(reader.IsDBNull(6) ? null : reader.GetString(6), reader.IsDBNull(4) ? string.Empty : reader.GetString(4)),
+            Position = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
+            CardNumber = reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
+            Password = reader.IsDBNull(9) ? string.Empty : reader.GetString(9),
+            MobileNumber = reader.IsDBNull(10) ? string.Empty : reader.GetString(10),
+            Gender = reader.IsDBNull(11) ? string.Empty : reader.GetString(11),
+            Privilege = reader.IsDBNull(12) ? UserPrivilege.User : (UserPrivilege)ReadInt32(reader, 12),
+            VerifyMode = reader.IsDBNull(13) ? 0 : ReadInt32(reader, 13),
+            FaceTemplateVisible = reader.IsDBNull(14) ? null : reader.GetString(14),
+            FaceTemplateInfrared = reader.IsDBNull(15) ? null : reader.GetString(15),
+            ProfilePhoto = reader.IsDBNull(16) ? null : reader.GetString(16),
+            FingerprintTemplates = reader.IsDBNull(17) ? null : reader.GetString(17),
+            CreatedAt = reader.IsDBNull(18) ? DateTime.UtcNow : ReadDateTime(reader, 18),
+            SyncedAt = reader.IsDBNull(19) ? null : ReadDateTime(reader, 19),
+            IsActive = ReadInt32(reader, 20) == 1
         });
     }
 
     public Employee AddEmployee(Employee employee)
     {
         const string sql = """
-            INSERT INTO Employees (Id, EmployeeCode, FullName, Area, Department, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive)
-            VALUES ($id, $code, $name, $area, $dept, $departmentsJson, $position, $card, $password, $mobile, $gender, $privilege, $verifyMode, $faceVisible, $faceInfra, $photo, $fingerprints, $createdAt, $syncedAt, $active)
+            INSERT INTO Employees (Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive)
+            VALUES ($id, $code, $name, $area, $dept, $deptId, $departmentsJson, $position, $card, $password, $mobile, $gender, $privilege, $verifyMode, $faceVisible, $faceInfra, $photo, $fingerprints, $createdAt, $syncedAt, $active)
             """;
 
         Execute(sql, command =>
@@ -175,6 +176,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$name", employee.FullName);
             command.Parameters.AddWithValue("$area", employee.Area);
             command.Parameters.AddWithValue("$dept", employee.Department);
+            command.Parameters.AddWithValue("$deptId", employee.DepartmentId.HasValue ? employee.DepartmentId.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("$departmentsJson", SerializeDepartments(employee.Departments));
             command.Parameters.AddWithValue("$position", employee.Position);
             command.Parameters.AddWithValue("$card", employee.CardNumber);
@@ -203,6 +205,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                 FullName = $name,
                 Area = $area,
                 Department = $dept,
+                DepartmentId = $deptId,
                 DepartmentsJson = $departmentsJson,
                 Position = $position,
                 CardNumber = $card,
@@ -227,6 +230,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$name", employee.FullName);
             command.Parameters.AddWithValue("$area", employee.Area);
             command.Parameters.AddWithValue("$dept", employee.Department);
+            command.Parameters.AddWithValue("$deptId", employee.DepartmentId.HasValue ? employee.DepartmentId.Value : (object)DBNull.Value);
             command.Parameters.AddWithValue("$departmentsJson", SerializeDepartments(employee.Departments));
             command.Parameters.AddWithValue("$position", employee.Position);
             command.Parameters.AddWithValue("$card", employee.CardNumber);
@@ -264,7 +268,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
     public Employee? FindEmployeeByCode(string employeeCode)
     {
         const string sql = """
-            SELECT Id, EmployeeCode, FullName, Area, Department, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive
+            SELECT Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive
             FROM Employees
             WHERE EmployeeCode = $code
             LIMIT 1
@@ -280,21 +284,22 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             FullName = reader.GetString(2),
             Area = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
             Department = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
-            Departments = DeserializeDepartments(reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(4) ? string.Empty : reader.GetString(4)),
-            Position = reader.IsDBNull(6) ? string.Empty : reader.GetString(6),
-            CardNumber = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
-            Password = reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
-            MobileNumber = reader.IsDBNull(9) ? string.Empty : reader.GetString(9),
-            Gender = reader.IsDBNull(10) ? string.Empty : reader.GetString(10),
-            Privilege = reader.IsDBNull(11) ? UserPrivilege.User : (UserPrivilege)ReadInt32(reader, 11),
-            VerifyMode = reader.IsDBNull(12) ? 0 : ReadInt32(reader, 12),
-            FaceTemplateVisible = reader.IsDBNull(13) ? null : reader.GetString(13),
-            FaceTemplateInfrared = reader.IsDBNull(14) ? null : reader.GetString(14),
-            ProfilePhoto = reader.IsDBNull(15) ? null : reader.GetString(15),
-            FingerprintTemplates = reader.IsDBNull(16) ? null : reader.GetString(16),
-            CreatedAt = reader.IsDBNull(17) ? DateTime.UtcNow : ReadDateTime(reader, 17),
-            SyncedAt = reader.IsDBNull(18) ? null : ReadDateTime(reader, 18),
-            IsActive = ReadInt32(reader, 19) == 1
+            DepartmentId = reader.IsDBNull(5) ? null : ReadInt32(reader, 5),
+            Departments = DeserializeDepartments(reader.IsDBNull(6) ? null : reader.GetString(6), reader.IsDBNull(4) ? string.Empty : reader.GetString(4)),
+            Position = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
+            CardNumber = reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
+            Password = reader.IsDBNull(9) ? string.Empty : reader.GetString(9),
+            MobileNumber = reader.IsDBNull(10) ? string.Empty : reader.GetString(10),
+            Gender = reader.IsDBNull(11) ? string.Empty : reader.GetString(11),
+            Privilege = reader.IsDBNull(12) ? UserPrivilege.User : (UserPrivilege)ReadInt32(reader, 12),
+            VerifyMode = reader.IsDBNull(13) ? 0 : ReadInt32(reader, 13),
+            FaceTemplateVisible = reader.IsDBNull(14) ? null : reader.GetString(14),
+            FaceTemplateInfrared = reader.IsDBNull(15) ? null : reader.GetString(15),
+            ProfilePhoto = reader.IsDBNull(16) ? null : reader.GetString(16),
+            FingerprintTemplates = reader.IsDBNull(17) ? null : reader.GetString(17),
+            CreatedAt = reader.IsDBNull(18) ? DateTime.UtcNow : ReadDateTime(reader, 18),
+            SyncedAt = reader.IsDBNull(19) ? null : ReadDateTime(reader, 19),
+            IsActive = ReadInt32(reader, 20) == 1
         });
     }
 
@@ -1397,6 +1402,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                 FullName TEXT NOT NULL,
                 Area TEXT NOT NULL DEFAULT '',
                 Department TEXT NOT NULL,
+                DepartmentId INTEGER NULL,
                 DepartmentsJson TEXT NOT NULL DEFAULT '[]',
                 Position TEXT NOT NULL DEFAULT '',
                 CardNumber TEXT NOT NULL DEFAULT '',
@@ -1578,6 +1584,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         EnsureColumn(connection, "Devices", "IsRegistrationDevice", "ALTER TABLE Devices ADD COLUMN IsRegistrationDevice INTEGER NOT NULL DEFAULT 0;");
 
         EnsureColumn(connection, "Employees", "Area", "ALTER TABLE Employees ADD COLUMN Area TEXT NOT NULL DEFAULT '';");
+        EnsureColumn(connection, "Employees", "DepartmentId", "ALTER TABLE Employees ADD COLUMN DepartmentId INTEGER NULL;");
         EnsureColumn(connection, "Employees", "CardNumber", "ALTER TABLE Employees ADD COLUMN CardNumber TEXT NOT NULL DEFAULT '';");
         EnsureColumn(connection, "Employees", "DepartmentsJson", "ALTER TABLE Employees ADD COLUMN DepartmentsJson TEXT NOT NULL DEFAULT '[]';");
         EnsureColumn(connection, "Employees", "Position", "ALTER TABLE Employees ADD COLUMN Position TEXT NOT NULL DEFAULT '';");

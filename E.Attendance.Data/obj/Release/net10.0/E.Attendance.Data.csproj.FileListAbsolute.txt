@@ -1,0 +1,15 @@
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\bin\Release\net10.0\E.Attendance.Data.deps.json
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\bin\Release\net10.0\E.Attendance.Data.dll
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\bin\Release\net10.0\E.Attendance.Data.pdb
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\bin\Release\net10.0\E.Attendance.Core.dll
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\bin\Release\net10.0\E.Attendance.Core.pdb
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\obj\Release\net10.0\E.Attendance.Data.csproj.AssemblyReference.cache
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\obj\Release\net10.0\E.Attendance.Data.GeneratedMSBuildEditorConfig.editorconfig
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\obj\Release\net10.0\E.Attendance.Data.AssemblyInfoInputs.cache
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\obj\Release\net10.0\E.Attendance.Data.AssemblyInfo.cs
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\obj\Release\net10.0\E.Attendance.Data.csproj.CoreCompileInputs.cache
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\obj\Release\net10.0\E.Attend.86B4610C.Up2Date
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\obj\Release\net10.0\E.Attendance.Data.dll
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\obj\Release\net10.0\refint\E.Attendance.Data.dll
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\obj\Release\net10.0\E.Attendance.Data.pdb
+D:\Pankaj\Project\E-Attendance\E.Attendance.Data\obj\Release\net10.0\ref\E.Attendance.Data.dll

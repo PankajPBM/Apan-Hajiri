@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\E.Attendance.Core\E.Attendance.Core.csproj" />
+    <ProjectReference Include="..\E.Attendance.Services\E.Attendance.Services.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql" Version="10.0.0" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>..\icon\E_Att.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="bs-calendar-map.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="NepaliDateConfig.ts.txt" />
+  </ItemGroup>
+
+  <Target Name="BuildWebHost" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <MSBuild
+      Projects="..\E.Attendance.Web\E.Attendance.Web.csproj"
+      Targets="Build"
+      Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <Target Name="StopRunningAttendanceApp" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec IgnoreExitCode="true" Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$p = Get-Process -Name 'E.Attendance' -ErrorAction SilentlyContinue; if ($p) { $p | Stop-Process -Force -ErrorAction SilentlyContinue }; exit 0&quot;" />
+  </Target>
+
+</Project>

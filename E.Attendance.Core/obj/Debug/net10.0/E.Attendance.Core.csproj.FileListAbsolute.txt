@@ -1,0 +1,11 @@
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\bin\Debug\net10.0\E.Attendance.Core.deps.json
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\bin\Debug\net10.0\E.Attendance.Core.dll
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\bin\Debug\net10.0\E.Attendance.Core.pdb
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\obj\Debug\net10.0\E.Attendance.Core.GeneratedMSBuildEditorConfig.editorconfig
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\obj\Debug\net10.0\E.Attendance.Core.AssemblyInfoInputs.cache
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\obj\Debug\net10.0\E.Attendance.Core.AssemblyInfo.cs
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\obj\Debug\net10.0\E.Attendance.Core.csproj.CoreCompileInputs.cache
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\obj\Debug\net10.0\E.Attendance.Core.dll
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\obj\Debug\net10.0\refint\E.Attendance.Core.dll
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\obj\Debug\net10.0\E.Attendance.Core.pdb
+D:\Pankaj\Project\E-Attendance\E.Attendance.Core\obj\Debug\net10.0\ref\E.Attendance.Core.dll
