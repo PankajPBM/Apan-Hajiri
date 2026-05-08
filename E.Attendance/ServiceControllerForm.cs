@@ -185,7 +185,7 @@ internal sealed class ServiceControllerForm : Form
             AutoSize = true,
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
+            WrapContents = true,
             BackColor = SurfaceColor
         };
         top.Controls.Add(heading);
@@ -195,7 +195,6 @@ internal sealed class ServiceControllerForm : Form
         top.Controls.Add(_dbEngine);
         top.Controls.Add(_dbStatus);
         top.Controls.Add(_dbMetaStatus);
-        top.Width = topCard.Width - 28; // account for padding
         topCard.Controls.Add(top);
 
         var tabs = new TabControl

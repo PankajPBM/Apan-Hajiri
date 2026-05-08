@@ -14111,18 +14111,14 @@ static int FindAvailableWebPort(int preferredPort, int apiPort)
     }
 
     AddPort(preferredPort);
-    AddPort(8001);
-    AddPort(8000);
-    AddPort(8005);
-
-    for (var port = 8000; port <= 8020; port++)
-    {
-        AddPort(port);
-    }
 
     for (var offset = 1; offset <= 100; offset++)
     {
         AddPort(preferredPort + offset);
+    }
+    for (var offset = 1; offset <= 100; offset++)
+    {
+        AddPort(preferredPort - offset);
     }
 
     foreach (var port in candidates)
