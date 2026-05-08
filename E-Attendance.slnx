@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="E.Attendance.Core/E.Attendance.Core.csproj" />
+  <Project Path="E.Attendance.Data/E.Attendance.Data.csproj" />
+  <Project Path="E.Attendance.Services/E.Attendance.Services.csproj" />
+  <Project Path="E.Attendance/E.Attendance.csproj" />
+  <Project Path="E.Attendance.Web/E.Attendance.Web.csproj" />
+</Solution>
