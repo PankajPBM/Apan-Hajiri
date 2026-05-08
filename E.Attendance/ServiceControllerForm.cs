@@ -195,6 +195,7 @@ internal sealed class ServiceControllerForm : Form
         top.Controls.Add(_dbEngine);
         top.Controls.Add(_dbStatus);
         top.Controls.Add(_dbMetaStatus);
+        top.Width = topCard.Width - 28; // account for padding
         topCard.Controls.Add(top);
 
         var tabs = new TabControl
@@ -267,6 +268,7 @@ internal sealed class ServiceControllerForm : Form
 
         var dbActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, BackColor = PageBackgroundColor, Margin = new Padding(0, 0, 0, 10) };
         AddAction(dbActions, "Refresh DB", RefreshState);
+        AddAction(dbActions, "Initialize DB", async () => await RunBusyAction(InitializeDbWithPromptAsync, "Database initialized."));
         
         var pgButton = new Button { Text = "Toggle PostgreSQL", Width = 140, Height = 36, Margin = new Padding(0, 0, 8, 8) };
         StyleSecondaryButton(pgButton);
