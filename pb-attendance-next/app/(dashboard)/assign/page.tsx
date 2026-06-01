@@ -641,7 +641,7 @@ export default function AssignPage() {
             ? "Create, edit, and delete employee groups used for scheduling."
             : viewMode === "preview"
               ? "View each employee's resolved shift for any date — department-wise or employee-wise."
-              : "Assign a shift plan to an employee, group, or department. This is what reports use."}
+              : "Assign a shift to an employee, group, or department. This is what reports use."}
         </p>
       </div>
 
