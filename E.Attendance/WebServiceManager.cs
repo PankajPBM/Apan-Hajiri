@@ -3450,7 +3450,7 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
             var json = Encoding.UTF8.GetString(bytes, start, bytes.Length - start);
             return JsonNode.Parse(json) as JsonObject;
         }
-        catch (JsonReaderException)
+        catch (global::System.Text.Json.JsonReaderException)
         {
             // If the JSON is invalid (e.g., starts with null), return null so defaults are used.
             return null;
