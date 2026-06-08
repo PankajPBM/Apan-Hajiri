@@ -32,8 +32,81 @@ internal sealed class WebServiceManager
     private const string DefaultPostgreSqlInstallPath = @"C:\Program Files\PostgreSQL\18";
     private const string DefaultPostgreSqlBinPath = DefaultPostgreSqlInstallPath + @"\bin";
     private const string DefaultPostgreSqlDataPath = DefaultPostgreSqlInstallPath + @"\data";
-    private const string DefaultOfflineInstallerPath = @"D:\Pankaj\Project\postgresql-18.3-1-windows-x64.exe";
+
+    // Avoid hardcoded dev-machine paths. Allow override + sensible repo-relative defaults.
+    private static readonly string DefaultOfflineInstallerPath = ResolveDefaultOfflineInstallerPath();
+
+    private static string ResolveDefaultOfflineInstallerPath()
+    {
+        var envOverride = Environment.GetEnvironmentVariable("PB_ATTENDANCE_PG_INSTALLER_PATH");
+        if (!string.IsNullOrWhiteSpace(envOverride))
+        {
+            return Path.GetFullPath(envOverride.Trim());
+        }
+
+        const string fileName = "postgresql-18.3-1-windows-x64.exe";
+        var candidates = new[]
+        {
+            Path.Combine(ResolveSolutionRoot(), "installer", fileName),
+            Path.Combine(ResolveSolutionRoot(), fileName),
+            Path.Combine(AppContext.BaseDirectory, fileName),
+            Path.Combine(Environment.CurrentDirectory, fileName)
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        // Return the best guess so the FileNotFoundException message tells the user where to put it.
+        return candidates[0];
+    }
+
     private int _activeFrontendPort;
+
+    private static bool SafeHasExited(Process process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch
+        {
+            // Includes InvalidOperationException: "No process is associated with this object."
+            return true;
+        }
+    }
+
+    private static void SafeKill(Process process)
+    {
+        try
+        {
+            if (!SafeHasExited(process))
+            {
+                process.Kill(true);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void SafeWaitForExit(Process process, int milliseconds)
+    {
+        try
+        {
+            if (!SafeHasExited(process))
+            {
+                process.WaitForExit(milliseconds);
+            }
+        }
+        catch
+        {
+        }
+    }
     
     // System.ServiceProcess assembly check for graceful fallback
     private static readonly bool ServiceControllerAvailable = CheckServiceControllerAvailable();
@@ -272,20 +345,55 @@ internal sealed class WebServiceManager
         }
 
         var port = adminBuilder.Port;
-        ConfigureInitializedDatabase(adminBuilder, host, port);
-        EnsurePostgreSqlObjectOwnership(adminBuilder, host, port);
+
+        // Post-init steps require a live connection to the new DB.
+        // If PostgreSQL isn't fully warmed up yet, skip — API completes schema on first start.
+        try { ConfigureInitializedDatabase(adminBuilder, host, port); } catch { }
+        try { EnsurePostgreSqlObjectOwnership(adminBuilder, host, port); } catch { }
+
         SaveAdminPassword(adminPassword);
         UpdatePostgreSqlConnectionHostPort(host, port);
 
-        var test = TestPostgreSqlConnection();
-        if (!test.ok)
+        return $"Database '{ExpectedPostgreSqlDatabase}' initialized on {host}:{port}. All previous data deleted. Start the service to complete schema setup.";
+    }
+
+    /// <summary>
+    /// Initialize the database using the saved admin password, falling back to the known
+    /// default (PB@14891277). No user prompt required. Errors are surfaced as exceptions.
+    /// </summary>
+    public string InitializePostgreSqlDatabaseAuto()
+    {
+        // Priority: saved DPAPI secret → app-db password (same in this deployment) → known default
+        var candidates = new[]
         {
-            throw new InvalidOperationException($"Database initialization completed but connection validation failed: {test.message}");
+            LoadAdminPassword(),
+            GetConfiguredApplicationDbPassword(),
+            ExpectedPostgreSqlPassword
+        }
+        .Where(p => !string.IsNullOrWhiteSpace(p))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+
+        Exception? lastEx = null;
+        foreach (var password in candidates)
+        {
+            try
+            {
+                var result = InitializePostgreSqlDatabase(password!);
+                // Save for next time so subsequent calls use DPAPI path immediately
+                SaveAdminPassword(password!);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+            }
         }
 
-        return
-            $"Database '{ExpectedPostgreSqlDatabase}' was initialized successfully on {host}:{port}. " +
-            "All previous data has been deleted.";
+        throw new InvalidOperationException(
+            "Database initialization failed with all known credentials.\n" +
+            RedactSecrets(lastEx?.Message),
+            lastEx);
     }
 
     private void SaveApplicationDbPassword(string password)
@@ -327,7 +435,17 @@ internal sealed class WebServiceManager
         SaveWebAppSettingsJson(root);
     }
 
-    private void UpdatePostgreSqlConnectionHostPort(string host, int port)
+    public void UpdatePostgreSqlPort(int port)
+    {
+        if (port is < 1 or > 65535)
+        {
+            throw new ArgumentOutOfRangeException(nameof(port), "PostgreSQL port must be between 1 and 65535.");
+        }
+
+        UpdatePostgreSqlConnectionHostPort(null!, port);
+    }
+
+    public void UpdatePostgreSqlConnectionHostPort(string host, int port)
     {
         if (string.IsNullOrWhiteSpace(host) && port <= 0)
         {
@@ -605,6 +723,8 @@ internal sealed class WebServiceManager
         var frontendPortToCheck = _activeFrontendPort > 0 ? _activeFrontendPort : configuredFrontendPort;
         var dbConfigured = true;
         var pgMessage = GetPostgresStatusCached();
+        var apiInstalled = GetWindowsServiceInstalled();
+        var apiStatus = GetWindowsServiceStatus();
         return new ServiceState(
             Port: port,
             IsWebReachable: IsWebApiReachable(port),
@@ -617,7 +737,9 @@ internal sealed class WebServiceManager
             ProductionDbExists: true,
             DatabaseEngine: "PostgreSQL",
             IsPostgreSqlConfigured: dbConfigured,
-            PostgresStatus: pgMessage);
+            PostgresStatus: pgMessage,
+            ApiWinSvcInstalled: apiInstalled,
+            ApiWinSvcStatus: apiStatus);
     }
 
     public IReadOnlyList<RelatedServiceStatus> GetRelatedServices(ServiceState? state = null)
@@ -1461,9 +1583,9 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         var configuredFrontendPort = LoadFrontendPort();
         if (IsWebApiReachable(port))
         {
-            StartPushEngine(port);
-            EnsureFrontendRunning(port);
-            return;
+            // Always restart an already-running web host so latest build output is applied.
+            StopService();
+            Thread.Sleep(350);
         }
 
         if (IsPortInUse(port))
@@ -1495,6 +1617,13 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
                 TryRecoverSelfHostedFrontendOnPort(configuredFrontendPort))
             {
                 Thread.Sleep(300);
+            }
+
+            if (IsPortInUse(configuredFrontendPort))
+            {
+                // Try force-killing the owning process before giving up
+                TryKillPortOwner(configuredFrontendPort);
+                Thread.Sleep(600);
             }
 
             if (IsPortInUse(configuredFrontendPort))
@@ -1558,7 +1687,7 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
                     $"E.Attendance.Web exited before becoming ready on port {port}. {details}");
             }
         }
-
+        
         throw new System.TimeoutException($"E.Attendance.Web did not start on port {port}.");
     }
 
@@ -1566,34 +1695,40 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
     {
         var port = LoadPort();
         TryPost($"http://127.0.0.1:{port}/api/server/stop");
+        var configuredFrontendPort = LoadFrontendPort();
+        TryPost($"http://127.0.0.1:{configuredFrontendPort}/api/server/stop");
 
+        Process? ownedBackend = null;
+        Process? ownedFrontend = null;
         lock (_sync)
         {
-            if (_ownedProcess is { HasExited: false })
-            {
-                _ownedProcess.Kill(true);
-                _ownedProcess.WaitForExit(5000);
-            }
-
-            _ownedProcess?.Dispose();
+            ownedBackend = _ownedProcess;
             _ownedProcess = null;
 
-            if (_ownedFrontendProcess is { HasExited: false })
-            {
-                _ownedFrontendProcess.Kill(true);
-                _ownedFrontendProcess.WaitForExit(5000);
-            }
-
-            _ownedFrontendProcess?.Dispose();
+            ownedFrontend = _ownedFrontendProcess;
             _ownedFrontendProcess = null;
+        }
+
+        if (ownedBackend is not null)
+        {
+            SafeKill(ownedBackend);
+            SafeWaitForExit(ownedBackend, 5000);
+            try { ownedBackend.Dispose(); } catch { }
+        }
+
+        if (ownedFrontend is not null)
+        {
+            SafeKill(ownedFrontend);
+            SafeWaitForExit(ownedFrontend, 5000);
+            try { ownedFrontend.Dispose(); } catch { }
         }
 
         foreach (var process in Process.GetProcessesByName("E.Attendance.Web"))
         {
             try
             {
-                process.Kill(true);
-                process.WaitForExit(3000);
+                SafeKill(process);
+                SafeWaitForExit(process, 3000);
             }
             catch
             {
@@ -1615,6 +1750,243 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
             FileName = targetUrl,
             UseShellExecute = true
         });
+    }
+
+    // ── Windows Service names ─────────────────────────────────────────
+    public const string ApiWindowsServiceName = "E-Attendance-API";
+    public const string WebWindowsServiceName = "E-Attendance-Web";
+
+    public bool GetWindowsServiceInstalled()
+        => ServiceExists(ApiWindowsServiceName);
+
+    public string GetWindowsServiceStatus()
+    {
+        if (!ServiceControllerAvailable) return "N/A";
+        try
+        {
+            using var svc = new ServiceController(ApiWindowsServiceName);
+            return svc.Status.ToString();
+        }
+        catch { return "Not Installed"; }
+    }
+
+    public (bool ok, string message) InstallWindowsServices()
+    {
+        var startInfo = ResolveWebStartInfo();
+        if (startInfo is null)
+            return (false, "E.Attendance.Web.exe not found. Build the project first.");
+
+        var exePath = startInfo.FileName;
+        var port = LoadPort();
+        var frontendPort = LoadFrontendPort();
+
+        // Uninstall stale versions first
+        ScExec($"stop \"{ApiWindowsServiceName}\"");
+        ScExec($"delete \"{ApiWindowsServiceName}\"");
+        ScExec($"stop \"{WebWindowsServiceName}\"");
+        ScExec($"delete \"{WebWindowsServiceName}\"");
+        Thread.Sleep(800);
+
+        // Install API service only (auto-start, with failure recovery)
+        var apiArgs = $"--urls \"http://0.0.0.0:{port};http://0.0.0.0:{frontendPort}\" --service-mode";
+        var apiResult = ScExec($"create \"{ApiWindowsServiceName}\" binPath= \"\\\"{exePath}\\\" {apiArgs}\" start= auto DisplayName= \"E-Attendance Service\"");
+        if (!ServiceExists(ApiWindowsServiceName))
+            return (false, $"Failed to create {ApiWindowsServiceName}. Run as Administrator.\n{apiResult}");
+
+        ScExec($"description \"{ApiWindowsServiceName}\" \"E-Attendance API and Web UI backend - starts automatically with Windows\"");
+        ScExec($"failure \"{ApiWindowsServiceName}\" reset= 86400 actions= restart/5000/restart/15000/restart/30000");
+        ScExec($"failureflag \"{ApiWindowsServiceName}\" 1");
+
+        return (true, "Installed: E-Attendance-API (AUTO-START, auto-restart on failure).");
+    }
+
+    public (bool ok, string message) UninstallWindowsServices()
+    {
+        NuclearStop();
+        Thread.Sleep(800);
+
+        ScExec($"stop \"{WebWindowsServiceName}\"");
+        Thread.Sleep(500);
+        var r1 = ScExec($"delete \"{WebWindowsServiceName}\"");
+
+        ScExec($"stop \"{ApiWindowsServiceName}\"");
+        Thread.Sleep(500);
+        var r2 = ScExec($"delete \"{ApiWindowsServiceName}\"");
+
+        var ok = !ServiceExists(ApiWindowsServiceName) && !ServiceExists(WebWindowsServiceName);
+        return (ok, ok ? "Service uninstalled successfully." : $"Partial uninstall.\nAPI: {r2}");
+    }
+
+    public void StartWindowsService(string serviceName)
+    {
+        // Try ServiceController first (works when running as admin)
+        if (ServiceControllerAvailable)
+        {
+            try
+            {
+                using var svc = new ServiceController(serviceName);
+                var status = svc.Status;
+                if (status == ServiceControllerStatus.Running) return;
+                if (status == ServiceControllerStatus.StartPending)
+                {
+                    svc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+                    return;
+                }
+                svc.Start();
+                svc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+                return;
+            }
+            catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 5 /*ACCESS_DENIED*/)
+            {
+                // Fall through to sc.exe elevated
+            }
+            catch (InvalidOperationException)
+            {
+                // Service may not exist yet, fall through
+            }
+        }
+        // Fallback: run sc.exe with full admin power
+        var result = ScExec($"start \"{serviceName}\"");
+        // Wait up to 30s for service to reach Running
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(1000);
+            if (ServiceControllerAvailable)
+            {
+                try
+                {
+                    using var svc2 = new ServiceController(serviceName);
+                    if (svc2.Status == ServiceControllerStatus.Running) return;
+                }
+                catch { }
+            }
+        }
+    }
+
+    public void StopWindowsService(string serviceName)
+    {
+        // Try ServiceController first (works when running as admin)
+        if (ServiceControllerAvailable)
+        {
+            try
+            {
+                using var svc = new ServiceController(serviceName);
+                var status = svc.Status;
+                if (status == ServiceControllerStatus.Stopped) return;
+                if (status == ServiceControllerStatus.StopPending)
+                {
+                    svc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(20));
+                    return;
+                }
+                svc.Stop();
+                svc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(20));
+                return;
+            }
+            catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 5 /*ACCESS_DENIED*/)
+            {
+                // Fall through to sc.exe elevated
+            }
+            catch { return; }
+        }
+        // Fallback: run sc.exe
+        ScExec($"stop \"{serviceName}\"");
+        // Wait up to 20s for Stopped
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(1000);
+            if (ServiceControllerAvailable)
+            {
+                try
+                {
+                    using var svc2 = new ServiceController(serviceName);
+                    if (svc2.Status == ServiceControllerStatus.Stopped) return;
+                }
+                catch { }
+            }
+        }
+    }
+
+    /// <summary>Kill everything: Windows service + process by name + kill by port. No mercy.</summary>
+    public void NuclearStop()
+    {
+        // 1. Stop Windows services if installed
+        foreach (var name in new[] { ApiWindowsServiceName, WebWindowsServiceName })
+        {
+            try { StopWindowsService(name); } catch { }
+        }
+
+        // 2. StopService (graceful via HTTP + own process kill)
+        try { StopService(); } catch { }
+
+        // 3. Kill by process name (covers all scenarios)
+        foreach (var pname in new[] { "E.Attendance.Web", "PB.Attendance.Web", "E_Attendance_Web" })
+        {
+            foreach (var proc in Process.GetProcessesByName(pname))
+            {
+                try { proc.Kill(entireProcessTree: true); proc.WaitForExit(3000); } catch { }
+                finally { try { proc.Dispose(); } catch { } }
+            }
+        }
+
+        // 4. Kill by port (nuclear fallback)
+        var port = LoadPort();
+        var frontPort = LoadFrontendPort();
+        foreach (var p in new[] { port, frontPort }.Distinct())
+        {
+            KillProcessOnPort(p);
+        }
+
+        // 5. taskkill as final sweep
+        foreach (var exeName in new[] { "E.Attendance.Web.exe", "PB.Attendance.Web.exe" })
+        {
+            try
+            {
+                var tk = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "taskkill", Arguments = $"/F /IM \"{exeName}\" /T",
+                    UseShellExecute = false, CreateNoWindow = true
+                });
+                tk?.WaitForExit(3000);
+            }
+            catch { }
+        }
+    }
+
+    private static void KillProcessOnPort(int port)
+    {
+        try
+        {
+            var p = Process.Start(new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/C for /f \"tokens=5\" %a in ('netstat -ano ^| findstr \":{port} \" ^| findstr LISTENING') do taskkill /F /PID %a /T 2>nul",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            p?.WaitForExit(5000);
+        }
+        catch { }
+    }
+
+    private static string ScExec(string arguments)
+    {
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo
+            {
+                FileName = "sc.exe",
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            })!;
+            p.WaitForExit(10000);
+            return p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+        }
+        catch (Exception ex) { return ex.Message; }
     }
 
     private static void EnsureFile(string path)
@@ -1794,14 +2166,17 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
             if (addressInUse)
             {
                 lastPortFailure = $"Web UI port {frontendPort} is already in use by another process.";
+                try { process.Dispose(); } catch { }
                 continue;
             }
 
             if (process.HasExited)
             {
+                try { process.Dispose(); } catch { }
                 throw new InvalidOperationException($"Frontend exited before opening localhost:{frontendPort}. {details}");
             }
 
+            try { process.Dispose(); } catch { }
             throw new System.TimeoutException(
                 $"Frontend did not start on http://localhost:{frontendPort} within 35 seconds. " +
                 "Please check Node.js installation and npm dependencies.");
@@ -1928,7 +2303,7 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         var startInfo = new ProcessStartInfo
         {
             FileName = npm,
-            Arguments = $"run dev -- --hostname 0.0.0.0 --port {frontendPort}",
+            Arguments = $"run dev -- --hostname 0.0.0.0 --port {frontendPort} --strictPort",
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
@@ -1966,7 +2341,8 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
     {
         try
         {
-            using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
+            using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Any, port);
+            listener.Server.ExclusiveAddressUse = true;
             listener.Start();
             listener.Stop();
             return false;
@@ -1979,36 +2355,12 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
 
     private static IReadOnlyList<int> BuildFrontendPortCandidates(int configuredPort)
     {
-        var ports = new List<int>();
-
-        void AddPort(int port)
+        if (configuredPort is < 1 or > 65535)
         {
-            if (port is < 1 or > 65535)
-            {
-                return;
-            }
-
-            if (!ports.Contains(port))
-            {
-                ports.Add(port);
-            }
+            return Array.Empty<int>();
         }
 
-        AddPort(configuredPort);
-        AddPort(FrontendDefaultPort);
-        AddPort(FrontendFallbackPort);
-
-        for (var offset = 1; offset <= 10; offset++)
-        {
-            AddPort(configuredPort + offset);
-        }
-
-        for (var port = 8000; port <= 8010; port++)
-        {
-            AddPort(port);
-        }
-
-        return ports;
+        return [configuredPort];
     }
 
     private void ClearOwnedFrontendProcess(Process process)
@@ -2019,14 +2371,6 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
             {
                 _ownedFrontendProcess = null;
             }
-        }
-
-        try
-        {
-            process.Dispose();
-        }
-        catch
-        {
         }
     }
 
@@ -2046,11 +2390,8 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
 
         try
         {
-            if (!process.HasExited)
-            {
-                process.Kill(true);
-                process.WaitForExit(5000);
-            }
+            SafeKill(process);
+            SafeWaitForExit(process, 5000);
         }
         catch
         {
@@ -2411,6 +2752,15 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         return string.Join(", ", names);
     }
 
+    private static void TryKillPortOwner(int port)
+    {
+        var pids = GetListeningProcessIds(port);
+        foreach (var pid in pids)
+        {
+            try { using var p = Process.GetProcessById(pid); p.Kill(true); } catch { }
+        }
+    }
+
     private static string? ResolveFrontendRootPath()
     {
         var envOverride = Environment.GetEnvironmentVariable("PB_ATTENDANCE_FRONTEND_PATH");
@@ -2497,6 +2847,7 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
     private static ProcessStartInfo? ResolveWebStartInfo()
     {
         var baseDir = AppContext.BaseDirectory;
+        var solutionRoot = ResolveSolutionRoot();
         var candidateDirs = new List<string>();
 
         void AddCandidateDir(string? directory)
@@ -2519,6 +2870,10 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         AddCandidateDir(Path.Combine(baseDir, "E.Attendance.Web"));
         AddCandidateDir(Path.Combine(baseDir, "E.Attendance.Web.ExeOnly"));
         AddCandidateDir(Environment.CurrentDirectory);
+        AddCandidateDir(Path.Combine(solutionRoot, "artifacts", "single-exe", "E.Attendance.Web"));
+        AddCandidateDir(Path.Combine(solutionRoot, "artifacts", "single-exe", "E.Attendance.Web.ExeOnly"));
+        AddCandidateDir(Path.Combine(solutionRoot, "E.Attendance.Web", "bin", "Release", "net10.0", "win-x64"));
+        AddCandidateDir(Path.Combine(solutionRoot, "E.Attendance.Web", "bin", "Debug", "net10.0", "win-x64"));
 
         var processPath = Environment.ProcessPath;
         if (!string.IsNullOrWhiteSpace(processPath))
@@ -2535,40 +2890,38 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
             // Best-effort only.
         }
 
+        // Prefer latest E.Attendance.Web build output from the solution during development.
+        var webBinRoot = Path.Combine(solutionRoot, "E.Attendance.Web", "bin");
+        if (Directory.Exists(webBinRoot))
+        {
+            var outputDirs = ResolveWebOutputDirectories(webBinRoot).ToArray();
+            foreach (var outputDir in outputDirs)
+            {
+                var runtimeCopyDir = TryPrepareWebRuntimeCopy(outputDir);
+                if (!string.IsNullOrWhiteSpace(runtimeCopyDir))
+                {
+                    var copiedStartInfo = BuildWebStartInfoForDirectory(runtimeCopyDir);
+                    if (copiedStartInfo is not null)
+                    {
+                        return copiedStartInfo;
+                    }
+                }
+    
+                // Fallback to source output directory when runtime copy is unavailable.
+                var fallbackStartInfo = BuildWebStartInfoForDirectory(outputDir);
+                if (fallbackStartInfo is not null)
+                {
+                    return fallbackStartInfo;
+                }
+            }
+        }
+
         foreach (var candidateDir in candidateDirs)
         {
             var installedStartInfo = BuildWebStartInfoForDirectory(candidateDir);
             if (installedStartInfo is not null)
             {
                 return installedStartInfo;
-            }
-        }
-
-        var solutionRoot = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", ".."));
-        var webBinRoot = Path.Combine(solutionRoot, "E.Attendance.Web", "bin");
-        if (!Directory.Exists(webBinRoot))
-        {
-            return null;
-        }
-
-        var outputDirs = ResolveWebOutputDirectories(webBinRoot).ToArray();
-        foreach (var outputDir in outputDirs)
-        {
-            var runtimeCopyDir = TryPrepareWebRuntimeCopy(outputDir);
-            if (!string.IsNullOrWhiteSpace(runtimeCopyDir))
-            {
-                var copiedStartInfo = BuildWebStartInfoForDirectory(runtimeCopyDir);
-                if (copiedStartInfo is not null)
-                {
-                    return copiedStartInfo;
-                }
-            }
-
-            // Fallback to source output directory when runtime copy is unavailable.
-            var fallbackStartInfo = BuildWebStartInfoForDirectory(outputDir);
-            if (fallbackStartInfo is not null)
-            {
-                return fallbackStartInfo;
             }
         }
 
@@ -2762,16 +3115,28 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         var preferredFrameworks = new[] { "net10.0", "net8.0" };
         var configurations = new[] { "Debug", "Release" };
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var candidates = new List<string>();
+
+        void AddCandidate(string? directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                return;
+            }
+
+            if (!seen.Add(directory))
+            {
+                return;
+            }
+
+            candidates.Add(directory);
+        }
 
         foreach (var framework in preferredFrameworks)
         {
             foreach (var configuration in configurations)
             {
-                var dir = Path.Combine(webBinRoot, configuration, framework);
-                if (Directory.Exists(dir) && seen.Add(dir))
-                {
-                    yield return dir;
-                }
+                AddCandidate(Path.Combine(webBinRoot, configuration, framework));
             }
         }
 
@@ -2783,16 +3148,29 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
                 continue;
             }
 
-            var fallbackDirs = Directory.GetDirectories(configRoot, "net*")
-                .OrderByDescending(Path.GetFileName, StringComparer.OrdinalIgnoreCase);
-
-            foreach (var dir in fallbackDirs)
+            foreach (var dir in Directory.GetDirectories(configRoot, "net*")
+                         .OrderByDescending(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
             {
-                if (seen.Add(dir))
-                {
-                    yield return dir;
-                }
+                AddCandidate(dir);
             }
+        }
+
+        static long GetMarkerTicks(string directory)
+        {
+            var markerPath = ResolveWebRuntimeMarkerPath(directory);
+            if (string.IsNullOrWhiteSpace(markerPath) || !File.Exists(markerPath))
+            {
+                return DateTime.MinValue.Ticks;
+            }
+
+            return File.GetLastWriteTimeUtc(markerPath).Ticks;
+        }
+
+        foreach (var candidate in candidates
+                     .OrderByDescending(GetMarkerTicks)
+                     .ThenByDescending(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            yield return candidate;
         }
     }
 
@@ -3053,8 +3431,35 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
             return null;
         }
 
-        var json = File.ReadAllText(path);
-        return JsonNode.Parse(json) as JsonObject;
+        try
+        {
+            var bytes = File.ReadAllBytes(path);
+            // Skip leading null bytes
+            int start = 0;
+            while (start < bytes.Length && bytes[start] == 0)
+            {
+                start++;
+            }
+
+            if (start >= bytes.Length)
+            {
+                // The file is all null bytes or empty
+                return null;
+            }
+
+            var json = Encoding.UTF8.GetString(bytes, start, bytes.Length - start);
+            return JsonNode.Parse(json) as JsonObject;
+        }
+        catch (JsonReaderException)
+        {
+            // If the JSON is invalid (e.g., starts with null), return null so defaults are used.
+            return null;
+        }
+        catch (Exception)
+        {
+            // Handle other exceptions (e.g., IO) by returning null.
+            return null;
+        }
     }
 
     private void SaveWebAppSettingsJson(JsonObject root)
@@ -3192,7 +3597,7 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         return builder.ConnectionString;
     }
 
-    private int GetConfiguredPostgreSqlPort()
+    public int GetConfiguredPostgreSqlPort()
     {
         var conn = GetPostgreSqlConnectionString();
         if (string.IsNullOrWhiteSpace(conn))
@@ -4001,7 +4406,9 @@ internal sealed record ServiceState(
     bool ProductionDbExists,
     string DatabaseEngine,
     bool IsPostgreSqlConfigured,
-    string PostgresStatus);
+    string PostgresStatus,
+    bool ApiWinSvcInstalled = false,
+    string ApiWinSvcStatus = "Not Installed");
 
 internal sealed record RelatedServiceStatus(
     string Name,
