@@ -1,5 +1,0 @@
-D:\pankaj\project\p\PB Attendance\artifacts\single-exe\PB.Attendance.Web\appsettings.json
-D:\pankaj\project\p\PB Attendance\artifacts\single-exe\PB.Attendance.Web\PB.Attendance.Core.pdb
-D:\pankaj\project\p\PB Attendance\artifacts\single-exe\PB.Attendance.Web\PB.Attendance.Data.pdb
-D:\pankaj\project\p\PB Attendance\artifacts\single-exe\PB.Attendance.Web\PB.Attendance.Services.pdb
-D:\pankaj\project\p\PB Attendance\artifacts\single-exe\PB.Attendance.Web\PB.Attendance.Web.exe

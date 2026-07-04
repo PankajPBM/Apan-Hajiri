@@ -8,10 +8,7 @@ public sealed class DeviceRepository : IDeviceRepository
 {
     private readonly ApplicationDbContext _db;
 
-    public DeviceRepository(ApplicationDbContext db)
-    {
-        _db = db;
-    }
+    public DeviceRepository(ApplicationDbContext db) => _db = db;
 
     public Task<Device?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
         => _db.Devices.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
@@ -21,6 +18,16 @@ public sealed class DeviceRepository : IDeviceRepository
 
     public async Task<IReadOnlyList<Device>> GetAllAsync(CancellationToken cancellationToken = default)
         => await _db.Devices.OrderByDescending(x => x.LastSeenUtc).ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<Device>> GetByAreaDepartmentAsync(int areaId, int departmentId, CancellationToken cancellationToken = default)
+        => await _db.Devices
+            .Where(d => d.AreaId == areaId && d.DepartmentId == departmentId)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<Device>> GetRegistrationDevicesAsync(CancellationToken cancellationToken = default)
+        => await _db.Devices
+            .Where(d => d.IsRegistrationDevice)
+            .ToListAsync(cancellationToken);
 
     public async Task<Device> AddAsync(Device device, CancellationToken cancellationToken = default)
     {
@@ -33,5 +40,14 @@ public sealed class DeviceRepository : IDeviceRepository
     {
         _db.Devices.Update(device);
         await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var device = await _db.Devices.FindAsync([id], cancellationToken);
+        if (device == null) return false;
+        _db.Devices.Remove(device);
+        await _db.SaveChangesAsync(cancellationToken);
+        return true;
     }
 }

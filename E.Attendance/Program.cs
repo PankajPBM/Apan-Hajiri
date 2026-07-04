@@ -6,6 +6,7 @@ internal static class Program
     private const string OpenDashboardArgument = "--open-dashboard";
     private const string DbBootstrapArgument = "--db-bootstrap";
     private const string SetPortsArgument = "--set-ports";
+    private const string InstallServicesArgument = "--install-services";
 
     [STAThread]
     private static void Main()
@@ -19,6 +20,8 @@ internal static class Program
             .Any(arg => string.Equals(arg, DbBootstrapArgument, StringComparison.OrdinalIgnoreCase));
         var runSetPorts = args
             .Any(arg => string.Equals(arg, SetPortsArgument, StringComparison.OrdinalIgnoreCase));
+        var runInstallServices = args
+            .Any(arg => string.Equals(arg, InstallServicesArgument, StringComparison.OrdinalIgnoreCase));
 
         if (!IsRunningAsAdministrator())
         {
@@ -40,6 +43,12 @@ internal static class Program
             return;
         }
 
+        if (runInstallServices)
+        {
+            Environment.ExitCode = RunInstallServices();
+            return;
+        }
+
         _singleInstanceMutex = new Mutex(true, "E_ATTENDANCE_SERVICE_CONTROLLER_SINGLE_INSTANCE", out var createdNew);
         if (!createdNew)
         {
@@ -48,6 +57,7 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        Application.SetColorMode(SystemColorMode.Classic);
         try
         {
             try
@@ -84,8 +94,8 @@ internal static class Program
 
     private static int RunDatabaseBootstrap()
     {
-        const int maxAttempts = 4;
-        var delay = TimeSpan.FromSeconds(6);
+        const int maxAttempts = 2;
+        var delay = TimeSpan.FromSeconds(3);
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
@@ -118,6 +128,24 @@ internal static class Program
             manager.EnsureDefaults();
             manager.SavePorts(apiPort, webPort);
             return 0;
+        }
+        catch
+        {
+            return 1;
+        }
+    }
+
+    // Installs the E-Attendance Windows service(s) headlessly during setup.
+    // Invoked by the installer's [Run] step with --install-services so the service
+    // is registered by default. Best-effort: never throws back to the installer.
+    private static int RunInstallServices()
+    {
+        try
+        {
+            var manager = new WebServiceManager();
+            manager.EnsureDefaults();
+            var (ok, _) = manager.InstallWindowsServices();
+            return ok ? 0 : 1;
         }
         catch
         {

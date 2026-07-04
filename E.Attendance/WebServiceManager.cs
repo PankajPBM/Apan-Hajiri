@@ -19,8 +19,8 @@ internal sealed class WebServiceManager
     private Process? _ownedFrontendProcess;
     private DateTime _lastPgCheckUtc = DateTime.MinValue;
     private string _lastPgStatus = "Not tested";
-    private const int ApiDefaultPort = 8081;
-    private const int FrontendDefaultPort = 8001;
+    internal const int ApiDefaultPort = 8081;
+    internal const int FrontendDefaultPort = 8001;
     private const int FrontendFallbackPort = 8000;
     private const string ExpectedPostgreSqlServiceName = "E_Attendance_PostgreSQL";
     private const string ExpectedPostgreSqlDatabase = "E_Attendace";
@@ -127,7 +127,7 @@ internal sealed class WebServiceManager
     public int DefaultPort => ApiDefaultPort;
 
     public string AppDataRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "E_Attendance");
 
     public string SettingsPath => Path.Combine(AppDataRoot, "websettings.json");
@@ -172,12 +172,18 @@ internal sealed class WebServiceManager
         if (apiPort == frontendPort)
         {
             throw new InvalidOperationException(
-                "API Port and Web UI Port cannot be the same. Use API: 8081 and Web UI: 8001.");
+                $"API Port and Web UI Port cannot be the same. Choose different ports (e.g. {ApiDefaultPort} and {FrontendDefaultPort}).");
         }
 
         Directory.CreateDirectory(AppDataRoot);
         var json = JsonSerializer.Serialize(new WebSettings(apiPort, frontendPort), new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(SettingsPath, json);
+
+        // If the service is installed, re-register it to update the binPath (--urls)
+        if (GetWindowsServiceInstalled())
+        {
+            InstallWindowsServices();
+        }
     }
 
     public void SetupDatabases()
@@ -203,6 +209,51 @@ internal sealed class WebServiceManager
         {
             throw new InvalidOperationException(test.message);
         }
+
+        // Auto-fix database schema on startup - ensures all tables exist
+        try
+        {
+            FixDatabaseSchemaInternal();
+        }
+        catch
+        {
+            // Non-fatal: API will also run schema init on first start
+        }
+    }
+
+    /// <summary>
+    /// Internal version of FixDatabaseSchema without throwing on connection test failures.
+    /// Used during automatic startup initialization.
+    /// </summary>
+    public void FixDatabaseSchemaInternal()
+    {
+        var connString = GetPostgreSqlConnectionString();
+        if (string.IsNullOrWhiteSpace(connString)) return;
+
+        // 1. Ensure schema exists
+        try { ExecuteSqlScript(connString, $"CREATE SCHEMA IF NOT EXISTS \"{ExpectedPostgreSqlSchema}\";"); } catch { }
+
+        // 2. Create all core tables FIRST so the SQL scripts below can safely ALTER them
+        try { EnsureCoreTablesExist(connString); } catch { }
+
+        // 3. Run supplementary SQL scripts (add columns, biometric tables, etc.)
+        var scripts = new[]
+        {
+            ("ensure_logs_transactions_tables.sql",       "AppLogs and TransactionDetails tables"),
+            ("ensure_unified_biometrics_schema.sql",      "Biometric users/templates/photos tables"),
+            ("ensure_device_capability_columns.sql",      "Device capability columns"),
+        };
+        foreach (var (fileName, _) in scripts)
+        {
+            try
+            {
+                var scriptPath = ResolveSqlScriptPath(fileName);
+                if (!File.Exists(scriptPath)) continue;
+                var sql = File.ReadAllText(scriptPath);
+                ExecuteSqlScript(connString, sql, ExpectedPostgreSqlSchema);
+            }
+            catch { /* non-fatal, best-effort */ }
+        }
     }
 
     public string EnsurePostgreSqlReadyWithReport(string? adminPasswordOverride = null)
@@ -222,6 +273,936 @@ internal sealed class WebServiceManager
         }
 
         return "Database is ready. DB controller settings were already correct.";
+    }
+
+    /// <summary>
+    /// Runs all database fix scripts to ensure schema and tables are properly created.
+    /// This creates/fixes: database, schema, user, tables (AppLogs, TransactionDetails, users, biometric_templates, biometric_photos),
+    /// and adds missing columns to Devices table.
+    /// </summary>
+    public string FixDatabaseSchema(string? adminPasswordOverride = null)
+    {
+        var sb = new StringBuilder();
+        
+        // Step 1: Ensure basic connection settings are correct
+        var changed = EnsurePostgreSqlControllerSettings();
+        EnsurePostgreSqlServiceRunning();
+        var accessChanged = EnsureExpectedPostgreSqlAccess(adminPasswordOverride);
+        var test = TestPostgreSqlConnection();
+        if (!test.ok)
+        {
+            throw new InvalidOperationException(test.message);
+        }
+        
+        sb.AppendLine("✓ Connection settings validated.");
+
+        // Step 2: Get the connection string for the application database
+        var connString = GetPostgreSqlConnectionString();
+        if (string.IsNullOrWhiteSpace(connString))
+        {
+            throw new InvalidOperationException("PostgreSQLConnection not found in appsettings.json");
+        }
+
+        // Step 3: Ensure schema exists AND set search_path for the connection
+        try
+        {
+            using var conn = new NpgsqlConnection(connString);
+            conn.Open();
+            
+            // Create schema if not exists
+            var schemaSql = $"CREATE SCHEMA IF NOT EXISTS \"{ExpectedPostgreSqlSchema}\";";
+            using var cmd = new NpgsqlCommand(schemaSql, conn);
+            cmd.ExecuteNonQuery();
+            
+            // Set search_path for this connection
+            var searchPathSql = $"SET search_path TO \"{ExpectedPostgreSqlSchema}\";";
+            cmd.CommandText = searchPathSql;
+            cmd.ExecuteNonQuery();
+            
+            sb.AppendLine($"✓ Schema '{ExpectedPostgreSqlSchema}' ensured and search_path set.");
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"✗ FAILED: Schema creation - {RedactSecrets(ex.Message)}");
+        }
+
+        // Step 4: Create ALL core tables first (so scripts that ALTER them don't fail)
+        try
+        {
+            EnsureCoreTablesExist(connString);
+            sb.AppendLine("✓ Core tables (Employees, AttendanceRecords, Devices, Areas, Departments, etc.) verified/created.");
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"✗ FAILED: Core tables - {RedactSecrets(ex.Message)}");
+        }
+
+        // Step 5: Run supplementary SQL scripts (add columns, biometrics, etc.)
+        var scripts = new[]
+        {
+            ("ensure_logs_transactions_tables.sql",  "Create AppLogs and TransactionDetails tables"),
+            ("ensure_unified_biometrics_schema.sql", "Create users, biometric_templates, biometric_photos tables"),
+            ("ensure_device_capability_columns.sql", "Add capability columns to Devices table"),
+        };
+
+        using (var sharedConn = new NpgsqlConnection(connString))
+        {
+            sharedConn.Open();
+            using (var setCmd = new NpgsqlCommand($"SET search_path TO \"{ExpectedPostgreSqlSchema}\";", sharedConn))
+                setCmd.ExecuteNonQuery();
+
+            foreach (var (fileName, description) in scripts)
+            {
+                try
+                {
+                    var scriptPath = ResolveSqlScriptPath(fileName);
+                    if (!File.Exists(scriptPath))
+                    {
+                        sb.AppendLine($"⚠ Script not found: {fileName} (expected at {scriptPath})");
+                        continue;
+                    }
+                    var sql = File.ReadAllText(scriptPath);
+                    sql = sql.Replace($"SET search_path TO \"{ExpectedPostgreSqlSchema}\";", "", StringComparison.OrdinalIgnoreCase);
+                    sql = sql.Replace($"SET search_path TO {ExpectedPostgreSqlSchema};", "", StringComparison.OrdinalIgnoreCase);
+                    sql = sql.Replace("SET search_path TO E_Attendace;", "", StringComparison.OrdinalIgnoreCase);
+                    using var cmd = new NpgsqlCommand(sql, sharedConn) { CommandTimeout = 120 };
+                    cmd.ExecuteNonQuery();
+                    sb.AppendLine($"✓ {description} ({fileName})");
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"✗ FAILED: {description} ({fileName}) - {RedactSecrets(ex.Message)}");
+                }
+            }
+        }
+
+        // Step 6: Verify all expected tables exist
+        var verification = VerifyExpectedTables(connString);
+        sb.AppendLine("");
+        sb.AppendLine("=== Verification ===");
+        sb.AppendLine(verification);
+
+        return sb.ToString();
+    }
+
+    private string ResolveSqlScriptPath(string fileName)
+    {
+        // Try multiple locations - prioritize source files over output directory to ensure we use latest fixes
+        var candidates = new[]
+        {
+            Path.Combine(ResolveSolutionRoot(), "E.Attendance.Web", fileName),
+            Path.Combine(ResolveSolutionRoot(), fileName),
+            Path.Combine(Environment.CurrentDirectory, "E.Attendance.Web", fileName),
+            Path.Combine(AppContext.BaseDirectory, fileName),
+            Path.Combine(Environment.CurrentDirectory, fileName),
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        // Return first candidate for error reporting
+        return candidates[0];
+    }
+
+    private void ExecuteSqlScript(string connectionString, string sql, string? schema = null)
+    {
+        using var conn = new NpgsqlConnection(connectionString);
+        conn.Open();
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.CommandTimeout = 120;
+        if (!string.IsNullOrWhiteSpace(schema))
+        {
+            cmd.CommandText = $"SET search_path TO \"{schema}\";";
+            cmd.ExecuteNonQuery();
+            cmd.CommandText = sql;
+        }
+        cmd.ExecuteNonQuery();
+    }
+
+    private void EnsureCoreTablesExist(string connectionString)
+    {
+        var schema = ExpectedPostgreSqlSchema;  // "E_Attendace"
+        var user   = ExpectedPostgreSqlUser;    // "E_Attendace"
+
+        // Each statement runs independently — one failure won't block the rest.
+        var statements = new[]
+        {
+            $"CREATE SCHEMA IF NOT EXISTS \"{schema}\";",
+            $"SET search_path TO \"{schema}\";",
+            $"GRANT USAGE ON SCHEMA \"{schema}\" TO \"{user}\";",
+
+            // Employees
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."Employees" (
+                "Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                "EmployeeCode" TEXT NOT NULL DEFAULT '',
+                "FirstName" TEXT NOT NULL DEFAULT '',
+                "LastName" TEXT NOT NULL DEFAULT '',
+                "FullName" TEXT NOT NULL DEFAULT '',
+                "Email" TEXT NULL,
+                "Phone" TEXT NULL,
+                "BranchId" INTEGER NULL,
+                "DepartmentId" INTEGER NULL,
+                "DesignationId" INTEGER NULL,
+                "ShiftId" INTEGER NULL,
+                "JoinDate" date NULL,
+                "Status" TEXT NOT NULL DEFAULT 'active',
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+            $"CREATE UNIQUE INDEX IF NOT EXISTS \"IX_Employees_EmployeeCode\" ON \"{schema}\".\"Employees\" (\"EmployeeCode\") WHERE \"EmployeeCode\" <> '';",
+
+            // AttendanceRecords
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."AttendanceRecords" (
+                "Id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                "PersonnelId" TEXT NOT NULL DEFAULT '',
+                "AttendanceDate" date NOT NULL,
+                "FirstIn" timestamptz NULL,
+                "LastOut" timestamptz NULL,
+                "TotalWorkHours" numeric(10,2) NOT NULL DEFAULT 0,
+                "LateMinutes" INTEGER NOT NULL DEFAULT 0,
+                "EarlyExitMinutes" INTEGER NOT NULL DEFAULT 0,
+                "OvertimeMinutes" INTEGER NOT NULL DEFAULT 0,
+                "Status" TEXT NOT NULL DEFAULT 'Present',
+                "ProcessedAt" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+
+            // AppLogs
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."AppLogs" (
+                "Id" TEXT PRIMARY KEY,
+                "TimestampUtc" timestamptz NOT NULL DEFAULT NOW(),
+                "Level" TEXT NOT NULL DEFAULT 'INFO',
+                "Source" TEXT NOT NULL DEFAULT '',
+                "Message" TEXT NOT NULL DEFAULT '',
+                "Detail" TEXT NULL
+            );
+            """,
+            $"CREATE INDEX IF NOT EXISTS \"IX_AppLogs_TimestampUtc\" ON \"{schema}\".\"AppLogs\" (\"TimestampUtc\" DESC);",
+
+            // TransactionDetails
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."TransactionDetails" (
+                "Id" TEXT PRIMARY KEY,
+                "ReceivedUtc" timestamptz NOT NULL DEFAULT NOW(),
+                "DeviceSerialNumber" TEXT NULL,
+                "SourceTable" TEXT NOT NULL DEFAULT '',
+                "RawLine" TEXT NOT NULL DEFAULT '',
+                "EmployeeCode" TEXT NULL,
+                "PunchTime" timestamptz NULL,
+                "StatusCode" INTEGER NULL,
+                "VerifyMode" INTEGER NULL,
+                "Workcode" TEXT NULL,
+                "ParsedOk" INTEGER NOT NULL DEFAULT 0
+            );
+            """,
+            $"CREATE INDEX IF NOT EXISTS \"IX_TransactionDetails_ReceivedUtc\" ON \"{schema}\".\"TransactionDetails\" (\"ReceivedUtc\" DESC);",
+            $"CREATE INDEX IF NOT EXISTS \"IX_TransactionDetails_EmployeeCode\" ON \"{schema}\".\"TransactionDetails\" (\"EmployeeCode\");",
+            $"CREATE INDEX IF NOT EXISTS \"IX_TransactionDetails_DeviceSerial\" ON \"{schema}\".\"TransactionDetails\" (\"DeviceSerialNumber\");",
+            $"CREATE UNIQUE INDEX IF NOT EXISTS \"UX_TransactionDetails_Source_Raw\" ON \"{schema}\".\"TransactionDetails\" (COALESCE(\"DeviceSerialNumber\",''),\"SourceTable\",\"RawLine\");",
+
+            // Timetables
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."Timetables" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "TimetableName" TEXT NOT NULL,
+                "IsActive" BOOLEAN NOT NULL DEFAULT TRUE,
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+
+            // BreakTimes
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."BreakTimes" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "BreakName" TEXT NOT NULL,
+                "StartTime" time NOT NULL,
+                "EndTime" time NOT NULL,
+                "DurationMinutes" INTEGER NOT NULL DEFAULT 0,
+                "CalculateType" TEXT NOT NULL DEFAULT 'auto_deduct',
+                "MinimumBreakMinutes" INTEGER NOT NULL DEFAULT 0,
+                "IsActive" BOOLEAN NOT NULL DEFAULT TRUE
+            );
+            """,
+
+            // TimetableDays
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."TimetableDays" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "TimetableId" INTEGER NOT NULL REFERENCES "{schema}"."Timetables"("Id") ON DELETE CASCADE,
+                "DayOfWeek" INTEGER NOT NULL,
+                "IsWeeklyOff" BOOLEAN NOT NULL DEFAULT FALSE,
+                "CheckInTime" time NOT NULL DEFAULT TIME '10:00',
+                "CheckInStartTime" time NOT NULL DEFAULT TIME '00:00',
+                "CheckInEndTime" time NOT NULL DEFAULT TIME '10:30',
+                "CheckOutStartTime" time NOT NULL DEFAULT TIME '17:00',
+                "CheckOutTime" time NOT NULL DEFAULT TIME '23:59',
+                "CheckOutEndTime" time NOT NULL DEFAULT TIME '00:59',
+                "CrossDay" BOOLEAN NOT NULL DEFAULT FALSE,
+                "UseBreakTime" BOOLEAN NOT NULL DEFAULT FALSE,
+                "BreakTimeId" INTEGER NULL
+            );
+            """,
+
+            // TimetableDayBreakTimes
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."TimetableDayBreakTimes" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "TimetableDayId" INTEGER NOT NULL REFERENCES "{schema}"."TimetableDays"("Id") ON DELETE CASCADE,
+                "BreakTimeId" INTEGER NOT NULL REFERENCES "{schema}"."BreakTimes"("Id") ON DELETE CASCADE,
+                "SortOrder" INTEGER NOT NULL DEFAULT 0
+            );
+            """,
+
+            // EmployeeTimetables
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."EmployeeTimetables" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "PersonnelId" TEXT NOT NULL,
+                "TimetableId" INTEGER NOT NULL REFERENCES "{schema}"."Timetables"("Id") ON DELETE CASCADE,
+                "EffectiveFrom" date NOT NULL,
+                "IsActive" BOOLEAN NOT NULL DEFAULT TRUE
+            );
+            """,
+
+            // DepartmentTimetables
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."DepartmentTimetables" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "DepartmentId" INTEGER NOT NULL,
+                "TimetableId" INTEGER NOT NULL REFERENCES "{schema}"."Timetables"("Id") ON DELETE CASCADE,
+                "EffectiveFrom" date NOT NULL,
+                "IsActive" BOOLEAN NOT NULL DEFAULT TRUE
+            );
+            """,
+
+            // Holidays
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."Holidays" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "HolidayDate" date NOT NULL,
+                "HolidayName" TEXT NOT NULL,
+                "Description" TEXT NULL,
+                "IsRecurring" BOOLEAN NOT NULL DEFAULT FALSE,
+                "DepartmentId" INTEGER NULL,
+                "IsActive" BOOLEAN NOT NULL DEFAULT TRUE
+            );
+            """,
+
+            // AttendancePolicies
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."AttendancePolicies" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "WeeklyOffWorkAsOvertime" BOOLEAN NOT NULL DEFAULT TRUE,
+                "HolidayWorkAsOvertime" BOOLEAN NOT NULL DEFAULT TRUE,
+                "UpdatedAt" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+            $"INSERT INTO \"{schema}\".\"AttendancePolicies\" (\"WeeklyOffWorkAsOvertime\",\"HolidayWorkAsOvertime\") SELECT true,true WHERE NOT EXISTS (SELECT 1 FROM \"{schema}\".\"AttendancePolicies\");",
+
+            // LeaveTypes
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."LeaveTypes" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "LeaveName" TEXT NOT NULL,
+                "IsPaid" BOOLEAN NOT NULL DEFAULT TRUE,
+                "MaxPerYear" numeric(10,2) NULL,
+                "CarryForward" BOOLEAN NOT NULL DEFAULT FALSE,
+                "AllowHalfDay" BOOLEAN NOT NULL DEFAULT FALSE,
+                "IsActive" BOOLEAN NOT NULL DEFAULT TRUE
+            );
+            """,
+            $"CREATE UNIQUE INDEX IF NOT EXISTS \"UX_LeaveTypes_LeaveName\" ON \"{schema}\".\"LeaveTypes\" (\"LeaveName\");",
+            $"INSERT INTO \"{schema}\".\"LeaveTypes\" (\"LeaveName\",\"IsPaid\",\"MaxPerYear\") VALUES ('Casual Leave',true,12) ON CONFLICT DO NOTHING;",
+            $"INSERT INTO \"{schema}\".\"LeaveTypes\" (\"LeaveName\",\"IsPaid\",\"MaxPerYear\") VALUES ('Sick Leave',true,10) ON CONFLICT DO NOTHING;",
+            $"INSERT INTO \"{schema}\".\"LeaveTypes\" (\"LeaveName\",\"IsPaid\",\"MaxPerYear\") VALUES ('Annual Leave',true,15) ON CONFLICT DO NOTHING;",
+
+            // LeaveRequests
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."LeaveRequests" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "PersonnelId" TEXT NOT NULL,
+                "LeaveTypeId" INTEGER NOT NULL REFERENCES "{schema}"."LeaveTypes"("Id") ON DELETE CASCADE,
+                "FromDate" date NOT NULL,
+                "ToDate" date NOT NULL,
+                "TotalDays" numeric(10,2) NOT NULL DEFAULT 0,
+                "IsHalfDay" BOOLEAN NOT NULL DEFAULT FALSE,
+                "HalfDayType" TEXT NULL,
+                "Reason" TEXT NULL,
+                "Status" TEXT NOT NULL DEFAULT 'pending',
+                "AppliedDate" timestamptz NOT NULL DEFAULT NOW(),
+                "ApprovedBy" TEXT NULL,
+                "ApprovedDate" timestamptz NULL,
+                "CancelledDate" timestamptz NULL
+            );
+            """,
+
+            // LeaveBalances
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."LeaveBalances" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "PersonnelId" TEXT NOT NULL,
+                "LeaveTypeId" INTEGER NOT NULL REFERENCES "{schema}"."LeaveTypes"("Id") ON DELETE CASCADE,
+                "Year" INTEGER NOT NULL,
+                "TotalAllocated" numeric(10,2) NOT NULL DEFAULT 0,
+                "Used" numeric(10,2) NOT NULL DEFAULT 0,
+                "Remaining" numeric(10,2) NOT NULL DEFAULT 0,
+                "UpdatedAt" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+
+            // LeaveAttachments
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."LeaveAttachments" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "LeaveRequestId" INTEGER NOT NULL REFERENCES "{schema}"."LeaveRequests"("Id") ON DELETE CASCADE,
+                "FileName" TEXT NOT NULL,
+                "FileUrl" TEXT NOT NULL,
+                "UploadedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "UploadedBy" TEXT NULL
+            );
+            """,
+
+            // LeaveRemarks
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."LeaveRemarks" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "LeaveRequestId" INTEGER NOT NULL REFERENCES "{schema}"."LeaveRequests"("Id") ON DELETE CASCADE,
+                "Action" TEXT NOT NULL,
+                "Remarks" TEXT NULL,
+                "ActorId" TEXT NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+
+            // PersonnelAreas
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."PersonnelAreas" (
+                "Id" TEXT PRIMARY KEY,
+                "Code" TEXT NOT NULL UNIQUE,
+                "Name" TEXT NOT NULL,
+                "Remark" TEXT NOT NULL DEFAULT '',
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+            $"INSERT INTO \"{schema}\".\"PersonnelAreas\" (\"Id\",\"Code\",\"Name\",\"Remark\") VALUES (gen_random_uuid()::text,'1','Default Area','') ON CONFLICT (\"Code\") DO NOTHING;",
+
+            // PersonnelDepartments
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."PersonnelDepartments" (
+                "Id" TEXT PRIMARY KEY,
+                "Code" TEXT NOT NULL UNIQUE,
+                "Name" TEXT NOT NULL,
+                "Superior" TEXT NOT NULL DEFAULT '',
+                "Manager" TEXT NOT NULL DEFAULT '',
+                "AreaCode" TEXT NOT NULL DEFAULT '1',
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+            $"INSERT INTO \"{schema}\".\"PersonnelDepartments\" (\"Id\",\"Code\",\"Name\",\"AreaCode\") VALUES (gen_random_uuid()::text,'1','Default Department','1') ON CONFLICT (\"Code\") DO NOTHING;",
+
+            // PersonnelPositions
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."PersonnelPositions" (
+                "Id" TEXT PRIMARY KEY,
+                "Code" TEXT NOT NULL UNIQUE,
+                "Name" TEXT NOT NULL,
+                "Department" TEXT NOT NULL DEFAULT '',
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+
+            // PersonnelDeviceAssignments
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."PersonnelDeviceAssignments" (
+                "DeviceSerial" TEXT PRIMARY KEY,
+                "AreaCode" TEXT NOT NULL DEFAULT '1',
+                "DepartmentCode" TEXT NOT NULL DEFAULT '1',
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+
+            // PersonnelEmployeeProfiles
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."PersonnelEmployeeProfiles" (
+                "EmployeeCode" TEXT PRIMARY KEY,
+                "Privilege" TEXT NOT NULL DEFAULT 'User',
+                "CardNumber" TEXT NOT NULL DEFAULT '',
+                "PictureDataUrl" TEXT NOT NULL DEFAULT '',
+                "MobileNumber" TEXT NOT NULL DEFAULT '',
+                "Gender" TEXT NOT NULL DEFAULT 'Male',
+                "HireDate" TEXT NOT NULL DEFAULT '',
+                "Password" TEXT NOT NULL DEFAULT '',
+                "Position" TEXT NOT NULL DEFAULT '',
+                "AreaCode" TEXT NOT NULL DEFAULT '',
+                "DepartmentCode" TEXT NOT NULL DEFAULT '',
+                "AssignmentsJson" TEXT NOT NULL DEFAULT '[]',
+                "VerifyMode" INTEGER NOT NULL DEFAULT 0,
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+
+            // auth_users
+            $"CREATE TABLE IF NOT EXISTS \"{schema}\".\"auth_users\" (" +
+            "\"Id\" SERIAL PRIMARY KEY," +
+            "\"UserName\" TEXT NOT NULL UNIQUE," +
+            "\"PasswordHash\" TEXT NOT NULL DEFAULT ''," +
+            "\"FullName\" TEXT NULL," +
+            "\"Role\" TEXT NOT NULL DEFAULT 'Operator'," +
+            "\"Status\" TEXT NOT NULL DEFAULT 'active'," +
+            "\"FeatureAccessJson\" jsonb NOT NULL DEFAULT '{}'::jsonb," +
+            "\"CreatedAtUtc\" timestamptz NOT NULL DEFAULT NOW()," +
+            "\"UpdatedAtUtc\" timestamptz NOT NULL DEFAULT NOW()" +
+            ");",
+            // Default admin — password PB@TechZone; replaced on first startup if wrong
+            $"INSERT INTO \"{schema}\".\"auth_users\" (\"UserName\",\"PasswordHash\",\"FullName\",\"Role\",\"Status\",\"FeatureAccessJson\") VALUES ('admin',md5('PB@TechZone'),'Admin User','Admin','active','{{}}') ON CONFLICT DO NOTHING;",
+
+            // auth_login_attempts — correct schema required by login lockout logic
+            // UserName is PRIMARY KEY; FailureCount/LockedUntilUtc drive lockout
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."auth_login_attempts" (
+                "UserName" TEXT PRIMARY KEY,
+                "FailureCount" INTEGER NOT NULL DEFAULT 0,
+                "LastFailedAtUtc" timestamptz NULL,
+                "LockedUntilUtc" timestamptz NULL,
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+            // Patch existing tables that were created with the old wrong schema (add missing columns)
+            $"ALTER TABLE \"{schema}\".\"auth_login_attempts\" ADD COLUMN IF NOT EXISTS \"FailureCount\" INTEGER NOT NULL DEFAULT 0;",
+            $"ALTER TABLE \"{schema}\".\"auth_login_attempts\" ADD COLUMN IF NOT EXISTS \"LastFailedAtUtc\" timestamptz NULL;",
+            $"ALTER TABLE \"{schema}\".\"auth_login_attempts\" ADD COLUMN IF NOT EXISTS \"LockedUntilUtc\" timestamptz NULL;",
+            $"ALTER TABLE \"{schema}\".\"auth_login_attempts\" ADD COLUMN IF NOT EXISTS \"UpdatedAtUtc\" timestamptz NOT NULL DEFAULT NOW();",
+            // Ensure UserName is unique (needed for ON CONFLICT ... DO UPDATE)
+            $"CREATE UNIQUE INDEX IF NOT EXISTS \"UX_auth_login_attempts_UserName\" ON \"{schema}\".\"auth_login_attempts\" (LOWER(TRIM(\"UserName\")));",
+
+            // app_config
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."app_config" (
+                "ConfigKey" TEXT PRIMARY KEY,
+                "JsonValue" TEXT NOT NULL DEFAULT '',
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """,
+
+            // ── Devices (ZKTeco devices — full schema with all capability columns) ────
+            // Use $$ to allow literal {} in JSONB default without escaping issues
+            $$"""
+            CREATE TABLE IF NOT EXISTS "{{schema}}"."Devices" (
+                "Id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                "SerialNumber" TEXT NOT NULL,
+                "Name" TEXT NOT NULL DEFAULT '',
+                "Model" TEXT NOT NULL DEFAULT '',
+                "IpAddress" TEXT NOT NULL DEFAULT '',
+                "Location" TEXT NOT NULL DEFAULT '',
+                "TimeZone" TEXT NOT NULL DEFAULT '+5:45',
+                "SupportsVisibleLightFace" BOOLEAN NOT NULL DEFAULT FALSE,
+                "SupportsInfraredFace" BOOLEAN NOT NULL DEFAULT FALSE,
+                "SupportsFingerprint" BOOLEAN NOT NULL DEFAULT FALSE,
+                "FaceAlgorithmVersion" TEXT NOT NULL DEFAULT '',
+                "FingerprintAlgorithmVersion" TEXT NOT NULL DEFAULT '',
+                "FirmwareVersion" TEXT NOT NULL DEFAULT '',
+                "DeviceType" TEXT NOT NULL DEFAULT '',
+                "PushVer" TEXT NOT NULL DEFAULT '',
+                "Language" INTEGER NOT NULL DEFAULT 0,
+                "MultiBioDataSupport" TEXT NOT NULL DEFAULT '',
+                "MultiBioPhotoSupport" TEXT NOT NULL DEFAULT '',
+                "MultiBioVersion" TEXT NOT NULL DEFAULT '',
+                "MaxMultiBioDataCount" TEXT NOT NULL DEFAULT '',
+                "MaxMultiBioPhotoCount" TEXT NOT NULL DEFAULT '',
+                "FingerFunOn" BOOLEAN NOT NULL DEFAULT FALSE,
+                "FaceFunOn" BOOLEAN NOT NULL DEFAULT FALSE,
+                "VisiLightFunOn" BOOLEAN NOT NULL DEFAULT FALSE,
+                "BioDataFun" BOOLEAN NOT NULL DEFAULT FALSE,
+                "BioPhotoFun" BOOLEAN NOT NULL DEFAULT FALSE,
+                "SupportsPalm" BOOLEAN NOT NULL DEFAULT FALSE,
+                "SupportsFingerVein" BOOLEAN NOT NULL DEFAULT FALSE,
+                "CapabilitiesJson" JSONB NOT NULL DEFAULT '{}',
+                "CreatedAtUtc" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                "UpdatedAtUtc" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                "Status" INTEGER NOT NULL DEFAULT 0,
+                "IsRegistrationDevice" BOOLEAN NOT NULL DEFAULT FALSE,
+                "IsOnline" BOOLEAN NOT NULL DEFAULT FALSE,
+                "IsRegistered" BOOLEAN NOT NULL DEFAULT FALSE,
+                "LastSeenUtc" TIMESTAMPTZ NULL,
+                "AreaId" INTEGER NOT NULL DEFAULT 1,
+                "DepartmentId" INTEGER NOT NULL DEFAULT 1
+            );
+            """,
+            $"CREATE UNIQUE INDEX IF NOT EXISTS \"IX_Devices_SerialNumber\" ON \"{schema}\".\"Devices\" (\"SerialNumber\");",
+            $"CREATE INDEX IF NOT EXISTS \"IX_Devices_IsOnline\" ON \"{schema}\".\"Devices\" (\"IsOnline\");",
+            $"CREATE INDEX IF NOT EXISTS \"IX_Devices_AreaDept\" ON \"{schema}\".\"Devices\" (\"AreaId\",\"DepartmentId\");",
+
+            // ── DeviceCommands ───────────────────────────────────────────────────────
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."DeviceCommands" (
+                "Id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                "DeviceSerialNumber" TEXT NOT NULL,
+                "CommandText" TEXT NOT NULL,
+                "CreatedUtc" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                "SentUtc" TIMESTAMPTZ NULL,
+                "ReplyText" TEXT NULL
+            );
+            """,
+            $"CREATE INDEX IF NOT EXISTS \"IX_DeviceCommands_Pending\" ON \"{schema}\".\"DeviceCommands\" (\"DeviceSerialNumber\",\"SentUtc\");",
+
+            // ── DeviceSyncLogs ───────────────────────────────────────────────────────
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."DeviceSyncLogs" (
+                "Id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                "DeviceSerialNumber" TEXT NOT NULL,
+                "Type" INTEGER NOT NULL DEFAULT 0,
+                "Status" INTEGER NOT NULL DEFAULT 0,
+                "CommandText" TEXT NOT NULL DEFAULT '',
+                "ResponseText" TEXT NULL,
+                "CreatedUtc" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                "CompletedUtc" TIMESTAMPTZ NULL
+            );
+            """,
+            $"CREATE INDEX IF NOT EXISTS \"IX_DeviceSyncLogs_DeviceStatus\" ON \"{schema}\".\"DeviceSyncLogs\" (\"DeviceSerialNumber\",\"Status\",\"CreatedUtc\");",
+
+            // ── DeviceTableStamps ────────────────────────────────────────────────────
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."DeviceTableStamps" (
+                "DeviceSerialNumber" TEXT NOT NULL,
+                "TableName" TEXT NOT NULL,
+                "StampValue" BIGINT NOT NULL DEFAULT 0,
+                "UpdatedUtc" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY ("DeviceSerialNumber","TableName")
+            );
+            """,
+
+            // ── Areas (integer-based hierarchy) ──────────────────────────────────────
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."Areas" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "Name" TEXT NOT NULL,
+                "IsDefault" BOOLEAN NOT NULL DEFAULT FALSE,
+                "CreatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                "UpdatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE ("Name")
+            );
+            """,
+            $"INSERT INTO \"{schema}\".\"Areas\" (\"Name\",\"IsDefault\") VALUES ('Default Area',TRUE) ON CONFLICT (\"Name\") DO NOTHING;",
+
+            // ── Departments (integer-based, FK to Areas) ─────────────────────────────
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."Departments" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "Name" TEXT NOT NULL,
+                "AreaId" INTEGER NOT NULL DEFAULT 1,
+                "IsDefault" BOOLEAN NOT NULL DEFAULT FALSE,
+                "CreatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                "UpdatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE ("AreaId","Name")
+            );
+            """,
+            $"INSERT INTO \"{schema}\".\"Departments\" (\"Name\",\"AreaId\",\"IsDefault\") VALUES ('Default Department',1,TRUE) ON CONFLICT (\"AreaId\",\"Name\") DO NOTHING;",
+
+            // ── EmployeeDepartments (many-to-many junction) ───────────────────────────
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."EmployeeDepartments" (
+                "EmployeeId" UUID NOT NULL,
+                "DepartmentId" INTEGER NOT NULL,
+                "AssignedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                "AssignedBy" UUID NULL,
+                PRIMARY KEY ("EmployeeId","DepartmentId")
+            );
+            """,
+            $"CREATE INDEX IF NOT EXISTS \"IX_EmployeeDepartments_EmployeeId\" ON \"{schema}\".\"EmployeeDepartments\" (\"EmployeeId\");",
+            $"CREATE INDEX IF NOT EXISTS \"IX_EmployeeDepartments_DepartmentId\" ON \"{schema}\".\"EmployeeDepartments\" (\"DepartmentId\");",
+
+            // ── SyncQueue (background device sync queue) ──────────────────────────────
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."SyncQueue" (
+                "Id" BIGSERIAL PRIMARY KEY,
+                "EntityType" TEXT NOT NULL,
+                "EntityId" TEXT NOT NULL,
+                "Operation" TEXT NOT NULL,
+                "Status" INTEGER NOT NULL DEFAULT 0,
+                "RetryCount" INTEGER NOT NULL DEFAULT 0,
+                "MaxRetries" INTEGER NOT NULL DEFAULT 3,
+                "Payload" TEXT NULL,
+                "ErrorMessage" TEXT NULL,
+                "CreatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                "ProcessedAt" TIMESTAMPTZ NULL,
+                "NextRetryAt" TIMESTAMPTZ NULL
+            );
+            """,
+            $"CREATE INDEX IF NOT EXISTS \"IX_SyncQueue_Status\" ON \"{schema}\".\"SyncQueue\" (\"Status\");",
+
+            // ── Biometric tables ──────────────────────────────────────────────────────
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."users" (
+                pin VARCHAR(50) PRIMARY KEY,
+                name VARCHAR(255),
+                privilege INT,
+                password VARCHAR(255),
+                primary_card VARCHAR(255),
+                secondary_card VARCHAR(255),
+                group_id INT,
+                timezone_profile VARCHAR(32),
+                verify_mode INT,
+                valid_from TIMESTAMP,
+                valid_to TIMESTAMP,
+                expires_enabled BOOLEAN,
+                phone VARCHAR(50),
+                gender INT,
+                nation INT,
+                id_number VARCHAR(50),
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+            """,
+
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."biometric_templates" (
+                id BIGSERIAL PRIMARY KEY,
+                user_pin VARCHAR(50) NOT NULL REFERENCES "{schema}"."users"(pin) ON DELETE CASCADE,
+                type INT NOT NULL,
+                no INT NOT NULL,
+                idx INT NOT NULL,
+                valid BOOLEAN NOT NULL DEFAULT TRUE,
+                duress BOOLEAN NOT NULL DEFAULT FALSE,
+                major_ver INT,
+                minor_ver INT,
+                format INT,
+                template_data TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (user_pin, type, no, idx)
+            );
+            """,
+
+            $"""
+            CREATE TABLE IF NOT EXISTS "{schema}"."biometric_photos" (
+                id BIGSERIAL PRIMARY KEY,
+                user_pin VARCHAR(50) NOT NULL REFERENCES "{schema}"."users"(pin) ON DELETE CASCADE,
+                type INT NOT NULL,
+                no INT NOT NULL,
+                idx INT NOT NULL,
+                format INT,
+                content TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (user_pin, type, no, idx)
+            );
+            """,
+
+            // ── Add missing columns to Employees (biometric/sync fields) ──────────────
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Area\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Department\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"AreaId\" INTEGER NOT NULL DEFAULT 1;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"DepartmentId\" INTEGER NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"DepartmentsJson\" TEXT NOT NULL DEFAULT '[]';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Position\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"CardNumber\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Password\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"MobileNumber\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Gender\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Privilege\" INTEGER NOT NULL DEFAULT 0;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"VerifyMode\" INTEGER NOT NULL DEFAULT 0;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"FaceTemplateVisible\" TEXT NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"FaceTemplateInfrared\" TEXT NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"ProfilePhoto\" TEXT NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"FingerprintTemplates\" TEXT NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"SyncedAt\" TIMESTAMPTZ NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"IsActive\" BOOLEAN NOT NULL DEFAULT TRUE;",
+
+            // ── Triggers — protect default Area/Dept from deletion ────────────────────
+            $"""
+            CREATE OR REPLACE FUNCTION "{schema}".fn_protect_default_area()
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF OLD."Id" = 1 THEN
+                    RAISE EXCEPTION 'Default Area (ID=1) cannot be deleted.';
+                END IF;
+                RETURN OLD;
+            END; $$;
+            """,
+            $"DROP TRIGGER IF EXISTS trg_protect_default_area ON \"{schema}\".\"Areas\";",
+            $"CREATE TRIGGER trg_protect_default_area BEFORE DELETE ON \"{schema}\".\"Areas\" FOR EACH ROW EXECUTE FUNCTION \"{schema}\".fn_protect_default_area();",
+
+            $"""
+            CREATE OR REPLACE FUNCTION "{schema}".fn_protect_default_department()
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF OLD."Id" = 1 THEN
+                    RAISE EXCEPTION 'Default Department (ID=1) cannot be deleted.';
+                END IF;
+                RETURN OLD;
+            END; $$;
+            """,
+            $"DROP TRIGGER IF EXISTS trg_protect_default_dept ON \"{schema}\".\"Departments\";",
+            $"CREATE TRIGGER trg_protect_default_dept BEFORE DELETE ON \"{schema}\".\"Departments\" FOR EACH ROW EXECUTE FUNCTION \"{schema}\".fn_protect_default_department();",
+
+            // ── Schema patch — fix every column mismatch from older installs ──────────
+            // auth_users: old installer used uuid Id + "Username" (lowercase n) — patch to correct schema
+            $"ALTER TABLE \"{schema}\".\"auth_users\" ADD COLUMN IF NOT EXISTS \"UserName\" TEXT;",
+            $"UPDATE \"{schema}\".\"auth_users\" SET \"UserName\" = \"Username\" WHERE \"UserName\" IS NULL AND \"Username\" IS NOT NULL;",
+            $"ALTER TABLE \"{schema}\".\"auth_users\" ADD COLUMN IF NOT EXISTS \"FullName\" TEXT NULL;",
+            $"ALTER TABLE \"{schema}\".\"auth_users\" ADD COLUMN IF NOT EXISTS \"Role\" TEXT NOT NULL DEFAULT 'Operator';",
+            $"ALTER TABLE \"{schema}\".\"auth_users\" ADD COLUMN IF NOT EXISTS \"Status\" TEXT NOT NULL DEFAULT 'active';",
+            $"ALTER TABLE \"{schema}\".\"auth_users\" ADD COLUMN IF NOT EXISTS \"FeatureAccessJson\" jsonb NOT NULL DEFAULT '{{}}';",
+            $"ALTER TABLE \"{schema}\".\"auth_users\" ADD COLUMN IF NOT EXISTS \"CreatedAtUtc\" timestamptz NOT NULL DEFAULT NOW();",
+            $"ALTER TABLE \"{schema}\".\"auth_users\" ADD COLUMN IF NOT EXISTS \"UpdatedAtUtc\" timestamptz NOT NULL DEFAULT NOW();",
+            $"CREATE UNIQUE INDEX IF NOT EXISTS \"UX_auth_users_UserName\" ON \"{schema}\".\"auth_users\" (LOWER(TRIM(\"UserName\")));",
+
+            // AttendanceRecords: old installer schema had DeviceSerial/PunchTime/PunchType — patch to correct schema
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"EmployeeId\" TEXT;",
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"EmployeeCode\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"Timestamp\" timestamptz;",
+            $"UPDATE \"{schema}\".\"AttendanceRecords\" SET \"Timestamp\" = \"PunchTime\" WHERE \"Timestamp\" IS NULL AND \"PunchTime\" IS NOT NULL;",
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"Status\" INTEGER NOT NULL DEFAULT 0;",
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"StatusCode\" INTEGER NULL;",
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"VerifyMode\" INTEGER NULL;",
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"Workcode\" TEXT NULL;",
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"DeviceId\" UUID NULL;",
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"DeviceSerialNumber\" TEXT NULL;",
+            $"UPDATE \"{schema}\".\"AttendanceRecords\" SET \"DeviceSerialNumber\" = \"DeviceSerial\" WHERE \"DeviceSerialNumber\" IS NULL AND \"DeviceSerial\" IS NOT NULL;",
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"AreaId\" INTEGER NOT NULL DEFAULT 1;",
+            $"ALTER TABLE \"{schema}\".\"AttendanceRecords\" ADD COLUMN IF NOT EXISTS \"DepartmentId\" INTEGER NOT NULL DEFAULT 1;",
+
+            // Employees: patch all biometric/sync columns that may be missing in older installs
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"EmployeeCode\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"FullName\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Area\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Department\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"DepartmentId\" INTEGER NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"AreaId\" INTEGER NOT NULL DEFAULT 1;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"DepartmentsJson\" TEXT NOT NULL DEFAULT '[]';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Position\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"CardNumber\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Password\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"MobileNumber\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Gender\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"Privilege\" INTEGER NOT NULL DEFAULT 0;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"VerifyMode\" INTEGER NOT NULL DEFAULT 0;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"FaceTemplateVisible\" TEXT NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"FaceTemplateInfrared\" TEXT NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"ProfilePhoto\" TEXT NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"FingerprintTemplates\" TEXT NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"SyncedAt\" timestamptz NULL;",
+            $"ALTER TABLE \"{schema}\".\"Employees\" ADD COLUMN IF NOT EXISTS \"IsActive\" BOOLEAN NOT NULL DEFAULT TRUE;",
+            $"CREATE UNIQUE INDEX IF NOT EXISTS \"IX_Employees_EmployeeCode\" ON \"{schema}\".\"Employees\" (\"EmployeeCode\") WHERE \"EmployeeCode\" <> '';",
+
+            // Devices: patch any missing columns that older installs might not have
+            $"ALTER TABLE \"{schema}\".\"Devices\" ADD COLUMN IF NOT EXISTS \"Location\" TEXT NOT NULL DEFAULT '';",
+            $"ALTER TABLE \"{schema}\".\"Devices\" ADD COLUMN IF NOT EXISTS \"IsRegistered\" BOOLEAN NOT NULL DEFAULT FALSE;",
+            $"ALTER TABLE \"{schema}\".\"Devices\" ADD COLUMN IF NOT EXISTS \"AreaId\" INTEGER NOT NULL DEFAULT 1;",
+            $"ALTER TABLE \"{schema}\".\"Devices\" ADD COLUMN IF NOT EXISTS \"DepartmentId\" INTEGER NOT NULL DEFAULT 1;",
+
+            // Ensure default Area and Department rows are always present
+            $"INSERT INTO \"{schema}\".\"Areas\" (\"Name\",\"IsDefault\") VALUES ('Default Area',TRUE) ON CONFLICT (\"Name\") DO NOTHING;",
+            $"INSERT INTO \"{schema}\".\"Departments\" (\"Name\",\"AreaId\",\"IsDefault\") VALUES ('Default Department',1,TRUE) ON CONFLICT (\"AreaId\",\"Name\") DO NOTHING;",
+
+            // Ensure default admin login works even after schema migration (password: PB@TechZone)
+            $"INSERT INTO \"{schema}\".\"auth_users\" (\"UserName\",\"PasswordHash\",\"FullName\",\"Role\",\"Status\",\"FeatureAccessJson\") VALUES ('admin',md5('PB@TechZone'),'Admin User','Admin','active','{{}}') ON CONFLICT DO NOTHING;",
+
+            // Grants
+            $"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA \"{schema}\" TO \"{user}\";",
+            $"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA \"{schema}\" TO \"{user}\";",
+            $"ALTER DEFAULT PRIVILEGES IN SCHEMA \"{schema}\" GRANT ALL ON TABLES TO \"{user}\";",
+            $"ALTER DEFAULT PRIVILEGES IN SCHEMA \"{schema}\" GRANT ALL ON SEQUENCES TO \"{user}\";",
+        };
+
+        using var conn = new NpgsqlConnection(connectionString);
+        conn.Open();
+        foreach (var sql in statements)
+        {
+            try
+            {
+                using var cmd = new NpgsqlCommand(sql, conn) { CommandTimeout = 60 };
+                cmd.ExecuteNonQuery();
+            }
+            catch
+            {
+                // Ignore per-statement failures — best-effort, never abort the whole fix
+            }
+        }
+    }
+
+
+
+
+
+    /// <summary>Returns a one-line summary of key entity counts for the DB stats label.</summary>
+    public string GetDatabaseStats()
+    {
+        var connString = GetPostgreSqlConnectionString();
+        if (string.IsNullOrWhiteSpace(connString)) return "Not connected";
+
+        var schema = ExpectedPostgreSqlSchema;
+        static int Count(NpgsqlConnection c, string sql)
+        {
+            try { using var cmd = new NpgsqlCommand(sql, c) { CommandTimeout = 5 }; return Convert.ToInt32(cmd.ExecuteScalar()); }
+            catch { return -1; }
+        }
+
+        using var conn = new NpgsqlConnection(connString);
+        conn.Open();
+        var areas   = Count(conn, $"SELECT COUNT(*) FROM \"{schema}\".\"Areas\"");
+        var depts   = Count(conn, $"SELECT COUNT(*) FROM \"{schema}\".\"Departments\"");
+        var devices = Count(conn, $"SELECT COUNT(*) FROM \"{schema}\".\"Devices\"");
+        var emps    = Count(conn, $"SELECT COUNT(*) FROM \"{schema}\".\"Employees\"");
+        var attn    = Count(conn, $"SELECT COUNT(*) FROM \"{schema}\".\"AttendanceRecords\"");
+
+        string F(int v) => v < 0 ? "–" : v.ToString();
+        return $"Areas: {F(areas)} | Depts: {F(depts)} | Devices: {F(devices)} | Employees: {F(emps)} | Attendance: {F(attn)}";
+    }
+
+    private string VerifyExpectedTables(string connectionString)
+    {
+        var expectedTables = new[]
+        {
+            // Core attendance tables
+            "Employees", "AttendanceRecords", "Devices",
+            // Hierarchy
+            "Areas", "Departments", "EmployeeDepartments",
+            // Device protocol tables
+            "DeviceCommands", "DeviceSyncLogs", "DeviceTableStamps", "SyncQueue",
+            // Logging
+            "AppLogs", "TransactionDetails",
+            // Schedule/shift
+            "Timetables", "BreakTimes", "TimetableDays", "TimetableDayBreakTimes",
+            "EmployeeTimetables", "DepartmentTimetables",
+            // Attendance management
+            "Holidays", "AttendancePolicies",
+            // Leave management
+            "LeaveTypes", "LeaveRequests", "LeaveBalances", "LeaveAttachments", "LeaveRemarks",
+            // Personnel management
+            "PersonnelAreas", "PersonnelDepartments", "PersonnelPositions",
+            "PersonnelDeviceAssignments", "PersonnelEmployeeProfiles",
+            // Auth & config
+            "auth_users", "auth_login_attempts", "app_config",
+            // Biometric
+            "users", "biometric_templates", "biometric_photos"
+        };
+
+        var sb = new StringBuilder();
+        using var conn = new NpgsqlConnection(connectionString);
+        conn.Open();
+
+        foreach (var table in expectedTables)
+        {
+            using var cmd = new NpgsqlCommand(
+                $@"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = '{ExpectedPostgreSqlSchema}' AND table_name = @table)",
+                conn);
+            cmd.Parameters.AddWithValue("table", table);
+            var exists = cmd.ExecuteScalar() is true;
+            sb.AppendLine(exists ? $"  ✓ {table}" : $"  ✗ MISSING: {table}");
+        }
+
+        return sb.ToString();
     }
 
     public string RepairPostgreSqlLogin(string adminPassword)
@@ -287,8 +1268,10 @@ internal sealed class WebServiceManager
             throw new InvalidOperationException("PostgreSQL admin password is required.");
         }
 
-        StopServiceForDatabaseMaintenance();
-
+        // IMPORTANT: do NOT stop the web service or touch the database before the admin
+        // password is confirmed valid. A wrong password must leave the running service and
+        // the existing data completely untouched. We only ensure PostgreSQL itself is up
+        // (starting it if stopped is non-destructive) so we can validate the credentials.
         _ = EnsurePostgreSqlControllerSettings();
         EnsurePostgreSqlServiceRunning();
 
@@ -300,12 +1283,14 @@ internal sealed class WebServiceManager
 
         var expectedBuilder = new NpgsqlConnectionStringBuilder(expectedConnection);
         var host = string.IsNullOrWhiteSpace(expectedBuilder.Host) ? "127.0.0.1" : expectedBuilder.Host;
-        var configuredPort = expectedBuilder.Port <= 0 ? 5432 : expectedBuilder.Port;
+        var configuredPort = expectedBuilder.Port <= 0 ? ExpectedPostgreSqlPort : expectedBuilder.Port;
 
         var candidates = BuildPostgreSqlPortCandidates(configuredPort);
         NpgsqlConnectionStringBuilder? adminBuilder = null;
         Exception? lastError = null;
 
+        // STEP 1 — validate the admin password with a read-only login probe only.
+        // No service is stopped and no data is altered here.
         foreach (var candidatePort in candidates)
         {
             var candidateBuilder = new NpgsqlConnectionStringBuilder
@@ -322,10 +1307,8 @@ internal sealed class WebServiceManager
 
             try
             {
-                using var adminConnection = new NpgsqlConnection(candidateBuilder.ConnectionString);
-                adminConnection.Open();
-                EnsureApplicationRole(adminConnection, GetConfiguredApplicationDbPassword());
-                ResetApplicationDatabase(adminConnection);
+                using var probe = new NpgsqlConnection(candidateBuilder.ConnectionString);
+                probe.Open();
                 adminBuilder = candidateBuilder;
                 break;
             }
@@ -340,8 +1323,20 @@ internal sealed class WebServiceManager
             var portsLabel = string.Join(", ", candidates);
             var message = lastError is null ? "Unknown error." : RedactSecrets(lastError.Message);
             throw new InvalidOperationException(
-                $"Failed to initialize database with postgres credentials on {host} (ports tried: {portsLabel}). {message}",
+                $"Incorrect PostgreSQL admin password (or server unreachable) on {host} (ports tried: {portsLabel}). " +
+                "No changes were made — the running service and existing data were left untouched. " + message,
                 lastError);
+        }
+
+        // STEP 2 — password confirmed. Only now is it safe to stop the service and reset
+        // the application database.
+        StopServiceForDatabaseMaintenance();
+
+        using (var adminConnection = new NpgsqlConnection(adminBuilder.ConnectionString))
+        {
+            adminConnection.Open();
+            EnsureApplicationRole(adminConnection, GetConfiguredApplicationDbPassword());
+            ResetApplicationDatabase(adminConnection);
         }
 
         var port = adminBuilder.Port;
@@ -496,6 +1491,23 @@ internal sealed class WebServiceManager
         }
 
         connectionStrings["PostgreSQLConnection"] = builder.ConnectionString;
+        root["ConnectionStrings"] = connectionStrings;
+        SaveWebAppSettingsJson(root);
+    }
+
+    /// <summary>
+    /// Updates the PostgreSQL connection string with a completely new connection string.
+    /// </summary>
+    public void UpdatePostgreSqlConnection(string connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new ArgumentException("Connection string cannot be empty.", nameof(connectionString));
+        }
+
+        var root = LoadWebAppSettingsJson() ?? new JsonObject();
+        var connectionStrings = root["ConnectionStrings"] as JsonObject ?? new JsonObject();
+        connectionStrings["PostgreSQLConnection"] = connectionString;
         root["ConnectionStrings"] = connectionStrings;
         SaveWebAppSettingsJson(root);
     }
@@ -820,7 +1832,7 @@ internal sealed class WebServiceManager
     private (bool ok, string message, int port) ProbePostgreSql(NpgsqlConnectionStringBuilder baseBuilder)
     {
         var host = string.IsNullOrWhiteSpace(baseBuilder.Host) ? "127.0.0.1" : baseBuilder.Host;
-        var configuredPort = baseBuilder.Port <= 0 ? 5432 : baseBuilder.Port;
+        var configuredPort = baseBuilder.Port <= 0 ? ExpectedPostgreSqlPort : baseBuilder.Port;
         var errors = new List<string>();
         var portsTried = BuildPostgreSqlPortCandidates(configuredPort);
 
@@ -859,9 +1871,9 @@ internal sealed class WebServiceManager
             }
         }
 
-        var portsLabel = portsTried.Count == 0 ? configuredPort.ToString(CultureInfo.InvariantCulture) : string.Join(", ", portsTried);
+        var portsLabel = portsTried.Count == 0 ? ExpectedPostgreSqlPort.ToString(CultureInfo.InvariantCulture) : string.Join(", ", portsTried);
         var errorLabel = errors.Count == 0 ? "Unknown error." : string.Join("\n", errors);
-        return (false, $"Connection failed on configured/fallback ports (tried: {portsLabel}).\n{errorLabel}", configuredPort);
+        return (false, $"Connection failed on port {portsLabel}.\n{errorLabel}", ExpectedPostgreSqlPort);
     }
 
     private int TryResolvePostgreSqlPortFromServiceConfig()
@@ -1186,32 +2198,9 @@ internal sealed class WebServiceManager
 
     private IReadOnlyList<int> BuildPostgreSqlPortCandidates(int configuredPort, int? servicePortOverride = null)
     {
-        var ports = new List<int>();
-
-        void AddPort(int port)
-        {
-            if (port <= 0)
-            {
-                return;
-            }
-
-            if (!ports.Contains(port))
-            {
-                ports.Add(port);
-            }
-        }
-
-        AddPort(configuredPort);
-        var servicePort = servicePortOverride.GetValueOrDefault();
-        if (servicePort <= 0)
-        {
-            servicePort = TryResolvePostgreSqlPortFromServiceConfig();
-        }
-        AddPort(servicePort);
-        AddPort(ExpectedPostgreSqlPort);
-        AddPort(5432);
-        AddPort(5433);
-        return ports;
+        // User requested strict adherence to port 1277.
+        // We no longer perform "Smart Port Discovery" across 5432/5433.
+        return new List<int> { ExpectedPostgreSqlPort };
     }
 
     private string GetPostgresStatusCached()
@@ -1227,7 +2216,7 @@ internal sealed class WebServiceManager
         return _lastPgStatus;
     }
 
-    private void EnsurePostgreSqlServiceRunning()
+    public void EnsurePostgreSqlServiceRunning()
     {
         if (!ServiceControllerAvailable)
         {
@@ -1453,7 +2442,11 @@ CREATE EXTENSION IF NOT EXISTS ""btree_gin"";",
             $@"ALTER DATABASE ""{ExpectedPostgreSqlDatabase}"" SET timezone TO 'Asia/Kathmandu';
 ALTER DATABASE ""{ExpectedPostgreSqlDatabase}"" SET search_path TO ""{ExpectedPostgreSqlSchema}"", public;
 GRANT ALL PRIVILEGES ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO postgres;
-GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgreSqlUser}"";",
+GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgreSqlUser}"";
+CREATE SCHEMA IF NOT EXISTS ""{ExpectedPostgreSqlSchema}"" AUTHORIZATION ""{ExpectedPostgreSqlUser}"";
+GRANT ALL PRIVILEGES ON SCHEMA ""{ExpectedPostgreSqlSchema}"" TO ""{ExpectedPostgreSqlUser}"";
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" TO ""{ExpectedPostgreSqlUser}"";
+ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIVILEGES ON TABLES TO ""{ExpectedPostgreSqlUser}"";",
             connection);
         defaultsCommand.ExecuteNonQuery();
     }
@@ -1514,8 +2507,7 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         if (!probe.ok)
         {
             throw new InvalidOperationException(
-                $"PostgreSQL is not reachable at {host}:{(builder.Port <= 0 ? 5432 : builder.Port)} " +
-                "or fallback ports 5432/5433. " +
+                $"PostgreSQL is not reachable at {host}:{ExpectedPostgreSqlPort}. " +
                 "Ensure PostgreSQL service is running and configured port is correct, then retry. " +
                 $"Details: {probe.message}");
         }
@@ -1740,16 +2732,30 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         }
     }
 
+    private DateTime _lastDashOpen = DateTime.MinValue;
     public void OpenDashboard()
     {
+        // Simple debounce to prevent rapid double-clicks from opening multiple tabs
+        if ((DateTime.Now - _lastDashOpen).TotalMilliseconds < 1000) return;
+        _lastDashOpen = DateTime.Now;
+
         var configuredFrontendPort = LoadFrontendPort();
         var targetUrl = $"http://127.0.0.1:{configuredFrontendPort}/";
 
-        Process.Start(new ProcessStartInfo
+        try
         {
-            FileName = targetUrl,
-            UseShellExecute = true
-        });
+            // The most reliable way on Windows to open a URL in the default browser exactly once
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = targetUrl,
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            // Very rare fallback
+            try { Process.Start("explorer.exe", targetUrl); } catch { }
+        }
     }
 
     // ── Windows Service names ─────────────────────────────────────────
@@ -1780,6 +2786,15 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         var port = LoadPort();
         var frontendPort = LoadFrontendPort();
 
+        // Extend SCM startup timeout to 2 minutes (prevents Error 1053 on first start while DB inits)
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Control", writable: true);
+            key?.SetValue("ServicesPipeTimeout", 120_000, Microsoft.Win32.RegistryValueKind.DWord);
+        }
+        catch { }
+
         // Uninstall stale versions first
         ScExec($"stop \"{ApiWindowsServiceName}\"");
         ScExec($"delete \"{ApiWindowsServiceName}\"");
@@ -1787,17 +2802,31 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         ScExec($"delete \"{WebWindowsServiceName}\"");
         Thread.Sleep(800);
 
-        // Install API service only (auto-start, with failure recovery)
-        var apiArgs = $"--urls \"http://0.0.0.0:{port};http://0.0.0.0:{frontendPort}\" --service-mode";
-        var apiResult = ScExec($"create \"{ApiWindowsServiceName}\" binPath= \"\\\"{exePath}\\\" {apiArgs}\" start= auto DisplayName= \"E-Attendance Service\"");
+        // Install API service:
+        //   delayed-auto = starts after boot is complete (gives PostgreSQL time to start first)
+        //   depend = ensures Windows starts the PostgreSQL service before this service
+        var apiArgs = "--service-mode";
+        var pgServiceName = ExpectedPostgreSqlServiceName; // "E_Attendance_PostgreSQL"
+
+        // Try to install with PostgreSQL dependency first; fall back without it if PG service doesn't exist
+        var dependArg = ServiceExists(pgServiceName) ? $" depend= \"{pgServiceName}\"" : string.Empty;
+        var apiResult = ScExec(
+            $"create \"{ApiWindowsServiceName}\" binPath= \"\\\"{exePath}\\\" {apiArgs}\"" +
+            $" start= delayed-auto DisplayName= \"E-Attendance Service\"{dependArg}");
+
         if (!ServiceExists(ApiWindowsServiceName))
             return (false, $"Failed to create {ApiWindowsServiceName}. Run as Administrator.\n{apiResult}");
 
-        ScExec($"description \"{ApiWindowsServiceName}\" \"E-Attendance API and Web UI backend - starts automatically with Windows\"");
+        ScExec($"description \"{ApiWindowsServiceName}\" \"E-Attendance API and Web UI — auto-starts after Windows boot\"");
+        // Restart on failure: 5 s, 15 s, 30 s; reset counter after 1 day
         ScExec($"failure \"{ApiWindowsServiceName}\" reset= 86400 actions= restart/5000/restart/15000/restart/30000");
         ScExec($"failureflag \"{ApiWindowsServiceName}\" 1");
 
-        return (true, "Installed: E-Attendance-API (AUTO-START, auto-restart on failure).");
+        // Also ensure PostgreSQL service is set to auto-start
+        if (!string.IsNullOrEmpty(pgServiceName) && ServiceExists(pgServiceName))
+            ScExec($"config \"{pgServiceName}\" start= auto");
+
+        return (true, $"Installed: E-Attendance-API (DELAYED-AUTO-START, auto-restart on failure{(dependArg.Length > 0 ? ", depends on PostgreSQL" : "")}).");
     }
 
     public (bool ok, string message) UninstallWindowsServices()
@@ -1819,7 +2848,17 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
 
     public void StartWindowsService(string serviceName)
     {
-        // Try ServiceController first (works when running as admin)
+        // Extend SCM startup timeout to 2 minutes so EF Core init doesn't trigger Error 1053.
+        // Takes effect immediately for any new service start (no reboot needed).
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Control", writable: true);
+            key?.SetValue("ServicesPipeTimeout", 120_000, Microsoft.Win32.RegistryValueKind.DWord);
+        }
+        catch { /* non-fatal — continue regardless */ }
+
+        // Try ServiceController (works when running as Administrator)
         if (ServiceControllerAvailable)
         {
             try
@@ -1829,38 +2868,47 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
                 if (status == ServiceControllerStatus.Running) return;
                 if (status == ServiceControllerStatus.StartPending)
                 {
-                    svc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+                    svc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(90));
                     return;
                 }
                 svc.Start();
-                svc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+                svc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(90));
                 return;
             }
             catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 5 /*ACCESS_DENIED*/)
             {
-                // Fall through to sc.exe elevated
+                // Fall through to sc.exe
             }
             catch (InvalidOperationException)
             {
-                // Service may not exist yet, fall through
+                // Service doesn't exist yet, fall through
+            }
+            catch
+            {
+                // Any other error (e.g., timeout) — fall through to sc.exe fallback
             }
         }
-        // Fallback: run sc.exe with full admin power
-        var result = ScExec($"start \"{serviceName}\"");
-        // Wait up to 30s for service to reach Running
-        var deadline = DateTime.UtcNow.AddSeconds(30);
+
+        // Fallback: sc.exe (can be elevated via UAC)
+        ScExec($"start \"{serviceName}\"");
+
+        // Poll up to 90 s for Running state
+        var deadline = DateTime.UtcNow.AddSeconds(90);
         while (DateTime.UtcNow < deadline)
         {
-            Thread.Sleep(1000);
-            if (ServiceControllerAvailable)
+            Thread.Sleep(1500);
+            if (!ServiceControllerAvailable) continue;
+            try
             {
-                try
-                {
-                    using var svc2 = new ServiceController(serviceName);
-                    if (svc2.Status == ServiceControllerStatus.Running) return;
-                }
-                catch { }
+                using var svc2 = new ServiceController(serviceName);
+                svc2.Refresh();
+                if (svc2.Status == ServiceControllerStatus.Running) return;
+                if (svc2.Status == ServiceControllerStatus.Stopped)
+                    throw new InvalidOperationException(
+                        $"Service '{serviceName}' stopped unexpectedly. Check Windows Event Viewer for details.");
             }
+            catch (InvalidOperationException) { throw; }
+            catch { /* ignore transient */ }
         }
     }
 
@@ -2973,7 +4021,7 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
             }
 
             var appDataRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "E_Attendance");
             var runtimeRoot = Path.Combine(appDataRoot, "runtime", "web");
             Directory.CreateDirectory(runtimeRoot);
@@ -3573,7 +4621,7 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         return ExpectedPostgreSqlPassword;
     }
 
-    private string? GetPostgreSqlConnectionString(bool includePassword = true)
+    public string? GetPostgreSqlConnectionString(bool includePassword = true)
     {
         var raw = GetRawPostgreSqlConnectionString();
         if (string.IsNullOrWhiteSpace(raw))
@@ -3884,44 +4932,8 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
 
     private int ResolvePreferredPostgreSqlPort(string? host, int configuredPort)
     {
-        var safeHost = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host;
-        var servicePort = TryResolvePostgreSqlPortFromServiceConfig();
-        var candidates = BuildPostgreSqlPortCandidates(configuredPort, servicePort);
-
-        foreach (var port in candidates)
-        {
-            if (CanConnectWithExpectedCredentials(safeHost, port))
-            {
-                return port;
-            }
-        }
-
-        foreach (var port in candidates)
-        {
-            if (CanConnectWithDefaultPostgresAdmin(safeHost, port))
-            {
-                return port;
-            }
-        }
-
-        foreach (var port in candidates)
-        {
-            if (IsTcpPortReachable(safeHost, port, 500))
-            {
-                return port;
-            }
-        }
-
-        if (configuredPort is >= 1 and <= 65535)
-        {
-            return configuredPort;
-        }
-
-        if (servicePort is >= 1 and <= 65535)
-        {
-            return servicePort;
-        }
-
+        // User requested strict adherence to port 1277.
+        // We no longer perform "Smart Port Discovery" or fallback probing.
         return ExpectedPostgreSqlPort;
     }
 
@@ -4011,7 +5023,7 @@ GRANT CONNECT ON DATABASE ""{ExpectedPostgreSqlDatabase}"" TO ""{ExpectedPostgre
         var targetApplicationPassword = GetConfiguredApplicationDbPassword();
 
         var host = string.IsNullOrWhiteSpace(expectedBuilder.Host) ? "127.0.0.1" : expectedBuilder.Host;
-        var configuredPort = expectedBuilder.Port <= 0 ? 5432 : expectedBuilder.Port;
+        var configuredPort = expectedBuilder.Port <= 0 ? ExpectedPostgreSqlPort : expectedBuilder.Port;
         var ports = BuildPostgreSqlPortCandidates(configuredPort);
         var adminPasswords = new[]
         {

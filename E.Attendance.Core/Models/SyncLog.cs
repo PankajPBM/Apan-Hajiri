@@ -19,7 +19,9 @@ public enum SyncType
     ProfilePhoto,
     Fingerprint,
     Attendance,
-    Configuration
+    Configuration,
+    AccessControl,
+    Holiday
 }
 
 public enum SyncStatus

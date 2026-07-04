@@ -127,7 +127,7 @@ function Sync-FrontendStaticExport {
 $solutionRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $webProject = Join-Path $solutionRoot "E.Attendance.Web\E.Attendance.Web.csproj"
 $controllerProject = Join-Path $solutionRoot "E.Attendance\E.Attendance.csproj"
-$frontendProject = Join-Path $solutionRoot "pb-attendance-next"
+$frontendProject = Join-Path $solutionRoot "e-attendance-next"
 $webRoot = Join-Path $solutionRoot "E.Attendance.Web\wwwroot"
 $profile = if ($Mode -eq "Offline") { "OfflineSingleFile" } else { "MinSingleFile" }
 

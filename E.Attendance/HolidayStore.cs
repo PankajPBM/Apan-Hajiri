@@ -70,8 +70,8 @@ public static class HolidayStore
     private static string GetStoragePath()
     {
         var root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "PBAttendance");
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "E_Attendance");
         return Path.Combine(root, "holidays.json");
     }
 }

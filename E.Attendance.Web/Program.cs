@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
@@ -21,13 +23,44 @@ var webRootPath = ResolveWebRootPath(contentRootPath);
 Console.WriteLine($"[Startup] ContentRootPath: {contentRootPath}");
 Console.WriteLine($"[Startup] WebRootPath: {webRootPath}");
 
+var filteredArgs = args.Where(a => !a.StartsWith("--urls", StringComparison.OrdinalIgnoreCase)).ToArray();
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
-    Args = args,
+    Args = filteredArgs,
     ContentRootPath = contentRootPath,
     WebRootPath = webRootPath
 });
+builder.Host.UseWindowsService();
 builder.Services.AddControllers();
+
+var appDataRoot = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+    "E_Attendance");
+Directory.CreateDirectory(appDataRoot);
+
+// Self-contained JWT signing key: generated once per install and persisted alongside the
+// license data, so tokens survive app restarts but a fresh install/service reinstall starts clean.
+var jwtSigningKey = LoadOrCreateJwtSigningKey(Path.Combine(appDataRoot, "auth-signing.key"));
+const string JwtIssuer = "EAttendance";
+const string JwtAudience = "EAttendanceApi";
+
+builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.RequireHttpsMetadata = false;
+        options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = JwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = JwtAudience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(jwtSigningKey),
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromMinutes(1)
+        };
+    });
+builder.Services.AddAuthorization();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("frontend", policy =>
@@ -35,14 +68,10 @@ builder.Services.AddCors(options =>
         policy
             .SetIsOriginAllowed(static origin => IsAllowedFrontendOrigin(origin))
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
-
-var appDataRoot = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-    "PBAttendance");
-Directory.CreateDirectory(appDataRoot);
 var postgresConnectionString = builder.Configuration.GetConnectionString("PostgreSQLConnection");
 if (string.IsNullOrWhiteSpace(postgresConnectionString))
 {
@@ -51,15 +80,21 @@ if (string.IsNullOrWhiteSpace(postgresConnectionString))
 }
 
 postgresConnectionString = ResolvePostgresConnectionString(postgresConnectionString);
-TryStartPostgreSqlService(postgresConnectionString);
-WaitForPostgresConnection(postgresConnectionString, maxWaitSeconds: 90);
-EnsurePostgresSchema(postgresConnectionString);
+
+const string DefaultAreaCode = "1";
+const string DefaultAreaName = "Default Area";
+const string DefaultDepartmentCode = "1";
+const string DefaultDepartmentName = "Default Department";
+
+var isServiceMode = args.Any(a => a.Equals("--service-mode", StringComparison.OrdinalIgnoreCase));
+var personnelStore = new PersonnelStore();
 
 builder.Services.AddDbContext<PbAttendanceDbContext>(options =>
 {
     options.UseNpgsql(postgresConnectionString);
 });
 builder.Services.AddScoped<AttendanceProcessingEngine>();
+builder.Services.AddScoped<ConfigSyncService>();
 E.Attendance.Web.ServiceExtensions.AddPostgresModules(builder.Services, postgresConnectionString);
 
 var settingsPath = Path.Combine(appDataRoot, "websettings.json");
@@ -68,7 +103,7 @@ builder.WebHost.UseUrls(BuildListenUrls(settings.Port, settings.FrontendPort));
 
 var devicePollDelaySeconds = builder.Configuration.GetValue<int?>("DeviceSettings:PollDelaySeconds") ?? 10;
 var deviceDefaultTimeZoneMinutes = DeviceProtocolService.TimezoneToMinutes(
-    builder.Configuration.GetValue<string?>("DeviceSettings:DefaultTimeZone"));
+    builder.Configuration.GetValue<string?>("DeviceSettings:DefaultTimeZone") ?? "+5:45");
 var deviceEnableAttPhoto = builder.Configuration.GetValue<bool?>("DeviceSettings:EnableAttPhoto") ?? false;
 var deviceAllowUnknownEmployeeAutoCreate = builder.Configuration.GetValue<bool?>("DeviceSettings:AllowUnknownEmployeeAutoCreate") ?? true;
 
@@ -77,71 +112,164 @@ var personnelPath = Path.Combine(appDataRoot, "personnel.json");
 var repository = new PostgresAttendanceRepository(postgresConnectionString);
 var protocolService = new DeviceProtocolService();
 var service = new AttendanceService(repository, protocolService);
-var personnelStore = LoadPersonnelStoreFromDb(postgresConnectionString);
-if (IsPersonnelStoreEmpty(personnelStore) && File.Exists(personnelPath))
+// Use this singleton everywhere (incl. ConfigSyncService) so commands queued by background
+// sync use the SAME instance that delivers commands and records device replies.
+builder.Services.AddSingleton<E.Attendance.Core.Interfaces.IAttendanceService>(service);
+
+// Run schema migration synchronously if PostgreSQL is already reachable (typical case after install).
+// This patches the Devices table and other missing columns BEFORE the first API request.
+// Falls back to the background task below if PostgreSQL isn't ready yet.
+try
 {
-    var legacyPersonnelStore = PersonnelStore.Load(personnelPath);
-    if (!IsPersonnelStoreEmpty(legacyPersonnelStore))
-    {
-        ReplacePersonnelStoreContents(personnelStore, legacyPersonnelStore);
-        PersistPersonnelSetupToDb(postgresConnectionString, personnelStore);
-        HydratePersonnelStoreFromDb(personnelStore, postgresConnectionString);
-        TryArchiveLegacyPersonnelFile(personnelPath);
-        Console.WriteLine($"[Startup] Migrated legacy personnel store '{personnelPath}' to PostgreSQL.");
-    }
+    var probeBuilder = new Npgsql.NpgsqlConnectionStringBuilder(postgresConnectionString) { Timeout = 3 };
+    using var probeConn = new Npgsql.NpgsqlConnection(probeBuilder.ConnectionString);
+    probeConn.Open();
+    probeConn.Close();
+    // PostgreSQL is ready — patch schema now so /api/devices works on first request
+    EnsurePostgresSchema(postgresConnectionString);
+    MigrateBiometricFkConstraints(postgresConnectionString);
+    Console.WriteLine("[Startup] Schema migration completed synchronously before app.Run().");
 }
-const string DefaultAreaCode = "1";
-const string DefaultAreaName = "Default Area";
-const string DefaultDepartmentCode = "1";
-const string DefaultDepartmentName = "Default Department";
-EnsurePersonnelSetupDefaults(
-    personnelStore,
-    DefaultAreaCode,
-    DefaultAreaName,
-    DefaultDepartmentCode,
-    DefaultDepartmentName);
-EnsureDeviceAssignmentsForExistingDevices(
-    service,
-    personnelStore,
-    DefaultAreaCode,
-    DefaultAreaName,
-    DefaultDepartmentCode,
-    DefaultDepartmentName);
-// Do not auto-backfill employees from local profile cache at startup.
-// Employee rows must come from explicit device/user sync or manual personnel actions.
-NormalizeStoredPasswordsToMd5(
-    repository,
-    personnelStore,
-    personnelPath,
-    postgresConnectionString);
-NormalizeEmployeeDepartmentsToSetup(
-    repository,
-    personnelStore,
-    DefaultAreaCode,
-    DefaultAreaName,
-    DefaultDepartmentCode,
-    DefaultDepartmentName);
-NormalizeEmployeePositionsToSetup(
-    repository,
-    personnelStore);
-NormalizePositionsToSetup(
-    personnelStore,
-    DefaultAreaCode,
-    DefaultAreaName,
-    DefaultDepartmentCode,
-    DefaultDepartmentName);
-SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
-EnsureDefaultSoftwareLoginInDb(postgresConnectionString);
-PurgeSoftwareLoginsFromDeviceStores(
-    postgresConnectionString,
-    repository,
-    personnelStore,
-    personnelPath);
+catch
+{
+    Console.WriteLine("[Startup] PostgreSQL not immediately reachable — schema migration deferred to background task.");
+}
+
+// Heavy initialization moved to background task to prevent Windows Service startup timeout (Error 1053)
+_ = Task.Run(() =>
+{
+    try
+    {
+        TryStartPostgreSqlService(postgresConnectionString);
+        // This runs in a background task (does NOT block service start), so we can wait as long as
+        // needed for a freshly-installed PostgreSQL to come up — no risk of Error 1053.
+        WaitForPostgresConnection(postgresConnectionString, maxWaitSeconds: 300);
+        // CRITICAL: keep retrying schema creation until the core tables actually exist. On a fresh
+        // install PostgreSQL can accept a connection before it's fully ready, so a single attempt can
+        // run too early and create nothing — which is what caused "relation auth_users does not exist".
+        // This runs in a background task and must NEVER give up for a fresh install, so we keep
+        // retrying for a long window (up to ~15 min) so a slow first-time PostgreSQL init still
+        // ends with a complete schema and zero manual steps. The login endpoint also self-heals
+        // auth_users on demand as a final safety net.
+        var schemaReady = false;
+        for (var attempt = 1; attempt <= 450; attempt++)
+        {
+            try
+            {
+                EnsurePostgresSchema(postgresConnectionString); // idempotent — IF NOT EXISTS
+                MigrateBiometricFkConstraints(postgresConnectionString);
+                if (PostgresCoreTablesExist(postgresConnectionString))
+                {
+                    Console.WriteLine($"[Startup] Database schema verified ready (attempt {attempt}).");
+                    schemaReady = true;
+                    break;
+                }
+                Console.Error.WriteLine($"[Startup] Schema not complete yet after attempt {attempt}; retrying...");
+            }
+            catch (Exception schemaEx)
+            {
+                Console.Error.WriteLine($"[Startup] Schema attempt {attempt} failed: {schemaEx.Message}; retrying...");
+            }
+            System.Threading.Thread.Sleep(2000);
+        }
+        if (!schemaReady)
+        {
+            Console.Error.WriteLine("[Startup] Schema not confirmed ready after retries; endpoints self-heal on demand.");
+        }
+
+        var dbStore = LoadPersonnelStoreFromDb(postgresConnectionString);
+        ReplacePersonnelStoreContents(personnelStore, dbStore);
+
+        if (IsPersonnelStoreEmpty(personnelStore) && File.Exists(personnelPath))
+        {
+            var legacyPersonnelStore = PersonnelStore.Load(personnelPath);
+            if (!IsPersonnelStoreEmpty(legacyPersonnelStore))
+            {
+                ReplacePersonnelStoreContents(personnelStore, legacyPersonnelStore);
+                PersistPersonnelSetupToDb(postgresConnectionString, personnelStore);
+                HydratePersonnelStoreFromDb(personnelStore, postgresConnectionString);
+                TryArchiveLegacyPersonnelFile(personnelPath);
+                Console.WriteLine($"[Startup] Migrated legacy personnel store '{personnelPath}' to PostgreSQL.");
+            }
+        }
+
+        EnsurePersonnelSetupDefaults(
+            personnelStore,
+            DefaultAreaCode,
+            DefaultAreaName,
+            DefaultDepartmentCode,
+            DefaultDepartmentName);
+        EnsureDeviceAssignmentsForExistingDevices(
+            service,
+            personnelStore,
+            DefaultAreaCode,
+            DefaultAreaName,
+            DefaultDepartmentCode,
+            DefaultDepartmentName);
+        // Do not auto-backfill employees from local profile cache at startup.
+        // Employee rows must come from explicit device/user sync or manual personnel actions.
+        NormalizeStoredPasswordsToMd5(
+            repository,
+            personnelStore,
+            personnelPath,
+            postgresConnectionString);
+        NormalizeEmployeeDepartmentsToSetup(
+            repository,
+            personnelStore,
+            DefaultAreaCode,
+            DefaultAreaName,
+            DefaultDepartmentCode,
+            DefaultDepartmentName);
+        NormalizeEmployeePositionsToSetup(
+            repository,
+            personnelStore);
+        NormalizePositionsToSetup(
+            personnelStore,
+            DefaultAreaCode,
+            DefaultAreaName,
+            DefaultDepartmentCode,
+            DefaultDepartmentName);
+        SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+        EnsureDefaultSoftwareLoginInDb(postgresConnectionString);
+        PurgeSoftwareLoginsFromDeviceStores(
+            postgresConnectionString,
+            repository,
+            personnelStore,
+            personnelPath);
+        Console.WriteLine("[Startup] Background database and personnel initialization completed.");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[Startup] Background initialization failed: {ex.Message}");
+    }
+});
 
 var app = builder.Build();
+
+// Write a build marker file so you can VERIFY the newly-built code is actually deployed.
+// Check C:\ProgramData\E_Attendance\BUILD_MARKER.txt after installing.
+try
+{
+    var markerDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "E_Attendance");
+    Directory.CreateDirectory(markerDir);
+    File.WriteAllText(
+        Path.Combine(markerDir, "BUILD_MARKER.txt"),
+        $"Build: SCHEMA-TEXT-INTEGER-FIX-2026-06-20{Environment.NewLine}" +
+        $"Started: {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}" +
+        $"Assembly: {System.Reflection.Assembly.GetExecutingAssembly().Location}{Environment.NewLine}");
+}
+catch { /* non-fatal */ }
+
 EnsureBundledWebUiFiles(app.Environment.WebRootPath);
 var configuredLicenseDirectory = builder.Configuration["License:Directory"];
-var licenseDirectory = ResolveLicenseDirectory(configuredLicenseDirectory);
+// Default license directory is in C:\ProgramData\E_Attendance\license so it is the
+// same path whether the app runs as a Windows service (LocalSystem) or interactively.
+// Previously it defaulted to %APPDATA%\PB_Attendance which differs between LocalSystem
+// and normal users, meaning the installer could not clear the trial-state.json correctly.
+var licenseDirectory = string.IsNullOrWhiteSpace(configuredLicenseDirectory)
+    ? Path.Combine(appDataRoot, "license")
+    : ResolveLicenseDirectory(configuredLicenseDirectory);
 var trialStatePath = Path.Combine(licenseDirectory, "trial-state.json");
 const int TrialDurationDays = 30;
 const int TrialMaxDevices = 2;
@@ -170,7 +298,63 @@ else
         $"[License] Valid license loaded. Expires at {licenseState.Validation.ExpiryUtc:yyyy-MM-dd HH:mm:ss} UTC.");
 }
 
+// Declared early (ahead of app.UseCors) so the exception-handling middleware below — which is
+// registered first in the pipeline so it wraps everything downstream — can call AddLog directly
+// instead of only Console.Error, which is invisible for a Windows Service with no attached console.
+var appLogs = new ConcurrentQueue<AppLogEntry>();
+var appLogPersistChannel = Channel.CreateBounded<AppLogEntry>(new BoundedChannelOptions(8000)
+{
+    FullMode = BoundedChannelFullMode.DropOldest,
+    SingleReader = true,
+    SingleWriter = false
+});
+
 app.UseCors("frontend");
+
+// Ensure CORS headers are present even on 500 errors so the browser
+// can read the error body instead of showing a generic CORS-block message.
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[UnhandledException] {context.Request.Path}: {ex.Message}");
+        var path = context.Request.Path.Value ?? string.Empty;
+        // ZK PUSH devices treat any non-"OK" response body (and non-200 status) as "upload
+        // failed" and silently retry the exact same payload forever — with zero visibility if
+        // whatever throws does so before that request's own AddLog call. So for /iclock/* traffic,
+        // never let an exception surface as a 500: log it here (this is the one place guaranteed
+        // to run) and answer "OK" so the device moves on instead of looping invisibly.
+        if (path.StartsWith("/iclock", StringComparison.OrdinalIgnoreCase))
+        {
+            AddLog(
+                "WARN",
+                "DeviceEvent",
+                $"Unhandled exception on {path} — responded OK to avoid a silent device retry loop.",
+                $"error={ex.GetType().Name}: {ex.Message}");
+            if (!context.Response.HasStarted)
+            {
+                context.Response.StatusCode = 200;
+                context.Response.ContentType = "text/plain";
+                await context.Response.WriteAsync("OK");
+            }
+            return;
+        }
+        if (!context.Response.HasStarted)
+        {
+            context.Response.StatusCode = 500;
+            context.Response.ContentType = "application/json";
+            var msg = System.Text.Json.JsonSerializer.Serialize(new { error = "internal_error", message = ex.Message });
+            await context.Response.WriteAsync(msg);
+        }
+    }
+});
+
+app.UseAuthentication();
+app.UseAuthorization();
 app.Use(async (context, next) =>
 {
     var path = context.Request.Path.Value ?? string.Empty;
@@ -189,8 +373,16 @@ app.Use(async (context, next) =>
         {
             if (DateTimeOffset.UtcNow - lastLicenseRefreshUtc >= TimeSpan.FromSeconds(30))
             {
-                licenseState = BuildLicenseAccessSnapshot(licenseGuard, trialStatePath, TrialDurationDays, licenseDirectory);
-                lastLicenseRefreshUtc = licenseState.CheckedAtUtc;
+                try
+                {
+                    licenseState = BuildLicenseAccessSnapshot(licenseGuard, trialStatePath, TrialDurationDays, licenseDirectory);
+                    lastLicenseRefreshUtc = licenseState.CheckedAtUtc;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[License] Background refresh failed: {ex.Message}");
+                    // Keep old licenseState to avoid breaking the middleware
+                }
             }
         }
     }
@@ -221,6 +413,25 @@ app.Use(async (context, next) =>
 });
 app.Use(async (context, next) =>
 {
+    var path = context.Request.Path.Value ?? string.Empty;
+    var isApiPath = path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
+    if (!isApiPath || IsPubliclyAllowedApiRequest(context.Request.Method, path))
+    {
+        await next();
+        return;
+    }
+
+    if (context.User.Identity?.IsAuthenticated != true)
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        await context.Response.WriteAsJsonAsync(new { error = "unauthorized", message = "Login required." });
+        return;
+    }
+
+    await next();
+});
+app.Use(async (context, next) =>
+{
     var path = context.Request.Path.Value ?? "/";
     var localPort = context.Connection.LocalPort;
     var isDeviceRoute = IsDeviceRoute(path);
@@ -228,6 +439,14 @@ app.Use(async (context, next) =>
     var webPort = settings.FrontendPort;
     var isApiPath = path.StartsWith("/api", StringComparison.OrdinalIgnoreCase);
     var isHealthPath = string.Equals(path, "/health", StringComparison.OrdinalIgnoreCase);
+    var isOptions = HttpMethods.IsOptions(context.Request.Method);
+
+    // Allow CORS preflight (OPTIONS) to pass through to CORS middleware
+    if (isOptions)
+    {
+        await next();
+        return;
+    }
 
     if (apiPort != webPort)
     {
@@ -282,40 +501,117 @@ app.Use(async (context, next) =>
     PersistPersonnelSetupToDb(postgresConnectionString, personnelStore);
 });
 app.MapControllers();
-using (var scope = app.Services.CreateScope())
+// Database init runs in background so the Windows service can notify SCM quickly (avoids Error 1053).
+// The API will return 503 for ~3 seconds while DB init completes; after that it's fully operational.
+_ = Task.Run(async () =>
 {
+    // Small delay so app.Run() below can signal the SCM first
+    await Task.Delay(TimeSpan.FromSeconds(3));
     try
     {
+        using var scope = app.Services.CreateScope();
         var productionDb = scope.ServiceProvider.GetRequiredService<PbAttendanceDbContext>();
         productionDb.Database.EnsureCreated();
+        // Run again after EnsureCreated so legacy tables are cleaned up
+        EnsureDefaultSoftwareLoginInDb(postgresConnectionString);
+        Console.WriteLine("[Startup] Database initialization completed in background.");
     }
     catch (Exception ex)
     {
         Console.Error.WriteLine(
-            $"[Startup] Database initialization skipped. Service is running in degraded mode. Details: {ex.Message}");
+            $"[Startup] Background database initialization failed. Service running in degraded mode. Details: {ex.Message}");
     }
-}
-
-// Run again after EnsureCreated so legacy Users tables are removed even if EF recreated them.
-EnsureDefaultSoftwareLoginInDb(postgresConnectionString);
+});
 
 var requestCount = 0L;
 var requestLog = new ConcurrentQueue<string>();
-var appLogs = new ConcurrentQueue<AppLogEntry>();
-var serverRunning = false;
+var serverRunning = true;
 var discoveredDevices = new ConcurrentDictionary<string, DiscoveredDevice>(StringComparer.OrdinalIgnoreCase);
+// Persist device discovery state (user/fp/face/txn counts) to ProgramData so the dashboard shows
+// real numbers immediately after a service restart / PC reboot instead of 0 until each device next
+// reports in. The authoritative attendance/employee data lives in PostgreSQL; this is just a cache
+// of the device-reported counts so they survive a restart.
+var discoveredDevicesPath = Path.Combine(appDataRoot, "discovered-devices.json");
+try
+{
+    if (File.Exists(discoveredDevicesPath))
+    {
+        var savedJson = File.ReadAllText(discoveredDevicesPath);
+        var saved = System.Text.Json.JsonSerializer.Deserialize<List<DiscoveredDevice>>(savedJson);
+        if (saved is not null)
+        {
+            foreach (var dev in saved)
+            {
+                if (!string.IsNullOrWhiteSpace(dev.SerialNumber))
+                {
+                    // Keep last-known counts; mark offline until the device actually reconnects.
+                    discoveredDevices[dev.SerialNumber.Trim()] = dev with { IsOnline = false };
+                }
+            }
+        }
+    }
+}
+catch { /* non-fatal — start with an empty discovery cache */ }
+_ = Task.Run(async () =>
+{
+    while (true)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(60));
+        try
+        {
+            var cutoff = DateTime.UtcNow.AddMinutes(-15);
+            var staleSerials = discoveredDevices.Values
+                .Where(d => d.LastActivityUtc < cutoff)
+                .Select(d => d.SerialNumber)
+                .ToList();
+            foreach (var serial in staleSerials)
+            {
+                discoveredDevices.TryRemove(serial, out _);
+            }
+            var snapshot = discoveredDevices.Values.ToList();
+            File.WriteAllText(discoveredDevicesPath, System.Text.Json.JsonSerializer.Serialize(snapshot));
+        }
+        catch { /* ignore transient IO errors */ }
+    }
+});
 var metadataProbeUtcBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 var commandSerialById = new ConcurrentDictionary<Guid, string>();
 var autoUserFetchUtcBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+// Last time a full fetch-all was queued per device. The dashboard re-POSTs /fetch-all on its poll
+// loop (and device-add + enable-registration auto-trigger more), each re-queuing the whole DATA QUERY
+// batch and clearing pending commands — an endless re-queue loop that also wipes the pending
+// AccUnLockComb before it can be delivered. One fetch-all per 60s already pulls everything.
+var fetchAllUtcBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+// Last time an attendance-only fetch was auto-queued per NON-registration device (Yes/No = No).
+// Registration devices (Yes) get a full fetch-all on add/enable; non-registration devices should
+// still auto-pull attendance logs on connect so the dashboard/reports stay current. Throttled 60s.
+var attLogFetchUtcBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+// Last time a clock sync was auto-queued per device. Previously the SHELL date-s/hwclock-w/SET
+// OPTION DateTime trio only ran inside QueueFetchAllCommandsAsync (device add, manual "Sync Data",
+// or toggling registration-device on) — a device that simply reboots and reconnects (its own
+// options=all handshake) never got its clock re-synced, so its clock drifted after every restart.
+// Queue the same trio on every options=all handshake instead, throttled so a device that hits this
+// endpoint repeatedly in a short window doesn't get spammed with redundant SHELL commands.
+var timeSyncUtcBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+// High-water mark for incremental ATTLOG pulls: the EndTime used by the previous DATA QUERY ATTLOG
+// for this device. Every auto-triggered fetch previously hardcoded StartTime=2000-01-01, so a device
+// that reconnects/heartbeats often (every 60s throttle window) kept being told to re-upload its
+// ENTIRE history from scratch forever instead of just what's new — the actual cause of "slow
+// transaction fetching" on devices with a large backlog. Absent-from-dict still means "never fetched
+// before", which correctly falls back to a full 2000-01-01 pull for a brand new device.
+var attLogRangeStartBySerial = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+// Devices that have already received one full employee biometric push. On a device's first connect
+// every active employee is pushed (SyncedAt is the existing "needs (re)sync" marker — it's reset to
+// null wherever an employee's photo/fingerprint/template changes); on every later connect only
+// employees with SyncedAt == null are pushed, instead of re-sending everyone's full photo/fingerprint/
+// face-template payload on every reconnect — the biggest driver of avoidable command-queue traffic.
+var employeePushedOnceBySerial = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 var fullDataResetUtcBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+// Serials marked "clear all data on add": on the device's next connect we send CLEAR DATA and
+// suppress the user/biometric real-time upload (so it does NOT fetch), then consume the flag.
+var clearAllDataPendingBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 var manualUserSyncUntilUtcBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
-var appLogPersistChannel = Channel.CreateBounded<AppLogEntry>(new BoundedChannelOptions(8000)
-{
-    FullMode = BoundedChannelFullMode.DropOldest,
-    SingleReader = true,
-    SingleWriter = false
-});
 var transactionDetailsPersistChannel = Channel.CreateBounded<TransactionDetailPersistRequest>(new BoundedChannelOptions(120)
 {
     FullMode = BoundedChannelFullMode.DropOldest,
@@ -356,7 +652,15 @@ object BuildLicenseStatusPayload(LicenseAccessSnapshot state)
     var validation = state.Validation;
     var licenseDaysRemaining = CalculateDaysRemaining(state.CheckedAtUtc, validation.ExpiryUtc);
     var licenseActivatedAtUtc = ResolveActivationTimestampUtc(validation.KeyPath);
-    var currentDeviceCount = service.ListDevices().Count();
+    var currentDeviceCount = 0;
+    try
+    {
+        currentDeviceCount = service.ListDevices().Count();
+    }
+    catch
+    {
+        // Database might not be ready during startup.
+    }
     var effectiveMaxDevices = ResolveEffectiveMaxDevices(state);
     var effectiveLicenseType = state.IsTrialActive ? "Trial" : validation.LicenseType;
     return new
@@ -445,7 +749,7 @@ static int CalculateDaysRemaining(DateTimeOffset nowUtc, DateTimeOffset? expiryU
     return Math.Max(1, (int)Math.Ceiling(remaining.TotalDays));
 }
 
-static int ResolveEffectiveMaxDevices(LicenseAccessSnapshot state)
+int ResolveEffectiveMaxDevices(LicenseAccessSnapshot state)
 {
     if (state.Validation.IsValid)
     {
@@ -466,7 +770,7 @@ static int ResolveEffectiveMaxDevices(LicenseAccessSnapshot state)
     return 0;
 }
 
-static int? ResolveMaxDevicesFromLicenseType(string? licenseType)
+int? ResolveMaxDevicesFromLicenseType(string? licenseType)
 {
     var normalized = (licenseType ?? string.Empty).Trim().ToLowerInvariant();
     return normalized switch
@@ -747,8 +1051,20 @@ app.MapGet("/health", (IServiceProvider services) =>
     }
 });
 
-app.MapGet("/api/logs", (string? search, string? level, string? source, int? take) =>
+app.MapGet("/api/logs", (string? search, string? level, string? source, int? take, int? page, int? pageSize, string? from, string? to) =>
 {
+    // Server-side pagination mode
+    if (page.HasValue || pageSize.HasValue)
+    {
+        var pgSize = Math.Min(Math.Max(pageSize.GetValueOrDefault(100), 1), 500);
+        var pgNum = Math.Max(page.GetValueOrDefault(1), 1);
+        var skip = (pgNum - 1) * pgSize;
+        DateTime? fromUtc = DateOnly.TryParse(from, out var fd) ? fd.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime() : null;
+        DateTime? toUtc = DateOnly.TryParse(to, out var td) ? td.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Local).ToUniversalTime() : null;
+        var (dataLogs, totalLogs) = LoadAppLogsPaged(postgresConnectionString, search, level, source, fromUtc, toUtc, pgSize, skip);
+        return Results.Json(new { data = dataLogs, total = totalLogs, page = pgNum, pageSize = pgSize });
+    }
+
     var limit = take.GetValueOrDefault(200);
     if (limit is < 1 or > 2000)
     {
@@ -896,7 +1212,9 @@ app.MapPut("/api/settings/port", async (HttpRequest request) =>
         return Results.BadRequest(new { message = "Port must be between 1 and 65535." });
     }
 
-    if (payload.Port == settings.Port)
+    var newFrontendPort = payload.FrontendPort ?? settings.FrontendPort;
+    var changed = payload.Port != settings.Port || newFrontendPort != settings.FrontendPort;
+    if (!changed)
     {
         return Results.Ok(new
         {
@@ -907,12 +1225,12 @@ app.MapPut("/api/settings/port", async (HttpRequest request) =>
         });
     }
 
-    settings = settings with { Port = payload.Port };
+    settings = settings with { Port = payload.Port, FrontendPort = newFrontendPort };
     settings.Save(settingsPath);
 
     return Results.Ok(new
     {
-        message = $"Port updated to {settings.Port}. Restart application to apply.",
+        message = $"Port updated to {settings.Port}, web port {settings.FrontendPort}. Restart application to apply.",
         restartRequired = true,
         port = settings.Port,
         frontendPort = settings.FrontendPort
@@ -946,18 +1264,59 @@ app.MapGet("/api/app-config/shifts", () =>
     return Results.Content(json, "application/json");
 });
 
-app.MapPut("/api/app-config/shifts", async (HttpRequest request) =>
+app.MapPut("/api/app-config/shifts", async (HttpRequest request, ConfigSyncService syncService) =>
 {
     try
     {
         using var document = await JsonDocument.ParseAsync(request.Body);
         var rawJson = document.RootElement.GetRawText();
         SaveAppConfigJson(postgresConnectionString, "shifts", rawJson);
+        await syncService.SyncShiftsAsync(rawJson);
         return Results.Content(rawJson, "application/json");
     }
     catch (Exception ex)
     {
         return Results.BadRequest(new { message = $"Failed to save shift configuration: {ex.Message}" });
+    }
+});
+
+app.MapGet("/api/app-config/access-control", IResult () =>
+{
+    lock (licenseRefreshSync)
+    {
+        if (!licenseState.Validation.IsValid)
+        {
+            return Results.Json(new { error = "access_control_locked", message = "Access Control requires a valid activated license and is not available in trial mode." }, statusCode: StatusCodes.Status423Locked);
+        }
+    }
+    var json = ReadAppConfigJson(postgresConnectionString, "access-control");
+    return Results.Content(json, "application/json");
+});
+
+app.MapPut("/api/app-config/access-control", async Task<IResult> (HttpRequest request, ConfigSyncService syncService) =>
+{
+    lock (licenseRefreshSync)
+    {
+        if (!licenseState.Validation.IsValid)
+        {
+            return Results.Json(new { error = "access_control_locked", message = "Access Control requires a valid activated license and is not available in trial mode." }, statusCode: StatusCodes.Status423Locked);
+        }
+    }
+    try
+    {
+        using var document = await JsonDocument.ParseAsync(request.Body);
+        var rawJson = document.RootElement.GetRawText();
+        SaveAppConfigJson(postgresConnectionString, "access-control", rawJson);
+        await syncService.SyncAccessControlAsync(rawJson);
+        if (ApplyAccessControlPrivilegesToEmployees(rawJson, repository, personnelStore))
+        {
+            SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+        }
+        return Results.Content(rawJson, "application/json");
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"Failed to save access control configuration: {ex.Message}" });
     }
 });
 
@@ -975,6 +1334,12 @@ app.MapPost("/api/auth/login", async (HttpRequest request) =>
     {
         using var conn = new NpgsqlConnection(postgresConnectionString);
         conn.Open();
+        // Self-heal: if the background schema bootstrap hasn't created auth_users yet (fresh
+        // install / service started before PostgreSQL was ready), create it now so login works.
+        if (!AuthUsersTableExists(conn))
+        {
+            EnsureAuthUsersTable(conn);
+        }
         EnsureAuthLoginAttemptTable(conn);
 
         var nowUtc = DateTimeOffset.UtcNow;
@@ -1039,18 +1404,22 @@ app.MapPost("/api/auth/login", async (HttpRequest request) =>
 
         ResetAuthLoginAttempts(conn, userName);
 
+        var normalizedRole = NormalizeAuthRole(role, isAdmin);
+        var token = GenerateJwtToken(jwtSigningKey, JwtIssuer, JwtAudience, id, storedUserName, normalizedRole, TimeSpan.FromHours(12));
+
         var response = new AuthUserResponse(
             id,
             storedUserName,
             fullName,
             string.Empty,
-            NormalizeAuthRole(role, isAdmin),
+            normalizedRole,
             true,
             isAdmin
                 ? CreateSoftwareFeatureAccess(true)
                 : DeserializeSoftwareFeatureAccess(featureAccessJson),
             createdAtUtc,
-            updatedAtUtc);
+            updatedAtUtc,
+            token);
 
         return Results.Json(response);
     }
@@ -1224,7 +1593,7 @@ app.MapPost("/api/employees/{id:guid}/deactivate", (Guid id) =>
     return ok ? Results.Ok(new { success = true }) : Results.NotFound(new { success = false });
 });
 
-app.MapGet("/api/personnel/employees", (string? search, string? status) =>
+app.MapGet("/api/personnel/employees", (string? search, string? status, int page = 1, int pageSize = 200) =>
 {
     if (!serverRunning)
     {
@@ -1285,7 +1654,10 @@ app.MapGet("/api/personnel/employees", (string? search, string? status) =>
         }
     }
 
-    var rows = query.OrderBy(e => e.EmployeeCode, StringComparer.OrdinalIgnoreCase).ToList();
+    var allRows = query.OrderBy(e => e.EmployeeCode, StringComparer.OrdinalIgnoreCase).ToList();
+    var totalCount = allRows.Count;
+    var rows = allRows.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+
     var pins = rows
         .Select(e => e.EmployeeCode?.Trim())
         .Where(static pin => !string.IsNullOrWhiteSpace(pin))
@@ -1428,7 +1800,7 @@ app.MapGet("/api/personnel/employees", (string? search, string? status) =>
         };
     });
 
-    return Results.Json(items);
+    return Results.Ok(new { totalCount, page, pageSize, items });
 });
 
 app.MapPost("/api/personnel/employees", async (HttpRequest request) =>
@@ -1510,7 +1882,6 @@ app.MapPost("/api/personnel/employees", async (HttpRequest request) =>
         employee.ProfilePhoto = string.IsNullOrWhiteSpace(normalizedPhotoInput) ? null : normalizedPhotoInput;
         employee.SyncedAt = null;
         repository.UpdateEmployee(employee);
-        UpsertProfilePhotoSnapshot(repository, employee);
         ProgramHelpers.UpsertEmployeeProfile(
             personnelStore,
             employee.EmployeeCode,
@@ -1524,21 +1895,65 @@ app.MapPost("/api/personnel/employees", async (HttpRequest request) =>
             normalizedPosition,
             resolvedAssignments[0].AreaCode,
             resolvedAssignments[0].DepartmentCode,
+            groupId: payload.GroupId ?? 1,
+            timezoneProfile: payload.TimezoneProfile,
             verifyMode: employee.VerifyMode,
             assignments: resolvedAssignments);
+        // Also persist groupId to unified user table — must run BEFORE UpsertProfilePhotoSnapshot
+        // because biometric_photos has a FK on users(pin) and the photo snapshot would fail with
+        // a 23503 FK-violation if the user row does not exist yet.
+        repository.UpsertUnifiedUser(
+            pin: employee.EmployeeCode, name: employee.FullName, privilege: (int)employee.Privilege,
+            password: null, primaryCard: normalizedCardNumber, secondaryCard: null,
+            groupId: payload.GroupId ?? 1, timezoneProfile: payload.TimezoneProfile, verifyMode: employee.VerifyMode,
+            validFrom: null, validTo: null, expiresEnabled: null, phone: employee.MobileNumber,
+            gender: null, nation: null, idNumber: null);
+        UpsertProfilePhotoSnapshot(repository, employee);
         SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
-        var queuedPhotoCommands = QueueEmployeePhotoSyncToAssignedDevices(
-            service,
-            protocolService,
-            personnelStore,
-            [employee],
-            DefaultAreaCode,
-            DefaultAreaName,
-            DefaultDepartmentCode,
-            DefaultDepartmentName);
-        if (queuedPhotoCommands > 0)
+
+        // Sync new employee to all assigned devices immediately, then wake those devices so
+        // they pick up the change in near-real-time instead of waiting for their next poll.
+        // Wrapped in try/catch: the employee is already saved, so a transient sync/queue error
+        // must NOT turn a successful create into an error response (which would otherwise cause
+        // the client to retry and report a false "already exists").
+        try
         {
-            AddLog("INFO", "Sync", $"Queued {queuedPhotoCommands} photo sync command(s) for employee {employee.EmployeeCode}.");
+            var newProfile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, employee.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+            var devicesToWake = new List<Device>();
+            foreach (var device in service.ListDevices())
+            {
+                var devSetup = ResolveDeviceSetupForSerial(personnelStore, device.SerialNumber, device.Location, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+                var devDept = ResolveEmployeeDepartmentForDevice(personnelStore, employee, newProfile, devSetup.Department, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+                if (string.IsNullOrWhiteSpace(devDept)) continue;
+                var syncEmp = CreateEmployeeForDeviceSync(employee, newProfile, devDept);
+                syncEmp.DepartmentId = payload.GroupId ?? syncEmp.DepartmentId;
+                syncEmp.VerifyMode = employee.VerifyMode;
+                service.QueueDeviceCommand(device.SerialNumber, protocolService.CreateUserInfoCommand(syncEmp, device));
+                devicesToWake.Add(device);
+            }
+
+            var queuedPhotoCommands = QueueEmployeePhotoSyncToAssignedDevices(
+                service,
+                protocolService,
+                personnelStore,
+                [employee],
+                DefaultAreaCode,
+                DefaultAreaName,
+                DefaultDepartmentCode,
+                DefaultDepartmentName);
+            if (queuedPhotoCommands > 0)
+            {
+                AddLog("INFO", "Sync", $"Queued {queuedPhotoCommands} photo sync command(s) for employee {employee.EmployeeCode}.");
+            }
+
+            foreach (var device in devicesToWake)
+            {
+                _ = TryWakeDeviceAsync(device.IpAddress, device.SerialNumber, settings.Port);
+            }
+        }
+        catch (Exception syncEx)
+        {
+            AddLog("WARN", "Sync", $"Employee {employee.EmployeeCode} saved, but real-time device sync hit an error.", syncEx.ToString());
         }
         return Results.Json(employee);
     }
@@ -1648,6 +2063,24 @@ app.MapPut("/api/personnel/employees/{id:guid}", async (Guid id, HttpRequest req
     var ok = repository.UpdateEmployee(employee);
     if (ok)
     {
+        // Persist groupId and verifyMode to the unified user table so the API response reflects them.
+        repository.UpsertUnifiedUser(
+            pin: employee.EmployeeCode,
+            name: employee.FullName,
+            privilege: (int)employee.Privilege,
+            password: null,
+            primaryCard: normalizedCardNumber,
+            secondaryCard: null,
+            groupId: payload.GroupId,
+            timezoneProfile: payload.TimezoneProfile,
+            verifyMode: employee.VerifyMode,
+            validFrom: null,
+            validTo: null,
+            expiresEnabled: null,
+            phone: employee.MobileNumber,
+            gender: null,
+            nation: null,
+            idNumber: null);
         UpsertProfilePhotoSnapshot(repository, employee);
         ProgramHelpers.UpsertEmployeeProfile(
             personnelStore,
@@ -1662,21 +2095,52 @@ app.MapPut("/api/personnel/employees/{id:guid}", async (Guid id, HttpRequest req
             employee.Position,
             resolvedAssignments[0].AreaCode,
             resolvedAssignments[0].DepartmentCode,
+            groupId: payload.GroupId,
+            timezoneProfile: payload.TimezoneProfile,
             verifyMode: employee.VerifyMode,
             assignments: resolvedAssignments);
         SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
-        var queuedPhotoCommands = QueueEmployeePhotoSyncToAssignedDevices(
-            service,
-            protocolService,
-            personnelStore,
-            [employee],
-            DefaultAreaCode,
-            DefaultAreaName,
-            DefaultDepartmentCode,
-            DefaultDepartmentName);
-        if (queuedPhotoCommands > 0)
+
+        // Push updated USERINFO (Grp, Verify, etc.) to all devices immediately, then wake them
+        // for near-real-time delivery. Wrapped so a transient sync error never fails the update.
+        try
         {
-            AddLog("INFO", "Sync", $"Queued {queuedPhotoCommands} photo sync command(s) for employee {employee.EmployeeCode}.");
+            var updatedProfile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, employee.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+            var devicesToWake = new List<Device>();
+            foreach (var device in service.ListDevices())
+            {
+                var setup = ResolveDeviceSetupForSerial(personnelStore, device.SerialNumber, device.Location, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+                var deptName = ResolveEmployeeDepartmentForDevice(personnelStore, employee, updatedProfile, setup.Department, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+                if (string.IsNullOrWhiteSpace(deptName)) continue;
+                var syncEmp = CreateEmployeeForDeviceSync(employee, updatedProfile, deptName);
+                syncEmp.DepartmentId = payload.GroupId ?? syncEmp.DepartmentId;
+                syncEmp.VerifyMode = employee.VerifyMode;
+                service.QueueDeviceCommand(device.SerialNumber, protocolService.CreateUserInfoCommand(syncEmp, device));
+                devicesToWake.Add(device);
+            }
+
+            var queuedPhotoCommands = QueueEmployeePhotoSyncToAssignedDevices(
+                service,
+                protocolService,
+                personnelStore,
+                [employee],
+                DefaultAreaCode,
+                DefaultAreaName,
+                DefaultDepartmentCode,
+                DefaultDepartmentName);
+            if (queuedPhotoCommands > 0)
+            {
+                AddLog("INFO", "Sync", $"Queued {queuedPhotoCommands} photo sync command(s) for employee {employee.EmployeeCode}.");
+            }
+
+            foreach (var device in devicesToWake)
+            {
+                _ = TryWakeDeviceAsync(device.IpAddress, device.SerialNumber, settings.Port);
+            }
+        }
+        catch (Exception syncEx)
+        {
+            AddLog("WARN", "Sync", $"Employee {employee.EmployeeCode} updated, but real-time device sync hit an error.", syncEx.ToString());
         }
     }
     return ok ? Results.Ok(new { success = true }) : Results.NotFound(new { message = "Employee not found." });
@@ -1735,6 +2199,7 @@ app.MapDelete("/api/personnel/employees/{id:guid}", (Guid id) =>
             {
                 service.QueueDeviceCommand(serial, "CHECK");
                 service.QueueDeviceCommand(serial, $"DATA DELETE USERINFO PIN={safeCode}");
+                service.QueueDeviceCommand(serial, $"DATA DELETE ATTLOG PIN={safeCode}");
                 queuedDeviceDeletes++;
                 targetedDevices++;
             }
@@ -1914,6 +2379,19 @@ app.MapPost("/api/personnel/employees/verify-mode", async (HttpRequest request) 
             profile?.AreaCode,
             profile?.DepartmentCode,
             verifyMode: normalizedVerifyMode);
+
+        // Sync verify mode to all devices in real time.
+        var syncProfile = personnelStore.Profiles.FirstOrDefault(p =>
+            string.Equals(p.EmployeeCode, employee.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+        foreach (var device in service.ListDevices())
+        {
+            var setup = ResolveDeviceSetupForSerial(personnelStore, device.SerialNumber, device.Location, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+            var deptName = ResolveEmployeeDepartmentForDevice(personnelStore, employee, syncProfile, setup.Department, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+            if (string.IsNullOrWhiteSpace(deptName)) continue;
+            var syncEmp = CreateEmployeeForDeviceSync(employee, syncProfile, deptName);
+            syncEmp.VerifyMode = normalizedVerifyMode;
+            service.QueueDeviceCommand(device.SerialNumber, protocolService.CreateUserInfoCommand(syncEmp, device));
+        }
         updated++;
     }
 
@@ -1994,69 +2472,144 @@ app.MapPost("/api/personnel/employees/import", async (HttpRequest request) =>
         return Results.BadRequest(new { message = "No rows to import." });
     }
 
-    var invalidRequiredRows = payload.Items
-        .Select((row, index) => new
-        {
-            Line = index + 2,
-            UserId = row.UserId?.Trim() ?? row.EmployeeCode?.Trim() ?? string.Empty,
-            AreaName = row.AreaName?.Trim() ?? row.Area?.Trim() ?? row.AreaCode?.Trim() ?? string.Empty,
-            DepartmentName = row.DepartmentName?.Trim() ?? row.Department?.Trim() ?? row.DepartmentCode?.Trim() ?? string.Empty
-        })
-        .Where(x => string.IsNullOrWhiteSpace(x.UserId) || string.IsNullOrWhiteSpace(x.AreaName) || string.IsNullOrWhiteSpace(x.DepartmentName))
-        .Take(10)
-        .ToList();
-    if (invalidRequiredRows.Count > 0)
+    var mode = (payload.Mode ?? "skip").Trim().ToLowerInvariant();
+    var overwriteExisting = mode is "overwrite" or "update";
+
+    PersonnelArea? FindAreaStrict(string token)
     {
-        var lineList = string.Join(", ", invalidRequiredRows.Select(x => x.Line));
-        return Results.BadRequest(new
+        var t = token.Trim();
+        if (string.IsNullOrWhiteSpace(t))
         {
-            message = $"Import failed: UserId, Area, and Department are mandatory. Check line(s): {lineList}."
-        });
+            return null;
+        }
+
+        return personnelStore.Areas.FirstOrDefault(a =>
+            string.Equals(a.Code, t, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(a.Name, t, StringComparison.OrdinalIgnoreCase));
     }
 
-    var existingCodes = repository.GetEmployees()
-        .Select(e => e.EmployeeCode)
-        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var employees = repository.GetEmployees().ToList();
+    var employeeByCode = employees
+        .Where(e => !string.IsNullOrWhiteSpace(e.EmployeeCode))
+        .ToDictionary(e => e.EmployeeCode, StringComparer.OrdinalIgnoreCase);
 
     var added = 0;
+    var updated = 0;
     var skipped = 0;
+    var skippedItems = new List<object>();
     var updatedProfiles = false;
-    foreach (var row in payload.Items)
+
+    for (var index = 0; index < payload.Items.Count; index++)
     {
+        var row = payload.Items[index];
+        var line = index + 2;
+
         var code = row.UserId?.Trim() ?? row.EmployeeCode?.Trim() ?? string.Empty;
         var name = row.FullName?.Trim() ?? string.Empty;
         var areaInput = row.AreaName?.Trim() ?? row.Area?.Trim() ?? row.AreaCode?.Trim() ?? string.Empty;
         var departmentInput = row.DepartmentName?.Trim() ?? row.Department?.Trim() ?? row.DepartmentCode?.Trim() ?? string.Empty;
+        var cardNumber = NormalizeCardNumber(row.CardNumber);
+        var passwordInput = NormalizeEmployeePassword(row.Password);
+
         if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(areaInput) || string.IsNullOrWhiteSpace(departmentInput))
         {
             skipped++;
+            skippedItems.Add(new { line, userId = code, reason = "Missing mandatory field(s): UserId, Area, Department." });
             continue;
         }
 
-        if (existingCodes.Contains(code))
+        var resolvedArea = FindAreaStrict(areaInput);
+        if (resolvedArea is null)
         {
             skipped++;
+            skippedItems.Add(new { line, userId = code, reason = $"Area not found: {areaInput}" });
             continue;
         }
 
-        var (resolvedArea, resolvedDepartment) = ResolveDepartmentForArea(
-            personnelStore,
-            areaInput,
-            departmentInput,
-            DefaultAreaCode,
-            DefaultAreaName,
-            DefaultDepartmentCode,
-            DefaultDepartmentName);
+        var resolvedDepartment = personnelStore.Departments.FirstOrDefault(d =>
+            string.Equals(d.AreaCode, resolvedArea.Code, StringComparison.OrdinalIgnoreCase) &&
+            (string.Equals(d.Code, departmentInput, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(d.Name, departmentInput, StringComparison.OrdinalIgnoreCase)));
+
+        if (resolvedDepartment is null)
+        {
+            skipped++;
+            skippedItems.Add(new { line, userId = code, reason = $"Department not found for area '{resolvedArea.Name}': {departmentInput}" });
+            continue;
+        }
+
         var resolvedDepartmentName = resolvedDepartment.Name;
+
+        if (employeeByCode.TryGetValue(code, out var existingEmployee))
+        {
+            if (!overwriteExisting)
+            {
+                skipped++;
+                skippedItems.Add(new { line, userId = code, reason = "UserId already exists (skipped)." });
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                existingEmployee.FullName = name;
+            }
+
+            existingEmployee.Department = resolvedDepartmentName;
+            existingEmployee.Position = ResolvePositionNameFromSetup(personnelStore, existingEmployee.Position, resolvedDepartmentName);
+            existingEmployee.IsActive = row.IsActive;
+            if (!string.IsNullOrWhiteSpace(cardNumber))
+            {
+                existingEmployee.CardNumber = cardNumber;
+            }
+            if (!string.IsNullOrWhiteSpace(passwordInput))
+            {
+                existingEmployee.Password = NormalizePasswordHash(passwordInput);
+            }
+            existingEmployee.SyncedAt = null;
+
+            if (!repository.UpdateEmployee(existingEmployee))
+            {
+                skipped++;
+                skippedItems.Add(new { line, userId = code, reason = "Failed to update employee." });
+                continue;
+            }
+
+            ProgramHelpers.UpsertEmployeeProfile(
+                personnelStore,
+                existingEmployee.EmployeeCode,
+                existingEmployee.Privilege.ToString(),
+                existingEmployee.CardNumber,
+                existingEmployee.ProfilePhoto,
+                existingEmployee.MobileNumber,
+                existingEmployee.Gender,
+                null,
+                string.IsNullOrWhiteSpace(passwordInput) ? ResolveDevicePassword(null, existingEmployee.Password) : passwordInput,
+                existingEmployee.Position,
+                resolvedArea.Code,
+                resolvedDepartment.Code,
+                verifyMode: existingEmployee.VerifyMode,
+                assignments: [new PersonnelEmployeeAssignment(resolvedArea.Code, resolvedDepartment.Code)]);
+            updatedProfiles = true;
+
+            updated++;
+            continue;
+        }
+
         var resolvedFullName = string.IsNullOrWhiteSpace(name) ? code : name;
         var employee = service.CreateEmployee(code, resolvedFullName, resolvedDepartmentName);
         employee.Position = ResolvePositionNameFromSetup(personnelStore, null, resolvedDepartmentName);
-        employee.Password = NormalizePasswordHash(code);
-        if (!row.IsActive)
+        employee.CardNumber = cardNumber;
+        employee.Password = NormalizePasswordHash(string.IsNullOrWhiteSpace(passwordInput) ? code : passwordInput);
+        employee.IsActive = row.IsActive;
+
+        if (!repository.UpdateEmployee(employee))
         {
-            employee.IsActive = false;
+            skipped++;
+            skippedItems.Add(new { line, userId = code, reason = "Failed to create employee." });
+            continue;
         }
-        repository.UpdateEmployee(employee);
+
         ProgramHelpers.UpsertEmployeeProfile(
             personnelStore,
             employee.EmployeeCode,
@@ -2066,7 +2619,7 @@ app.MapPost("/api/personnel/employees/import", async (HttpRequest request) =>
             employee.MobileNumber,
             employee.Gender,
             null,
-            code,
+            string.IsNullOrWhiteSpace(passwordInput) ? code : passwordInput,
             employee.Position,
             resolvedArea.Code,
             resolvedDepartment.Code,
@@ -2074,7 +2627,7 @@ app.MapPost("/api/personnel/employees/import", async (HttpRequest request) =>
             assignments: [new PersonnelEmployeeAssignment(resolvedArea.Code, resolvedDepartment.Code)]);
         updatedProfiles = true;
 
-        existingCodes.Add(code);
+        employeeByCode[code] = employee;
         added++;
     }
 
@@ -2083,7 +2636,7 @@ app.MapPost("/api/personnel/employees/import", async (HttpRequest request) =>
         SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
     }
 
-    return Results.Ok(new { success = true, added, skipped });
+    return Results.Ok(new { success = true, mode = overwriteExisting ? "overwrite" : "skip", added, updated, skipped, skippedItems });
 });
 
 app.MapPost("/api/personnel/employees/import-photos", async (HttpRequest request) =>
@@ -2099,18 +2652,27 @@ app.MapPost("/api/personnel/employees/import-photos", async (HttpRequest request
         return Results.BadRequest(new { message = "No rows to import." });
     }
 
+    var mode = (payload.Mode ?? "overwrite").Trim().ToLowerInvariant();
+    var overwriteExisting = mode is "overwrite" or "update";
+
     var employees = repository.GetEmployees().ToList();
     var updated = 0;
     var skipped = 0;
+    var skippedItems = new List<object>();
     var updatedEmployees = new List<Employee>();
-    foreach (var row in payload.Items)
+
+    for (var i = 0; i < payload.Items.Count; i++)
     {
+        var row = payload.Items[i];
+        var line = i + 2;
+
         var code = row.EmployeeCode?.Trim() ?? string.Empty;
         var pictureDataUrl = row.PictureDataUrl?.Trim() ?? string.Empty;
         var normalizedPhotoForCompare = NormalizePictureDataUrlForComparison(pictureDataUrl);
         if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(normalizedPhotoForCompare))
         {
             skipped++;
+            skippedItems.Add(new { line, userId = code, reason = "Missing UserId or PictureDataUrl." });
             continue;
         }
 
@@ -2118,6 +2680,17 @@ app.MapPost("/api/personnel/employees/import-photos", async (HttpRequest request
         if (employee is null)
         {
             skipped++;
+            skippedItems.Add(new { line, userId = code, reason = "Employee not found." });
+            continue;
+        }
+
+        var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, code, StringComparison.OrdinalIgnoreCase));
+        var existingPicture = string.IsNullOrWhiteSpace(employee.ProfilePhoto) ? (profile?.PictureDataUrl ?? string.Empty) : employee.ProfilePhoto;
+        var existingNormalized = NormalizePictureDataUrlForComparison(existingPicture);
+        if (!overwriteExisting && !string.IsNullOrWhiteSpace(existingNormalized))
+        {
+            skipped++;
+            skippedItems.Add(new { line, userId = code, reason = "Photo already exists (skipped)." });
             continue;
         }
 
@@ -2127,6 +2700,7 @@ app.MapPost("/api/personnel/employees/import-photos", async (HttpRequest request
         if (duplicatePhoto)
         {
             skipped++;
+            skippedItems.Add(new { line, userId = code, reason = "Same photo already used by another employee." });
             continue;
         }
 
@@ -2143,8 +2717,10 @@ app.MapPost("/api/personnel/employees/import-photos", async (HttpRequest request
         if (!repository.UpdateEmployee(employee))
         {
             skipped++;
+            skippedItems.Add(new { line, userId = code, reason = "Failed to update employee photo." });
             continue;
         }
+
         var index = employees.FindIndex(e => e.Id == employee.Id);
         if (index >= 0)
         {
@@ -2152,7 +2728,6 @@ app.MapPost("/api/personnel/employees/import-photos", async (HttpRequest request
         }
         UpsertProfilePhotoSnapshot(repository, employee);
 
-        var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, code, StringComparison.OrdinalIgnoreCase));
         ProgramHelpers.UpsertEmployeeProfile(
             personnelStore,
             code,
@@ -2183,13 +2758,271 @@ app.MapPost("/api/personnel/employees/import-photos", async (HttpRequest request
         if (queuedPhotoCommands > 0)
         {
             AddLog("INFO", "Sync", $"Queued {queuedPhotoCommands} photo sync command(s) after employee photo import.");
+            try
+            {
+                var activeDevices = service.ListDevices();
+                foreach (var device in activeDevices)
+                {
+                    var devSetup = ResolveDeviceSetupForSerial(personnelStore, device.SerialNumber, device.Location, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+                    var anyAssigned = false;
+                    foreach (var emp in updatedEmployees)
+                    {
+                        var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, emp.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+                        var deptName = ResolveEmployeeDepartmentForDevice(personnelStore, emp, profile, devSetup.Department, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+                        if (!string.IsNullOrWhiteSpace(deptName))
+                        {
+                            anyAssigned = true;
+                            break;
+                        }
+                    }
+                    if (anyAssigned)
+                    {
+                        _ = TryWakeDeviceAsync(device.IpAddress, device.SerialNumber, settings.Port);
+                    }
+                }
+            }
+            catch (Exception wakeEx)
+            {
+                AddLog("WARN", "Sync", "Failed to wake devices during bulk photo import.", wakeEx.ToString());
+            }
         }
     }
 
-    return Results.Ok(new { success = true, updated, skipped });
+    return Results.Ok(new { success = true, mode = overwriteExisting ? "overwrite" : "skip", updated, skipped, skippedItems });
 });
 
-app.MapGet("/api/personnel/employees/export", (string? search, string? status) =>
+app.MapPost("/api/personnel/employees/import-photos-zip", async (HttpRequest request) =>
+{
+    if (!serverRunning)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest(new { message = "Photo zip import requires multipart form data." });
+    }
+
+    var form = await request.ReadFormAsync();
+    var mode = (form["mode"].ToString() ?? "overwrite").Trim().ToLowerInvariant();
+    var overwriteExisting = mode is "overwrite" or "update";
+    var importRows = new List<EmployeePhotoImportRowRequest>();
+    var localSkipped = new List<object>();
+    var line = 1;
+
+    static bool IsPhotoExtension(string extension)
+        => extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+           extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+           extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+           extension.Equals(".gif", StringComparison.OrdinalIgnoreCase) ||
+           extension.Equals(".webp", StringComparison.OrdinalIgnoreCase) ||
+           extension.Equals(".bmp", StringComparison.OrdinalIgnoreCase);
+
+    static string MimeFromExtension(string extension)
+        => extension.ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".bmp" => "image/bmp",
+            _ => "image/jpeg"
+        };
+
+    static async Task<string> ToDataUrlAsync(Stream stream, string extension)
+    {
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        return $"data:{MimeFromExtension(extension)};base64,{Convert.ToBase64String(ms.ToArray())}";
+    }
+
+    foreach (var file in form.Files)
+    {
+        var extension = Path.GetExtension(file.FileName);
+        if (extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            await using var zipStream = file.OpenReadStream();
+            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+            foreach (var entry in archive.Entries)
+            {
+                line++;
+                var entryName = Path.GetFileName(entry.FullName);
+                var entryExtension = Path.GetExtension(entryName);
+                if (string.IsNullOrWhiteSpace(entryName) || !IsPhotoExtension(entryExtension))
+                {
+                    continue;
+                }
+
+                var code = Path.GetFileNameWithoutExtension(entryName).Trim();
+                if (string.IsNullOrWhiteSpace(code))
+                {
+                    localSkipped.Add(new { line, userId = entryName, reason = "Photo filename must be the UserId." });
+                    continue;
+                }
+
+                await using var entryStream = entry.Open();
+                importRows.Add(new EmployeePhotoImportRowRequest(code, await ToDataUrlAsync(entryStream, entryExtension)));
+            }
+            continue;
+        }
+
+        line++;
+        if (!IsPhotoExtension(extension))
+        {
+            localSkipped.Add(new { line, userId = file.FileName, reason = "Unsupported photo file type." });
+            continue;
+        }
+
+        var fileCode = Path.GetFileNameWithoutExtension(file.FileName).Trim();
+        if (string.IsNullOrWhiteSpace(fileCode))
+        {
+            localSkipped.Add(new { line, userId = file.FileName, reason = "Photo filename must be the UserId." });
+            continue;
+        }
+
+        await using var stream = file.OpenReadStream();
+        importRows.Add(new EmployeePhotoImportRowRequest(fileCode, await ToDataUrlAsync(stream, extension)));
+    }
+
+    if (importRows.Count == 0)
+    {
+        return Results.BadRequest(new { message = "No valid photo files found. File name without extension must be the UserId.", skippedItems = localSkipped });
+    }
+
+    var employees = repository.GetEmployees().ToList();
+    var updated = 0;
+    var skipped = localSkipped.Count;
+    var skippedItems = new List<object>(localSkipped);
+    var updatedEmployees = new List<Employee>();
+
+    for (var i = 0; i < importRows.Count; i++)
+    {
+        var row = importRows[i];
+        var rowLine = i + 1;
+        var code = row.EmployeeCode?.Trim() ?? string.Empty;
+        var pictureDataUrl = row.PictureDataUrl?.Trim() ?? string.Empty;
+        var normalizedPhotoForCompare = NormalizePictureDataUrlForComparison(pictureDataUrl);
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(normalizedPhotoForCompare))
+        {
+            skipped++;
+            skippedItems.Add(new { line = rowLine, userId = code, reason = "Missing UserId or photo data." });
+            continue;
+        }
+
+        var employee = employees.FirstOrDefault(e => string.Equals(e.EmployeeCode, code, StringComparison.OrdinalIgnoreCase));
+        if (employee is null)
+        {
+            skipped++;
+            skippedItems.Add(new { line = rowLine, userId = code, reason = "Employee not found." });
+            continue;
+        }
+
+        var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, code, StringComparison.OrdinalIgnoreCase));
+        var existingPicture = string.IsNullOrWhiteSpace(employee.ProfilePhoto) ? (profile?.PictureDataUrl ?? string.Empty) : employee.ProfilePhoto;
+        var existingNormalized = NormalizePictureDataUrlForComparison(existingPicture);
+        if (!overwriteExisting && !string.IsNullOrWhiteSpace(existingNormalized))
+        {
+            skipped++;
+            skippedItems.Add(new { line = rowLine, userId = code, reason = "Photo already exists (skipped)." });
+            continue;
+        }
+
+        var duplicatePhoto = employees.Any(e =>
+            e.Id != employee.Id &&
+            NormalizePictureDataUrlForComparison(e.ProfilePhoto) == normalizedPhotoForCompare);
+        if (duplicatePhoto)
+        {
+            skipped++;
+            skippedItems.Add(new { line = rowLine, userId = code, reason = "Same photo already used by another employee." });
+            continue;
+        }
+
+        employee.ProfilePhoto = pictureDataUrl;
+        if (IsLikelyPhotoPayload(employee.FaceTemplateVisible))
+        {
+            employee.FaceTemplateVisible = null;
+        }
+        if (IsLikelyPhotoPayload(employee.FaceTemplateInfrared))
+        {
+            employee.FaceTemplateInfrared = null;
+        }
+        employee.SyncedAt = null;
+        if (!repository.UpdateEmployee(employee))
+        {
+            skipped++;
+            skippedItems.Add(new { line = rowLine, userId = code, reason = "Failed to update employee photo." });
+            continue;
+        }
+
+        var index = employees.FindIndex(e => e.Id == employee.Id);
+        if (index >= 0)
+        {
+            employees[index] = employee;
+        }
+        UpsertProfilePhotoSnapshot(repository, employee);
+        ProgramHelpers.UpsertEmployeeProfile(
+            personnelStore,
+            code,
+            profile?.Privilege ?? ToProfilePrivilegeLabel(employee.Privilege),
+            profile?.CardNumber ?? employee.CardNumber,
+            pictureDataUrl,
+            profile?.MobileNumber ?? employee.MobileNumber,
+            profile?.Gender ?? (string.IsNullOrWhiteSpace(employee.Gender) ? "Male" : employee.Gender),
+            profile?.HireDate ?? string.Empty,
+            ResolveDevicePassword(profile?.Password, employee.Password));
+
+        updated++;
+        updatedEmployees.Add(employee);
+    }
+
+    if (updated > 0)
+    {
+        SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+        var queuedPhotoCommands = QueueEmployeePhotoSyncToAssignedDevices(
+            service,
+            protocolService,
+            personnelStore,
+            updatedEmployees,
+            DefaultAreaCode,
+            DefaultAreaName,
+            DefaultDepartmentCode,
+            DefaultDepartmentName);
+        if (queuedPhotoCommands > 0)
+        {
+            AddLog("INFO", "Sync", $"Queued {queuedPhotoCommands} photo sync command(s) after employee photo zip import.");
+            try
+            {
+                var activeDevices = service.ListDevices();
+                foreach (var device in activeDevices)
+                {
+                    var devSetup = ResolveDeviceSetupForSerial(personnelStore, device.SerialNumber, device.Location, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+                    var anyAssigned = false;
+                    foreach (var emp in updatedEmployees)
+                    {
+                        var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, emp.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+                        var deptName = ResolveEmployeeDepartmentForDevice(personnelStore, emp, profile, devSetup.Department, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+                        if (!string.IsNullOrWhiteSpace(deptName))
+                        {
+                            anyAssigned = true;
+                            break;
+                        }
+                    }
+                    if (anyAssigned)
+                    {
+                        _ = TryWakeDeviceAsync(device.IpAddress, device.SerialNumber, settings.Port);
+                    }
+                }
+            }
+            catch (Exception wakeEx)
+            {
+                AddLog("WARN", "Sync", "Failed to wake devices during bulk photo zip import.", wakeEx.ToString());
+            }
+        }
+    }
+
+    return Results.Ok(new { success = true, mode = overwriteExisting ? "overwrite" : "skip", updated, skipped, skippedItems });
+});
+
+app.MapGet("/api/personnel/employees/export", (string? search, string? status, string? scope, string? ids, string? department, string? area) =>
 {
     if (!serverRunning)
     {
@@ -2219,9 +3052,67 @@ app.MapGet("/api/personnel/employees/export", (string? search, string? status) =
         }
     }
 
+    var scopeToken = (scope ?? "all").Trim().ToLowerInvariant();
+    if (scopeToken == "selected")
+    {
+        var set = (ids ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        query = query.Where(e => set.Contains(e.EmployeeCode) || set.Contains(e.Id.ToString()));
+    }
+    else if (scopeToken == "department")
+    {
+        var token = (department ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return Results.BadRequest(new { message = "department is required when scope=department." });
+        }
+
+        query = query.Where(e =>
+        {
+            var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, e.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+            var assignments = GetResolvedEmployeeAssignments(
+                personnelStore,
+                e,
+                profile,
+                DefaultAreaCode,
+                DefaultAreaName,
+                DefaultDepartmentCode,
+                DefaultDepartmentName);
+            return assignments.Any(x =>
+                string.Equals(x.Department.Code, token, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.Department.Name, token, StringComparison.OrdinalIgnoreCase));
+        });
+    }
+    else if (scopeToken == "area")
+    {
+        var token = (area ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return Results.BadRequest(new { message = "area is required when scope=area." });
+        }
+
+        query = query.Where(e =>
+        {
+            var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, e.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+            var assignments = GetResolvedEmployeeAssignments(
+                personnelStore,
+                e,
+                profile,
+                DefaultAreaCode,
+                DefaultAreaName,
+                DefaultDepartmentCode,
+                DefaultDepartmentName);
+            return assignments.Any(x =>
+                string.Equals(x.Area.Code, token, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.Area.Name, token, StringComparison.OrdinalIgnoreCase));
+        });
+    }
+
     var rows = query.OrderBy(e => e.EmployeeCode, StringComparer.OrdinalIgnoreCase).ToList();
     var csv = new StringBuilder();
-    csv.AppendLine("UserId,FullName,DepartmentName,Position,IsActive");
+    csv.AppendLine("UserId,FullName,AreaName,DepartmentName,Position,CardNumber,Password,IsActive");
     foreach (var row in rows)
     {
         static string Esc(string? value)
@@ -2237,10 +3128,28 @@ app.MapGet("/api/personnel/employees/export", (string? search, string? status) =
                 : s;
         }
 
+        var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, row.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+        var assignments = GetResolvedEmployeeAssignments(
+            personnelStore,
+            row,
+            profile,
+            DefaultAreaCode,
+            DefaultAreaName,
+            DefaultDepartmentCode,
+            DefaultDepartmentName);
+        var primary = assignments.FirstOrDefault();
+        var areaName = primary.Area?.Name ?? string.Empty;
+        var departmentName = primary.Department?.Name ?? row.Department;
+        var cardNumber = !string.IsNullOrWhiteSpace(row.CardNumber) ? row.CardNumber : profile?.CardNumber ?? string.Empty;
+        var password = ResolveUiPassword(profile?.Password);
+
         csv.Append(Esc(row.EmployeeCode)).Append(',')
            .Append(Esc(row.FullName)).Append(',')
-           .Append(Esc(row.Department)).Append(',')
+           .Append(Esc(areaName)).Append(',')
+           .Append(Esc(departmentName)).Append(',')
            .Append(Esc(row.Position)).Append(',')
+           .Append(Esc(cardNumber)).Append(',')
+           .Append(Esc(password)).Append(',')
            .Append(row.IsActive ? "true" : "false")
            .AppendLine();
     }
@@ -2248,7 +3157,7 @@ app.MapGet("/api/personnel/employees/export", (string? search, string? status) =
     return Results.Text(csv.ToString(), "text/csv");
 });
 
-app.MapGet("/api/personnel/employees/export/photos", (string? search, string? status) =>
+app.MapGet("/api/personnel/employees/export/photos", async (string? search, string? status, string? scope, string? ids, string? department, string? area) =>
 {
     if (!serverRunning)
     {
@@ -2278,34 +3187,106 @@ app.MapGet("/api/personnel/employees/export/photos", (string? search, string? st
         }
     }
 
-    var rows = query.OrderBy(e => e.EmployeeCode, StringComparer.OrdinalIgnoreCase).ToList();
-    var csv = new StringBuilder();
-    csv.AppendLine("UserId,FullName,PictureDataUrl");
-    foreach (var row in rows)
+    var scopeToken = (scope ?? "all").Trim().ToLowerInvariant();
+    if (scopeToken == "selected")
     {
-        var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, row.EmployeeCode, StringComparison.OrdinalIgnoreCase));
-        var picture = string.IsNullOrWhiteSpace(row.ProfilePhoto) ? (profile?.PictureDataUrl ?? string.Empty) : row.ProfilePhoto;
-
-        static string Esc(string? value)
+        var set = (ids ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        query = query.Where(e => set.Contains(e.EmployeeCode) || set.Contains(e.Id.ToString()));
+    }
+    else if (scopeToken == "department")
+    {
+        var token = (department ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(token))
         {
-            var s = value ?? string.Empty;
-            if (s.Contains('"'))
-            {
-                s = s.Replace("\"", "\"\"");
-            }
-
-            return (s.Contains(',') || s.Contains('"') || s.Contains('\n') || s.Contains('\r'))
-                ? $"\"{s}\""
-                : s;
+            return Results.BadRequest(new { message = "department is required when scope=department." });
         }
 
-        csv.Append(Esc(row.EmployeeCode)).Append(',')
-           .Append(Esc(row.FullName)).Append(',')
-           .Append(Esc(picture))
-           .AppendLine();
+        query = query.Where(e =>
+        {
+            var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, e.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+            var assignments = GetResolvedEmployeeAssignments(
+                personnelStore,
+                e,
+                profile,
+                DefaultAreaCode,
+                DefaultAreaName,
+                DefaultDepartmentCode,
+                DefaultDepartmentName);
+            return assignments.Any(x =>
+                string.Equals(x.Department.Code, token, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.Department.Name, token, StringComparison.OrdinalIgnoreCase));
+        });
+    }
+    else if (scopeToken == "area")
+    {
+        var token = (area ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return Results.BadRequest(new { message = "area is required when scope=area." });
+        }
+
+        query = query.Where(e =>
+        {
+            var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, e.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+            var assignments = GetResolvedEmployeeAssignments(
+                personnelStore,
+                e,
+                profile,
+                DefaultAreaCode,
+                DefaultAreaName,
+                DefaultDepartmentCode,
+                DefaultDepartmentName);
+            return assignments.Any(x =>
+                string.Equals(x.Area.Code, token, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.Area.Name, token, StringComparison.OrdinalIgnoreCase));
+        });
     }
 
-    return Results.Text(csv.ToString(), "text/csv");
+    var rows = query.OrderBy(e => e.EmployeeCode, StringComparer.OrdinalIgnoreCase).ToList();
+    using var archiveStream = new MemoryStream();
+    using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true))
+    {
+        var manifest = new StringBuilder();
+        manifest.AppendLine("UserId,FullName,FileName,Status");
+        foreach (var row in rows)
+        {
+            var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, row.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+            var picture = string.IsNullOrWhiteSpace(row.ProfilePhoto) ? (profile?.PictureDataUrl ?? string.Empty) : row.ProfilePhoto;
+            if (!TryDecodePictureDataUrl(picture, out var bytes, out var extension) || bytes.Length == 0)
+            {
+                manifest.Append(EscapeCsvCell(row.EmployeeCode)).Append(',')
+                    .Append(EscapeCsvCell(row.FullName)).Append(',')
+                    .Append(',')
+                    .AppendLine("No photo");
+                continue;
+            }
+
+            var fileName = $"{SanitizeArchiveFileName(row.EmployeeCode)}{extension}";
+            var entry = archive.CreateEntry(fileName, CompressionLevel.Optimal);
+            await using (var entryStream = entry.Open())
+            {
+                await entryStream.WriteAsync(bytes);
+            }
+
+            manifest.Append(EscapeCsvCell(row.EmployeeCode)).Append(',')
+                .Append(EscapeCsvCell(row.FullName)).Append(',')
+                .Append(EscapeCsvCell(fileName)).Append(',')
+                .AppendLine("Exported");
+        }
+
+        var manifestEntry = archive.CreateEntry("manifest.csv", CompressionLevel.Optimal);
+        await using var manifestStream = manifestEntry.Open();
+        await using var writer = new StreamWriter(manifestStream, Encoding.UTF8);
+        await writer.WriteAsync(manifest.ToString());
+    }
+
+    return Results.File(
+        archiveStream.ToArray(),
+        "application/zip",
+        $"employee-photos-{DateTime.UtcNow:yyyyMMdd-HHmmss}.zip");
 });
 
 app.MapGet("/api/personnel/employees/export/template", () =>
@@ -2316,9 +3297,9 @@ app.MapGet("/api/personnel/employees/export/template", () =>
     }
 
     var csv = new StringBuilder();
-    csv.AppendLine("UserId,FullName,AreaName,DepartmentName,Position,IsActive");
-    csv.AppendLine("1001,Pankaj Kushwaha,Default Area,Default Department,Staff,true");
-    csv.AppendLine("1002,Riya Sharma,Default Area,HR,Manager,true");
+    csv.AppendLine("UserId,FullName,AreaName,DepartmentName,Position,CardNumber,Password,IsActive");
+    csv.AppendLine("1001,Pankaj Kushwaha,Default Area,Default Department,Staff,10010001,1001,true");
+    csv.AppendLine("1002,Riya Sharma,Default Area,HR,Manager,10020001,1002,true");
     return Results.Text(csv.ToString(), "text/csv");
 });
 
@@ -2330,8 +3311,21 @@ app.MapGet("/api/personnel/employees/export/template/photos", () =>
     }
 
     var csv = new StringBuilder();
-    csv.AppendLine("UserId,PictureDataUrl");
-    csv.AppendLine("1001,data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA");
+    csv.AppendLine("UserId,FullName,AreaName,DepartmentName,PictureDataUrl");
+    csv.AppendLine("1001,Pankaj Kushwaha,Default Area,Default Department,data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA");
+    return Results.Text(csv.ToString(), "text/csv");
+});
+
+app.MapGet("/api/personnel/employees/export/template/photos-filenames", () =>
+{
+    if (!serverRunning)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    var csv = new StringBuilder();
+    csv.AppendLine("UserId,FullName,AreaName,DepartmentName,PhotoFileName");
+    csv.AppendLine("1001,Pankaj Kushwaha,Default Area,Default Department,1001.jpg");
     return Results.Text(csv.ToString(), "text/csv");
 });
 
@@ -2441,10 +3435,13 @@ app.MapGet("/api/personnel/setup", () =>
     });
 });
 
-app.MapGet("/api/personnel/departments", () =>
+app.MapGet("/api/personnel/departments", (int page = 1, int pageSize = 200) =>
 {
     var employees = service.ListEmployees().ToList();
-    return Results.Json(BuildDepartmentSetupRows(employees));
+    var allRows = BuildDepartmentSetupRows(employees);
+    var totalCount = allRows.Count;
+    var items = allRows.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+    return Results.Ok(new { totalCount, page, pageSize, items });
 });
 
 app.MapPost("/api/personnel/departments", async (HttpRequest request) =>
@@ -2509,7 +3506,8 @@ app.MapPut("/api/personnel/departments/{id:guid}", async (Guid id, HttpRequest r
     }
 
     var existing = personnelStore.Departments[idx];
-    var requestedCode = payload.Code.Trim();
+    // ID/code is immutable after creation — preserve the existing code; only name/details change.
+    var requestedCode = existing.Code;
     var requestedName = payload.Name.Trim();
     if (IsDefaultDepartment(existing, DefaultAreaCode, DefaultDepartmentCode) &&
         !string.Equals(requestedCode, existing.Code, StringComparison.OrdinalIgnoreCase))
@@ -2925,7 +3923,7 @@ app.MapGet("/api/personnel/areas", () =>
     return Results.Json(BuildAreaSetupRows());
 });
 
-app.MapPost("/api/personnel/areas", async (HttpRequest request) =>
+app.MapPost("/api/personnel/areas", async (HttpRequest request, ConfigSyncService syncService) =>
 {
     if (!serverRunning)
     {
@@ -2945,7 +3943,24 @@ app.MapPost("/api/personnel/areas", async (HttpRequest request) =>
 
     var item = new PersonnelArea(Guid.NewGuid(), payload.Code.Trim(), payload.Name.Trim(), payload.Remark?.Trim() ?? string.Empty);
     personnelStore.Areas.Add(item);
+
+    // Auto-create a matching department for the new area (department code == area code)
+    if (!personnelStore.Departments.Any(d => string.Equals(d.Code, item.Code, StringComparison.OrdinalIgnoreCase)))
+    {
+        var dept = new PersonnelDepartment(
+            Guid.NewGuid(),
+            item.Code,
+            $"{item.Name} Department",
+            string.Empty,
+            string.Empty,
+            item.Code);
+        personnelStore.Departments.Add(dept);
+    }
+
     SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+    // Auto-create this area's default access-control entities (Time Period 1, Access Group 1,
+    // Combination 1) so they exist without opening the Access Control page.
+    await EnsureAccessControlDefaultsForAllAreas(postgresConnectionString, service, personnelStore, syncService);
     return Results.Json(item);
 });
 
@@ -2974,7 +3989,8 @@ app.MapPut("/api/personnel/areas/{id:guid}", async (Guid id, HttpRequest request
     }
 
     var existing = personnelStore.Areas[idx];
-    var requestedCode = payload.Code.Trim();
+    // ID/code is immutable after creation — preserve the existing code; only name/details change.
+    var requestedCode = existing.Code;
     if (IsDefaultArea(existing.Code, DefaultAreaCode) &&
         !string.Equals(requestedCode, existing.Code, StringComparison.OrdinalIgnoreCase))
     {
@@ -3009,19 +4025,35 @@ app.MapDelete("/api/personnel/areas/{id:guid}", (Guid id) =>
         return Results.BadRequest(new { message = "Default Area cannot be deleted." });
     }
 
-    if (personnelStore.Departments.Any(d => string.Equals(d.AreaCode, target.Code, StringComparison.OrdinalIgnoreCase)))
-    {
-        return Results.BadRequest(new { message = "Area has mapped department(s). Delete those first." });
-    }
+    var result = DeleteAreaCascade(
+        personnelStore,
+        repository,
+        service,
+        target,
+        personnelPath,
+        postgresConnectionString,
+        DefaultAreaCode,
+        DefaultAreaName,
+        DefaultDepartmentCode,
+        DefaultDepartmentName);
+    AddLog(
+        "WARN",
+        "Personnel",
+        $"Deleted area {target.Code} - {target.Name} with all mapped setup data.",
+        $"departments={result.DepartmentsDeleted}; devices={result.DevicesDeleted}; employees={result.EmployeesDeleted}; positions={result.PositionsDeleted}; deviceDeleteCommands={result.QueuedDeviceDeletes}; artifactRowsDeleted={result.DeletedArtifactRows}");
 
-    if (personnelStore.DeviceAssignments.Any(x => string.Equals(x.AreaCode, target.Code, StringComparison.OrdinalIgnoreCase)))
-    {
-        return Results.BadRequest(new { message = "Area is assigned to one or more devices." });
-    }
-
-    var removed = personnelStore.Areas.RemoveAll(x => x.Id == id);
     SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
-    return Results.Ok(new { success = true });
+    return Results.Ok(new
+    {
+        success = true,
+        removed = result.AreasDeleted,
+        departmentsDeleted = result.DepartmentsDeleted,
+        devicesDeleted = result.DevicesDeleted,
+        employeesDeleted = result.EmployeesDeleted,
+        positionsDeleted = result.PositionsDeleted,
+        queuedDeviceDeletes = result.QueuedDeviceDeletes,
+        deletedArtifactRows = result.DeletedArtifactRows
+    });
 });
 
 app.MapPost("/api/personnel/areas/delete", async (HttpRequest request) =>
@@ -3038,18 +4070,53 @@ app.MapPost("/api/personnel/areas/delete", async (HttpRequest request) =>
     }
 
     var set = payload.Ids.ToHashSet();
-    var blockedIds = personnelStore.Areas
-        .Where(a => set.Contains(a.Id))
-        .Where(a =>
-            IsDefaultArea(a.Code, DefaultAreaCode) ||
-            personnelStore.Departments.Any(d => string.Equals(d.AreaCode, a.Code, StringComparison.OrdinalIgnoreCase)) ||
-            personnelStore.DeviceAssignments.Any(x => string.Equals(x.AreaCode, a.Code, StringComparison.OrdinalIgnoreCase)))
-        .Select(a => a.Id)
-        .ToHashSet();
+    var targets = personnelStore.Areas.Where(a => set.Contains(a.Id)).ToList();
+    var skippedDefault = 0;
+    var total = new AreaCascadeDeleteResult();
+    foreach (var area in targets)
+    {
+        if (IsDefaultArea(area.Code, DefaultAreaCode))
+        {
+            skippedDefault++;
+            continue;
+        }
 
-    var removed = personnelStore.Areas.RemoveAll(x => set.Contains(x.Id) && !blockedIds.Contains(x.Id));
+        var result = DeleteAreaCascade(
+            personnelStore,
+            repository,
+            service,
+            area,
+            personnelPath,
+            postgresConnectionString,
+            DefaultAreaCode,
+            DefaultAreaName,
+            DefaultDepartmentCode,
+            DefaultDepartmentName);
+        total.Add(result);
+    }
+
+    if (total.AreasDeleted > 0)
+    {
+        AddLog(
+            "WARN",
+            "Personnel",
+            $"Bulk area delete completed. Removed areas: {total.AreasDeleted}.",
+            $"departments={total.DepartmentsDeleted}; devices={total.DevicesDeleted}; employees={total.EmployeesDeleted}; positions={total.PositionsDeleted}; skippedDefault={skippedDefault}; deviceDeleteCommands={total.QueuedDeviceDeletes}; artifactRowsDeleted={total.DeletedArtifactRows}");
+    }
+
     SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
-    return Results.Ok(new { success = true, removed, skipped = blockedIds.Count });
+    return Results.Ok(new
+    {
+        success = true,
+        removed = total.AreasDeleted,
+        skipped = skippedDefault,
+        departmentsDeleted = total.DepartmentsDeleted,
+        devicesDeleted = total.DevicesDeleted,
+        employeesDeleted = total.EmployeesDeleted,
+        positionsDeleted = total.PositionsDeleted,
+        queuedDeviceDeletes = total.QueuedDeviceDeletes,
+        deletedArtifactRows = total.DeletedArtifactRows
+    });
 });
 
 app.MapGet("/api/personnel/holidays", () =>
@@ -3171,14 +4238,16 @@ app.MapDelete("/api/personnel/holidays/{id:int}", (int id) =>
         : Results.NotFound(new { message = "Holiday not found." });
 });
 
-app.MapGet("/api/devices", (string? search) =>
+app.MapGet("/api/devices", (string? search, int page = 1, int pageSize = 200) =>
 {
     if (!serverRunning)
     {
         return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
     }
 
-    var devices = service.SearchDevices(search).ToList();
+    var allDevices = service.SearchDevices(search).ToList();
+    var totalCount = allDevices.Count;
+    var devices = allDevices.Skip((page - 1) * pageSize).Take(pageSize).ToList();
     var txBySerial = LoadDevicePunchCounts(postgresConnectionString, devices.Select(d => d.SerialNumber));
 
     var items = devices.Select(d =>
@@ -3195,12 +4264,54 @@ app.MapGet("/api/devices", (string? search) =>
             DefaultDepartmentCode,
             DefaultDepartmentName);
 
+        // Use DB count when we have records; fall back to the device's self-reported count
+        // (from its INFO push) so newly-added devices show a meaningful number instead of 0.
+        // Never surface the -1 "unknown" sentinel — clamp to 0 so the UI shows a clean count.
+        var transactionQty = deviceTx > 0 ? deviceTx : Math.Max(0, discovered?.TransactionQty ?? 0);
+
+        var maxUserQty = 10000;
+        var maxFpQty = 10000;
+        var maxFaceQty = 6000;
+        var maxPalmQty = 3000;
+        var maxTransactionQty = 200000;
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(d.CapabilitiesJson))
+            {
+                using var doc = JsonDocument.Parse(d.CapabilitiesJson);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("max_user_qty", out var mu) && mu.TryGetInt32(out var muv)) maxUserQty = muv;
+                else if (root.TryGetProperty("max_user_count", out var mu2) && mu2.TryGetInt32(out var mu2v)) maxUserQty = mu2v;
+
+                if (root.TryGetProperty("max_att_log_qty", out var mt) && mt.TryGetInt32(out var mtv)) maxTransactionQty = mtv;
+                else if (root.TryGetProperty("max_att_log_count", out var mt2) && mt2.TryGetInt32(out var mt2v)) maxTransactionQty = mt2v;
+
+                if (root.TryGetProperty("max_templates", out var maxTemplates))
+                {
+                    if (maxTemplates.TryGetProperty("1", out var fpCap) && fpCap.TryGetInt32(out var fpCapVal)) maxFpQty = fpCapVal;
+                    if (maxTemplates.TryGetProperty("9", out var faceCap) && faceCap.TryGetInt32(out var faceCapVal)) maxFaceQty = faceCapVal;
+                    else if (maxTemplates.TryGetProperty("2", out var faceCapNir) && faceCapNir.TryGetInt32(out var faceCapNirVal)) maxFaceQty = faceCapNirVal;
+                    if (maxTemplates.TryGetProperty("8", out var palmCap) && palmCap.TryGetInt32(out var palmCapVal)) maxPalmQty = palmCapVal;
+                    else if (maxTemplates.TryGetProperty("10", out var palmCapVal2) && palmCapVal2.TryGetInt32(out var palmCapVal2Val)) maxPalmQty = palmCapVal2Val;
+                }
+            }
+        }
+        catch { }
+
+        var rawMaxTemplates = ParseIndexedIntegerMap(d.MaxMultiBioDataCount);
+        if (rawMaxTemplates.TryGetValue("1", out var fCap) && fCap > 0) maxFpQty = fCap;
+        if (rawMaxTemplates.TryGetValue("9", out var faCap) && faCap > 0) maxFaceQty = faCap;
+        else if (rawMaxTemplates.TryGetValue("2", out var faCapNir) && faCapNir > 0) maxFaceQty = faCapNir;
+        if (rawMaxTemplates.TryGetValue("8", out var pCap) && pCap > 0) maxPalmQty = pCap;
+        else if (rawMaxTemplates.TryGetValue("10", out var pCap2) && pCap2 > 0) maxPalmQty = pCap2;
+
         return new
         {
             d.Id,
             d.SerialNumber,
             d.Name,
-            d.Model,
+            model = d.Model ?? string.Empty,
             d.IpAddress,
             area = setup.Area.Name,
             areaCode = setup.Area.Code,
@@ -3223,6 +4334,7 @@ app.MapGet("/api/devices", (string? search) =>
             d.MultiBioPhotoSupport,
             d.MultiBioVersion,
             d.MaxMultiBioDataCount,
+            MaxMultiBioVersionNumber = d.MaxMultiBioDataCount, // Map to existing field for compatibility
             d.MaxMultiBioPhotoCount,
             d.FingerFunOn,
             d.FaceFunOn,
@@ -3240,11 +4352,16 @@ app.MapGet("/api/devices", (string? search) =>
             fpQty = discovered?.FpQty ?? 0,
             faceQty = discovered?.FaceQty ?? 0,
             palmQty = discovered?.PalmQty ?? 0,
-            transactionQty = discovered is not null && discovered.TransactionQty >= 0 ? discovered.TransactionQty : deviceTx,
+            transactionQty = transactionQty,
+            maxUserQty,
+            maxFpQty,
+            maxFaceQty,
+            maxPalmQty,
+            maxTransactionQty,
             cmdQty = service.GetPendingCommands(d.SerialNumber, 200).Count
         };
     });
-    return Results.Json(items);
+    return Results.Ok(new { totalCount, page, pageSize, items });
 });
 
 app.MapGet("/api/devices/{serial}/transactions/last-punch", (string serial) =>
@@ -3310,13 +4427,20 @@ app.MapGet("/api/devices/discovered", (string? search) =>
 
     var addedSerials = service.ListDevices().Select(d => d.SerialNumber).ToHashSet(StringComparer.OrdinalIgnoreCase);
     var query = search?.Trim();
+    // "Available to add" must mean actually reachable right now — devices heartbeat every
+    // 5-60s while online, so 15 minutes let devices that went offline long ago still show up.
+    // Match the same 2-minute freshness bar used elsewhere for "is this device alive".
+    var cutoff = DateTime.UtcNow.AddMinutes(-2);
     var items = discoveredDevices.Values
+        .Where(d => d.LastActivityUtc >= cutoff)
         .Where(d => !addedSerials.Contains(d.SerialNumber))
         .Where(d => string.IsNullOrWhiteSpace(query) ||
                     d.SerialNumber.Contains(query!, StringComparison.OrdinalIgnoreCase) ||
                     d.Name.Contains(query!, StringComparison.OrdinalIgnoreCase) ||
                     d.IpAddress.Contains(query!, StringComparison.OrdinalIgnoreCase))
         .OrderByDescending(d => d.LastActivityUtc)
+        // IsOnline is always false for unregistered devices — "connected" status only applies to added devices
+        .Select(d => d with { IsOnline = false })
         .ToList();
 
     return Results.Json(items);
@@ -3329,44 +4453,63 @@ app.MapPost("/api/devices/discovered/{serial}/add", (string serial) =>
         return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
     }
 
-    var currentState = licenseState;
-    var currentDeviceCount = service.ListDevices().Count();
-    var allowedDevices = ResolveEffectiveMaxDevices(currentState);
-    if (allowedDevices >= 0 && currentDeviceCount >= allowedDevices)
+    try
     {
-        return Results.BadRequest(new
+        var currentState = licenseState;
+        var currentDeviceCount = service.ListDevices().Count();
+        var allowedDevices = ResolveEffectiveMaxDevices(currentState);
+        if (allowedDevices >= 0 && currentDeviceCount >= allowedDevices)
         {
-            code = "device_limit_reached",
-            message = $"Device limit reached. Allowed: {allowedDevices}, current: {currentDeviceCount}.",
-            allowedDevices,
-            currentDeviceCount,
-            activationMode = currentState.ActivationMode,
-            licenseType = currentState.IsTrialActive ? "Trial" : currentState.Validation.LicenseType
-        });
-    }
+            return Results.BadRequest(new
+            {
+                code = "device_limit_reached",
+                message = $"Device limit reached. Allowed: {allowedDevices}, current: {currentDeviceCount}.",
+                allowedDevices,
+                currentDeviceCount,
+                activationMode = currentState.ActivationMode,
+                licenseType = currentState.IsTrialActive ? "Trial" : currentState.Validation.LicenseType
+            });
+        }
 
-    if (!discoveredDevices.TryGetValue(serial, out var d))
+        if (!discoveredDevices.TryGetValue(serial, out var d))
+        {
+            return Results.NotFound(new { message = "Discovered device not found." });
+        }
+
+        var setup = ResolveDeviceSetup(
+            personnelStore,
+            areaCodeInput: null,
+            areaNameInput: d.Area,
+            departmentCodeInput: null,
+            DefaultAreaCode,
+            DefaultAreaName,
+            DefaultDepartmentCode,
+            DefaultDepartmentName);
+        var created = service.RegisterDevice(d.SerialNumber, d.Name, d.IpAddress, setup.Area.Name, d.Model);
+        var sqlIds = SyncSqlAreaAndDepartment(repository, setup.Area.Name, setup.Department.Name);
+        created.AreaId = sqlIds.AreaId;
+        created.DepartmentId = sqlIds.DepartmentId;
+        // RegisterDevice always defaults a brand-new device row to offline/never-seen, even though a
+        // "discovered" device (this path) was by definition already polling the server moments ago.
+        // Carry that known state over so the dashboard doesn't show a false "offline" flicker until
+        // the device's next heartbeat arrives a few seconds later.
+        created.IsOnline = d.IsOnline;
+        created.Status = d.IsOnline ? DeviceStatus.Online : DeviceStatus.Offline;
+        created.LastSeenUtc = d.LastActivityUtc;
+        repository.UpdateDevice(created);
+        UpsertDeviceAssignment(personnelStore, created.SerialNumber, setup.Area.Code, setup.Department.Code);
+        PersistDeviceAssignmentToDb(postgresConnectionString, created.SerialNumber, setup.Area.Code, setup.Department.Code);
+        AddLog("INFO", "Device", $"Discovered device added: {created.SerialNumber} ({created.Name}).");
+        return Results.Json(created);
+    }
+    catch (Exception ex)
     {
-        return Results.NotFound(new { message = "Discovered device not found." });
+        Console.Error.WriteLine($"[API] Error adding discovered device {serial}: {ex}");
+        return Results.Problem(ex.Message, statusCode: 500);
     }
-
-    var setup = ResolveDeviceSetup(
-        personnelStore,
-        areaCodeInput: null,
-        areaNameInput: d.Area,
-        departmentCodeInput: null,
-        DefaultAreaCode,
-        DefaultAreaName,
-        DefaultDepartmentCode,
-        DefaultDepartmentName);
-    var created = service.RegisterDevice(d.SerialNumber, d.Name, d.IpAddress, setup.Area.Name, d.Model);
-    UpsertDeviceAssignment(personnelStore, created.SerialNumber, setup.Area.Code, setup.Department.Code);
-    PersistDeviceAssignmentToDb(postgresConnectionString, created.SerialNumber, setup.Area.Code, setup.Department.Code);
-    AddLog("INFO", "Device", $"Discovered device added: {created.SerialNumber} ({created.Name}).");
-    return Results.Json(created);
 });
 
-app.MapPost("/api/devices", async (HttpRequest request) =>
+app.MapPost("/api/devices", async (HttpRequest request, ConfigSyncService syncService) =>
 {
     if (!serverRunning)
     {
@@ -3412,14 +4555,29 @@ app.MapPost("/api/devices", async (HttpRequest request) =>
             payload.IpAddress ?? string.Empty,
             setup.Area.Name,
             payload.Model);
+        var sqlIds = SyncSqlAreaAndDepartment(repository, setup.Area.Name, setup.Department.Name);
+        device.AreaId = sqlIds.AreaId;
+        device.DepartmentId = sqlIds.DepartmentId;
         if (payload.RegistrationDevice.HasValue)
         {
             device.IsRegistrationDevice = payload.RegistrationDevice.Value;
-            repository.UpdateDevice(device);
         }
+        repository.UpdateDevice(device);
         UpsertDeviceAssignment(personnelStore, device.SerialNumber, setup.Area.Code, setup.Department.Code);
         PersistDeviceAssignmentToDb(postgresConnectionString, device.SerialNumber, setup.Area.Code, setup.Department.Code);
-        if (device.IsRegistrationDevice)
+        if (payload.ClearAllDataOnAdd == true)
+        {
+            // User chose "clear all data": do NOT fetch anything (even for a registration
+            // device). Mark the device so that on its next connect we send CLEAR DATA and
+            // suppress the user/biometric real-time upload (otherwise a registration device
+            // would still push all its data on connect).
+            MarkClearAllDataPending(clearAllDataPendingBySerial, device.SerialNumber);
+            AddLog(
+                "INFO",
+                "Command",
+                $"Clear-all-data selected on add — will clear device {device.SerialNumber} on connect and skip fetch.");
+        }
+        else if (device.IsRegistrationDevice)
         {
             var fetchResult = await QueueFetchAllCommandsAsync(
                 service,
@@ -3434,6 +4592,9 @@ app.MapPost("/api/devices", async (HttpRequest request) =>
                 $"Auto fetch-all queued for registration device {device.SerialNumber}.",
                 $"includeAttendanceLogs=true; wakeAttempted={fetchResult.WakeAttempted}; pendingCount={fetchResult.PendingCount}");
         }
+        // Ensure the device's area has its default access-control entities and that they include
+        // this device's serial, then sync them to the device.
+        await EnsureAccessControlDefaultsForAllAreas(postgresConnectionString, service, personnelStore, syncService);
         AddLog("INFO", "Device", $"Device saved: {device.SerialNumber} ({device.Name}).");
         return Results.Json(device);
     }
@@ -3756,8 +4917,12 @@ app.MapPost("/api/faceenrollment/enroll", async (HttpRequest request) =>
     var safePassword = SanitizeCommandValue(ResolveDevicePassword(profile?.Password, employee.Password));
     var privilege = (int)ResolveDeviceSyncPrivilege(profile?.Privilege, employee.Privilege);
     var verifyMode = ProgramHelpers.NormalizeEmployeeVerifyMode(payload.VerifyMode, ResolveDeviceSyncVerifyMode(profile?.VerifyMode, employee.VerifyMode));
+    var deviceGroupId = profile?.GroupId ?? (employee.DepartmentId > 0 ? employee.DepartmentId : 1);
+    var timezoneProfile = string.IsNullOrWhiteSpace(profile?.TimezoneProfile)
+        ? "0000000000000000"
+        : profile.TimezoneProfile;
     var userInfoCommand =
-        $"DATA UPDATE USERINFO PIN={userId}\tName={safeName}\tPri={privilege}\tPasswd={safePassword}\tCard={safeCardNo}\tGrp=1\tTZ=0001000000000000\tVerify={verifyMode}";
+        $"DATA UPDATE USERINFO PIN={userId}\tName={safeName}\tPri={privilege}\tPasswd={safePassword}\tCard={safeCardNo}\tGrp={deviceGroupId}\tTZ={timezoneProfile}\tVerify={verifyMode}";
     // Strict mode: caller must explicitly select face type (2=IR, 9=Visible Light).
     var selectedFaceType = payload.FaceType?.Trim() switch
     {
@@ -3869,12 +5034,16 @@ app.MapPost("/api/fpenrollment/enroll", async (HttpRequest request) =>
     var safePassword = SanitizeCommandValue(ResolveDevicePassword(profile?.Password, employee.Password));
     var privilege = (int)ResolveDeviceSyncPrivilege(profile?.Privilege, employee.Privilege);
     var verifyMode = ProgramHelpers.NormalizeEmployeeVerifyMode(payload.VerifyMode, ResolveDeviceSyncVerifyMode(profile?.VerifyMode, employee.VerifyMode));
+    var deviceGroupId = profile?.GroupId ?? (employee.DepartmentId > 0 ? employee.DepartmentId : 1);
+    var timezoneProfile = string.IsNullOrWhiteSpace(profile?.TimezoneProfile)
+        ? "0000000000000000"
+        : profile.TimezoneProfile;
     var fingerIndex = payload.FingerIndex is >= 0 and <= 9 ? payload.FingerIndex.Value : 0;
     var retry = payload.Retry is >= 1 and <= 10 ? payload.Retry.Value : 3;
     var overwrite = payload.Overwrite ?? true ? 1 : 0;
 
     var userInfoCommand =
-        $"DATA UPDATE USERINFO PIN={userId}\tName={safeName}\tPri={privilege}\tPasswd={safePassword}\tCard={safeCardNo}\tGrp=1\tTZ=0001000000000000\tVerify={verifyMode}";
+        $"DATA UPDATE USERINFO PIN={userId}\tName={safeName}\tPri={privilege}\tPasswd={safePassword}\tCard={safeCardNo}\tGrp={deviceGroupId}\tTZ={timezoneProfile}\tVerify={verifyMode}";
     var enrollCommand = $"ENROLL_FP\tPIN={userId}\tFID={fingerIndex}\tRETRY={retry}\tOVERWRITE={overwrite}";
 
     service.ClearPendingCommands(serial);
@@ -4051,9 +5220,20 @@ app.MapPost("/api/faceenrollment/enroll-with-photo", async (HttpRequest request)
 
     service.ClearPendingCommands(deviceSerial);
     service.QueueDeviceCommand(deviceSerial, "CHECK");
-    var cmd = service.QueueDeviceCommand(
-        deviceSerial,
-        $"DATA UPDATE BIOPHOTO PIN={userId} Type=9 No=0 Index=0 Size={base64.Length} Content={base64} Format=0 PostBackTmpFlag=1");
+    // BIOPHOTO (comparison/face photo) is only supported by visible-light face devices per protocol
+    // (Attendance_PUSH_Communication_Protocol_20250429 §12.1.1.8: "only supported by the visible
+    // light devices"). Low-end devices without that hardware (e.g. IR-only face, or fingerprint-only)
+    // silently can't use it, so the photo never shows there. They still accept the plain USERPIC
+    // command (§12.1.1.7) for a display photo, so fall back to that when the device can't do BIOPHOTO.
+    var photoCommand = device.SupportsVisibleLightFace || device.BioPhotoFun || device.VisiLightFunOn
+        ? $"DATA UPDATE BIOPHOTO PIN={userId} Type=9 No=0 Index=0 Size={base64.Length} Content={base64} Format=0 PostBackTmpFlag=1"
+        : $"DATA UPDATE USERPIC PIN={userId}\tSize={base64.Length}\tContent={base64}";
+    var cmd = service.QueueDeviceCommand(deviceSerial, photoCommand);
+
+    if (!string.IsNullOrWhiteSpace(device.IpAddress))
+    {
+        _ = TryWakeDeviceAsync(device.IpAddress, deviceSerial, settings.Port);
+    }
 
     AddLog("INFO", "Enrollment", $"Queued face photo enrollment for {deviceSerial} user {userId}.");
     return Results.Ok(new
@@ -4065,7 +5245,7 @@ app.MapPost("/api/faceenrollment/enroll-with-photo", async (HttpRequest request)
     });
 });
 
-app.MapPut("/api/devices/{id:guid}/info", async (Guid id, HttpRequest request) =>
+app.MapPut("/api/devices/{id:guid}/info", async (Guid id, HttpRequest request, ConfigSyncService syncService) =>
 {
     if (!serverRunning)
     {
@@ -4104,9 +5284,23 @@ app.MapPut("/api/devices/{id:guid}/info", async (Guid id, HttpRequest request) =
         payload.RegistrationDevice);
     if (ok)
     {
+        var devToUpdate = service.ListDevices().FirstOrDefault(d => d.Id == id);
+        if (devToUpdate is not null)
+        {
+            var sqlIds = SyncSqlAreaAndDepartment(repository, setup.Area.Name, setup.Department.Name);
+            devToUpdate.AreaId = sqlIds.AreaId;
+            devToUpdate.DepartmentId = sqlIds.DepartmentId;
+            repository.UpdateDevice(devToUpdate);
+        }
         UpsertDeviceAssignment(personnelStore, existing.SerialNumber, setup.Area.Code, setup.Department.Code);
         PersistDeviceAssignmentToDb(postgresConnectionString, existing.SerialNumber, setup.Area.Code, setup.Department.Code);
-        if (!wasRegistrationDevice && payload.RegistrationDevice == true)
+        if (payload.ClearAllDataOnAdd == true)
+        {
+            // Clear all device data on next connect and suppress the fetch/upload.
+            MarkClearAllDataPending(clearAllDataPendingBySerial, existing.SerialNumber);
+            AddLog("INFO", "Command", $"Clear-all-data selected — will clear device {existing.SerialNumber} on connect and skip fetch.");
+        }
+        if (!wasRegistrationDevice && payload.RegistrationDevice == true && payload.ClearAllDataOnAdd != true)
         {
             var updated = service.ListDevices().FirstOrDefault(d => d.Id == id);
             if (updated is not null)
@@ -4125,6 +5319,9 @@ app.MapPut("/api/devices/{id:guid}/info", async (Guid id, HttpRequest request) =
                     $"includeAttendanceLogs=true; wakeAttempted={fetchResult.WakeAttempted}; pendingCount={fetchResult.PendingCount}");
             }
         }
+        // Ensure the (possibly newly assigned) area has its default access-control entities and
+        // that they include this device, then sync them to the device.
+        await EnsureAccessControlDefaultsForAllAreas(postgresConnectionString, service, personnelStore, syncService);
         AddLog("INFO", "Device", $"Device updated: {id}");
         return Results.Ok(new { success = true });
     }
@@ -4200,6 +5397,16 @@ app.MapPost("/api/devices/{serial}/commands/preset", async (string serial, HttpR
         var removedAttendance = 0;
         var action = payload.Action.Trim().ToLowerInvariant();
 
+        if (action is "clear-data")
+        {
+            // "Clear All Data": also mark the device so its next connect handshake SUPPRESSES the
+            // user/biometric upload and re-issues CLEAR DATA. Without this, a registration device
+            // re-pushes all its data on the next handshake (which happens before it processes the
+            // CLEAR DATA command), so the data appears to come right back ("fetched all data").
+            MarkClearAllDataPending(clearAllDataPendingBySerial, normalizedSerial);
+            AddLog("INFO", "Command", $"Clear All Data requested for {normalizedSerial}: device upload suppressed until cleared.");
+        }
+
         if (action is "clear-log" or "clear-data")
         {
             var device = service.ListDevices()
@@ -4226,6 +5433,21 @@ app.MapPost("/api/devices/{serial}/commands/preset", async (string serial, HttpR
             if (removedAttendance > 0)
             {
                 AddLog("WARN", "Attendance", $"Attendance cleaned for {normalizedSerial}: {removedAttendance} row(s) removed.");
+            }
+
+            // The device list's transactionQty falls back to this cached self-reported count
+            // whenever our own AttendanceRecords count is 0 (see LoadDevicePunchCounts usage) —
+            // without resetting it here, a just-cleared device kept showing its stale pre-clear
+            // count until the device happened to report a fresh INFO/options payload.
+            if (action is "clear-data" && discoveredDevices.TryGetValue(normalizedSerial, out var discoveredForClear))
+            {
+                discoveredDevices[normalizedSerial] = discoveredForClear with
+                {
+                    TransactionQty = 0,
+                    UserQty = 0,
+                    FpQty = 0,
+                    FaceQty = 0
+                };
             }
         }
 
@@ -4259,6 +5481,8 @@ app.MapPost("/api/devices/{serial}/commands/preset", async (string serial, HttpR
 
 app.MapPost("/api/device/sync/{deviceSerial}", (string deviceSerial) =>
 {
+    try
+    {
     if (!serverRunning)
     {
         return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
@@ -4334,7 +5558,17 @@ app.MapPost("/api/device/sync/{deviceSerial}", (string deviceSerial) =>
         HydrateEmployeeBiometricsForDeviceSync(employee, device, biometricTemplatesByPin, biometricPhotosByPin);
     }
 
-    var commandRows = protocolService.CreateBulkSyncCommands(employees, device);
+    var timetables = service.ListTimetables();
+    var departmentTimetables = service.ListDepartmentTimetables();
+    var holidays = repository.GetAllHolidays();
+    var combinations = repository.GetAllAccCombinations();
+    var commandRows = protocolService.CreateBulkSyncCommands(
+        employees, 
+        device, 
+        timetables, 
+        departmentTimetables,
+        holidays,
+        combinations);
     var commandCount = 0;
     foreach (var (type, commandText) in commandRows)
     {
@@ -4351,6 +5585,12 @@ app.MapPost("/api/device/sync/{deviceSerial}", (string deviceSerial) =>
 
     AddLog("INFO", "Sync", $"Device sync queued for {device.SerialNumber} (Area: {setup.Area.Name}, Department: {setup.Department.Name}). Commands: {commandCount}");
     return Results.Ok(new { message = "Sync commands queued", commandCount, area = setup.Area.Name, department = setup.Department.Name });
+    }
+    catch (Exception ex)
+    {
+        AddLog("ERROR", "Sync", $"Device sync failed for {deviceSerial}: {ex.Message}", ex.ToString());
+        return Results.Problem(ex.Message);
+    }
 });
 
 app.MapPost("/api/device/sync/{deviceSerial}/selected", async (string deviceSerial, HttpRequest request) =>
@@ -4428,7 +5668,7 @@ app.MapPost("/api/device/sync/{deviceSerial}/selected", async (string deviceSeri
 
     if (employees.Count == 0)
     {
-        return Results.BadRequest(new { message = "None of the selected employees match this device department." });
+        return Results.BadRequest(new { message = "None of the selected employees belong to this device's area." });
     }
 
     var pins = employees
@@ -4443,7 +5683,17 @@ app.MapPost("/api/device/sync/{deviceSerial}/selected", async (string deviceSeri
         HydrateEmployeeBiometricsForDeviceSync(employee, device, biometricTemplatesByPin, biometricPhotosByPin);
     }
 
-    var commandRows = protocolService.CreateBulkSyncCommands(employees, device);
+    var timetables = service.ListTimetables();
+    var departmentTimetables = service.ListDepartmentTimetables();
+    var holidays = repository.GetAllHolidays();
+    var combinations = repository.GetAllAccCombinations();
+    var commandRows = protocolService.CreateBulkSyncCommands(
+        employees, 
+        device, 
+        timetables, 
+        departmentTimetables,
+        holidays,
+        combinations);
     var commandCount = 0;
     foreach (var (type, commandText) in commandRows)
     {
@@ -4716,7 +5966,7 @@ app.MapGet("/api/attendance", (string? from, string? to, Guid? employeeId, Guid?
     return Results.Json(rows);
 });
 
-app.MapGet("/api/transactions", (string? from, string? to, string? search, string? deviceSerial, int? take, bool? usePunchTime, bool? lite) =>
+app.MapGet("/api/transactions", (string? from, string? to, string? search, string? deviceSerial, string? area, string? department, int? take, bool? usePunchTime, bool? lite, int? page, int? pageSize, bool? approvedOnly) =>
 {
     NormalizeEmployeeDepartmentsToSetup(
         repository,
@@ -4725,6 +5975,47 @@ app.MapGet("/api/transactions", (string? from, string? to, string? search, strin
         DefaultAreaName,
         DefaultDepartmentCode,
         DefaultDepartmentName);
+
+    string[]? filterCodes = null;
+    if (!string.IsNullOrWhiteSpace(area) || !string.IsNullOrWhiteSpace(department))
+    {
+        var query = service.ListEmployees();
+        if (!string.IsNullOrWhiteSpace(area))
+        {
+            query = query.Where(e => string.Equals(e.Area, area, StringComparison.OrdinalIgnoreCase));
+        }
+        if (!string.IsNullOrWhiteSpace(department))
+        {
+            query = query.Where(e => string.Equals(e.Department, department, StringComparison.OrdinalIgnoreCase));
+        }
+        filterCodes = query.Select(e => e.EmployeeCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    // Server-side pagination mode when page/pageSize are provided
+    if (page.HasValue || pageSize.HasValue)
+    {
+        var pgSize = Math.Min(Math.Max(pageSize.GetValueOrDefault(100), 1), 500);
+        var pgNum = Math.Max(page.GetValueOrDefault(1), 1);
+        var skip = (pgNum - 1) * pgSize;
+
+        DateTime? fromUtcPg = null;
+        DateTime? toUtcPg = null;
+        if (DateOnly.TryParse(from, out var fromDatePg))
+            fromUtcPg = fromDatePg.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+        if (DateOnly.TryParse(to, out var toDatePg))
+            toUtcPg = toDatePg.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Local).ToUniversalTime();
+
+        var empByCodePg = service.ListEmployees()
+            .GroupBy(e => e.EmployeeCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var fallbackDeptPg = ResolveDepartmentNameFromSetup(personnelStore, null, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+
+        var (dataRows, totalCount) = LoadTransactionDetailsPaged(
+            postgresConnectionString, fromUtcPg, toUtcPg, search, deviceSerial, filterCodes, pgSize, skip, empByCodePg, fallbackDeptPg, usePunchTime == true, lite == true);
+
+        return Results.Json(new { data = dataRows, total = totalCount, page = pgNum, pageSize = pgSize });
+    }
+
     var limit = take.GetValueOrDefault(5000);
     if (limit is < 1 or > 20000)
     {
@@ -4752,6 +6043,7 @@ app.MapGet("/api/transactions", (string? from, string? to, string? search, strin
         toUtc,
         search,
         deviceSerial,
+        filterCodes,
         limit,
         employeeByCode,
         ResolveDepartmentNameFromSetup(
@@ -4762,7 +6054,8 @@ app.MapGet("/api/transactions", (string? from, string? to, string? search, strin
             DefaultDepartmentCode,
             DefaultDepartmentName),
         usePunchTime == true,
-        lite == true);
+        lite == true,
+        approvedOnly == true);
 
     return Results.Json(rows);
 });
@@ -4961,8 +6254,113 @@ app.MapPost("/api/attendance/manual", async (HttpRequest request) =>
     };
 
     var saved = repository.AddAttendance(record);
+    // Also write a TransactionDetails row so the manual punch appears in Transactions and Reports.
+    InsertManualTransactionDetail(
+        postgresConnectionString,
+        employee.EmployeeCode,
+        timestamp,
+        payload.StatusCode ?? StatusCodeForAttendanceStatus(parsedStatus),
+        payload.VerifyMode,
+        string.IsNullOrWhiteSpace(payload.Workcode) ? null : payload.Workcode.Trim(),
+        string.IsNullOrWhiteSpace(payload.Remarks) ? null : payload.Remarks.Trim());
     AddLog("INFO", "Attendance", $"Manual attendance added for {employee.EmployeeCode} ({parsedStatus}).");
     return Results.Json(saved);
+});
+
+app.MapGet("/api/personnel/verify/{code}", (string code) =>
+{
+    var employee = repository.GetEmployees().FirstOrDefault(e => string.Equals(e.EmployeeCode, code, StringComparison.OrdinalIgnoreCase));
+    if (employee is null) return Results.NotFound(new { message = "Employee not found." });
+    if (!employee.IsActive) return Results.BadRequest(new { message = "Employee is inactive." });
+    return Results.Ok(new { id = employee.Id, employeeCode = employee.EmployeeCode, fullName = employee.FullName, department = employee.Department });
+});
+
+app.MapPost("/api/attendance/request", async (HttpRequest request) =>
+{
+    var payload = await request.ReadFromJsonAsync<AttendanceManualRequest>();
+    if (payload is null || string.IsNullOrWhiteSpace(payload.EmployeeCode))
+    {
+        return Results.BadRequest(new { message = "Employee code is required." });
+    }
+
+    var employee = repository.GetEmployees().FirstOrDefault(e => string.Equals(e.EmployeeCode, payload.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+    if (employee is null) return Results.NotFound(new { message = "Employee not found." });
+    if (!employee.IsActive) return Results.BadRequest(new { message = "Employee is inactive." });
+
+    DateTime timestamp = payload.Timestamp ?? DateTime.Now;
+    
+    // For "Request", we only write to TransactionDetails with ParsedOk = 2 (Pending)
+    InsertManualTransactionDetail(
+        postgresConnectionString,
+        employee.EmployeeCode,
+        timestamp,
+        payload.StatusCode ?? 0,
+        payload.VerifyMode ?? 200, 
+        string.IsNullOrWhiteSpace(payload.Workcode) ? null : payload.Workcode.Trim(),
+        !string.IsNullOrWhiteSpace(payload.Remarks) ? "QR Request: " + payload.Remarks.Trim() : "QR Manual Request",
+        2); 
+
+    AddLog("INFO", "Attendance", $"Manual punch requested via QR for {employee.EmployeeCode}.");
+    return Results.Ok(new { success = true, message = "Punch request submitted for approval." });
+});
+
+app.MapPost("/api/transactions/{id}/approve", async (string id) =>
+{
+    using var conn = new NpgsqlConnection(postgresConnectionString);
+    conn.Open();
+    using var selectCmd = new NpgsqlCommand("SELECT * FROM \"E_Attendace\".\"TransactionDetails\" WHERE \"Id\" = @id", conn);
+    selectCmd.Parameters.AddWithValue("id", id);
+    using var reader = await selectCmd.ExecuteReaderAsync();
+    if (!reader.Read()) return Results.NotFound(new { message = "Transaction not found." });
+
+    var employeeCode = reader["EmployeeCode"].ToString();
+    var punchTime = (DateTime)reader["PunchTime"];
+    var statusCode = reader["StatusCode"] == DBNull.Value ? 0 : (int)reader["StatusCode"];
+    var verifyMode = reader["VerifyMode"] == DBNull.Value ? 0 : (int)reader["VerifyMode"];
+    var workcode = reader["Workcode"]?.ToString();
+    var deviceSerial = reader["DeviceSerialNumber"]?.ToString();
+    reader.Close();
+
+    // 1. Mark as Approved (ParsedOk = 1)
+    using var updateCmd = new NpgsqlCommand("UPDATE \"E_Attendace\".\"TransactionDetails\" SET \"ParsedOk\" = 1 WHERE \"Id\" = @id", conn);
+    updateCmd.Parameters.AddWithValue("id", id);
+    await updateCmd.ExecuteNonQueryAsync();
+
+    // 2. Add to actual AttendanceRecords
+    var employee = repository.GetEmployees().FirstOrDefault(e => string.Equals(e.EmployeeCode, employeeCode, StringComparison.OrdinalIgnoreCase));
+    if (employee != null)
+    {
+        TryParseAttendanceStatus(statusCode == 1 ? "Out" : "In", out var status);
+        repository.AddAttendance(new AttendanceRecord
+        {
+            Id = Guid.NewGuid(),
+            EmployeeId = employee.Id,
+            EmployeeCode = employee.EmployeeCode,
+            Timestamp = punchTime,
+            Status = status,
+            StatusCode = statusCode,
+            VerifyMode = verifyMode,
+            Workcode = workcode,
+            DeviceSerialNumber = deviceSerial
+        });
+    }
+
+    AddLog("INFO", "Attendance", $"Transaction {id} approved manually.");
+    return Results.Ok(new { success = true });
+});
+
+app.MapPost("/api/transactions/{id}/reject", async (string id) =>
+{
+    using var conn = new NpgsqlConnection(postgresConnectionString);
+    conn.Open();
+    // Mark as Rejected (ParsedOk = 3 or just delete? Let's use 3 for Rejected)
+    using var updateCmd = new NpgsqlCommand("UPDATE \"E_Attendace\".\"TransactionDetails\" SET \"ParsedOk\" = 3 WHERE \"Id\" = @id", conn);
+    updateCmd.Parameters.AddWithValue("id", id);
+    var affected = await updateCmd.ExecuteNonQueryAsync();
+    if (affected == 0) return Results.NotFound(new { message = "Transaction not found." });
+
+    AddLog("INFO", "Attendance", $"Transaction {id} rejected manually.");
+    return Results.Ok(new { success = true });
 });
 
 app.MapPut("/api/attendance/{id:guid}", async (Guid id, HttpRequest request) =>
@@ -5214,6 +6612,11 @@ app.MapMethods("/iclock/ping", ["GET"], (HttpRequest request) =>
         TouchDiscoveredDevice(discoveredDevices, serialNumber, ipAddress);
     }
 
+    // DIAGNOSTIC: log ping heartbeats so we can see whether the device is heartbeating via /iclock/ping
+    // (busy/upload mode — delivers NO commands) instead of /iclock/getrequest (idle mode that pulls
+    // commands). pending>0 here means commands are queued but the device is pinging, not pulling them.
+    AddLog("INFO", "DeviceEvent", $"PING heartbeat from {serialNumber ?? "unknown"}.",
+        $"ip={ipAddress ?? string.Empty}; pending={(knownDevice && !string.IsNullOrWhiteSpace(serialNumber) ? service.GetPendingCommands(serialNumber, 5).Count : 0)}");
     return Results.Text("OK", "text/plain");
 });
 
@@ -5262,7 +6665,7 @@ app.MapMethods("/iclock/getrequest", ["GET", "POST"], async (HttpRequest request
         UpdateDiscoveredFromInfo(discoveredDevices, serialNumber, infoPayloadText, ipAddress);
         if (knownDevice)
         {
-            ApplyInfoUpdate(service, serialNumber, infoPayloadText, autoUserFetchUtcBySerial);
+            ApplyInfoUpdate(service, serialNumber, infoPayloadText, autoUserFetchUtcBySerial, clearAllDataPendingBySerial);
         }
     }
 
@@ -5289,6 +6692,13 @@ app.MapMethods("/iclock/getrequest", ["GET", "POST"], async (HttpRequest request
             "DeviceEvent",
             $"Delivered pending commands to {serialNumber}.",
             $"ip={ipAddress ?? string.Empty}; payload={commandPayload.Replace('\r', ' ').Replace('\n', '|')}");
+    }
+    else
+    {
+        // DIAGNOSTIC: log idle getrequest polls so we can confirm the device is using getrequest for its
+        // heartbeat (which delivers commands). pending>0 here would mean a delivery bug; pending=0 is normal.
+        AddLog("INFO", "DeviceEvent", $"GETREQUEST poll from {serialNumber} — no commands (OK).",
+            $"ip={ipAddress ?? string.Empty}; pending={service.GetPendingCommands(serialNumber, 5).Count}");
     }
     return Results.Text(commandPayload, "text/plain");
 });
@@ -5326,12 +6736,69 @@ app.MapMethods("/iclock/devicecmd", ["POST"], async (HttpRequest request) =>
                 return;
             }
 
+            if ((commandText ?? string.Empty).Trim().StartsWith("INFO", StringComparison.OrdinalIgnoreCase))
+            {
+                // Full raw dump for manual inspection (e.g. hunting for an undocumented option key
+                // like a device-side duplicate-punch-interval setting) — everything below this only
+                // extracts a handful of known keys and discards the rest, so without this the full
+                // reply is otherwise never visible anywhere.
+                AddLog("INFO", "DeviceEvent", $"CMD=INFO raw reply from {serial}", replyText ?? string.Empty);
+
+                var infoMap = ParseOptionPairs(replyText ?? string.Empty);
+                var infoName = FirstValue(infoMap, "~DeviceName", "~DevName", "DevName", "DeviceName", "Alias", "TerminalName");
+                var infoModel = NormalizeDeviceModelToken(FirstValue(infoMap, "~DeviceModel", "DeviceModel", "~Model", "Model", "DeviceType", "ProductType", "DevType", "TerminalType"));
+                if (!string.IsNullOrWhiteSpace(infoName) || !string.IsNullOrWhiteSpace(infoModel))
+                {
+                    EnsureDeviceRegistered(service, serial, null, infoName, null, infoModel);
+                }
+
+                // The CMD=INFO devicecmd reply carries the same FaceFunOn/BioPhotoFun/etc. capability
+                // fields as the table=options payload (ApplyOptionsUpdate already parses those
+                // correctly) but this handler previously discarded everything except name/model. That
+                // left capability flags dependent on table=options ever firing again; in between,
+                // ApplyInfoUpdate's much weaker "faceQty > 0" heuristic (driven by the getrequest
+                // ?INFO= query string, not this reply) could downgrade SupportsInfraredFace back to
+                // false for a device with FaceFunOn=1 but zero faces enrolled yet — which is exactly
+                // why a capable device stopped being offered its BIOPHOTO comparison photo.
+                var infoFingerFunOn = ParseBoolOption(FirstValue(infoMap, "FingerFunOn"));
+                var infoFaceFunOn = ParseBoolOption(FirstValue(infoMap, "FaceFunOn"));
+                var infoVisiLightFunOn = ParseBoolOption(FirstValue(infoMap, "VisilightFun", "VisiLightFun", "VisilightFunOn", "VisiLightFunOn"));
+                var infoBioDataFun = ParseBoolOption(FirstValue(infoMap, "BioDataFun"));
+                var infoBioPhotoFun = ParseBoolOption(FirstValue(infoMap, "BioPhotoFun"));
+                if (infoFingerFunOn.HasValue || infoFaceFunOn.HasValue || infoVisiLightFunOn.HasValue ||
+                    infoBioDataFun.HasValue || infoBioPhotoFun.HasValue)
+                {
+                    service.UpdateDeviceProtocolInfo(
+                        serial,
+                        fingerFunOn: infoFingerFunOn,
+                        faceFunOn: infoFaceFunOn,
+                        visiLightFunOn: infoVisiLightFunOn,
+                        bioDataFun: infoBioDataFun,
+                        bioPhotoFun: infoBioPhotoFun);
+                }
+                if (infoFaceFunOn == true)
+                {
+                    var infoFaceVersion = FirstValue(infoMap, "FaceVersion", "FaceAlgVer", "FaceAlgoVersion", "FaceAlgorithmVersion") ?? string.Empty;
+                    var isVisibleLightFace = infoVisiLightFunOn == true || infoBioDataFun == true;
+                    if (double.TryParse(infoFaceVersion, NumberStyles.Float, CultureInfo.InvariantCulture, out var infoFv) && infoFv >= 30.0)
+                    {
+                        isVisibleLightFace = true;
+                    }
+                    var deviceForCaps = service.ListDevices().FirstOrDefault(d => string.Equals(d.SerialNumber, serial, StringComparison.OrdinalIgnoreCase));
+                    service.UpdateDeviceCapabilities(
+                        serial,
+                        visibleLight: isVisibleLightFace || (deviceForCaps?.SupportsVisibleLightFace ?? false),
+                        infrared: !isVisibleLightFace || (deviceForCaps?.SupportsInfraredFace ?? false),
+                        fingerprint: infoFingerFunOn == true || (deviceForCaps?.SupportsFingerprint ?? false));
+                }
+            }
+
             var table = InferDataReplyTableFromCommand(commandText);
             if (string.IsNullOrWhiteSpace(table))
             {
                 return;
             }
-            if (IsUserDataTable(table) && !ShouldImportUserData(service, serial, commandText, manualUserSyncUntilUtcBySerial))
+            if (IsUserDataTable(table) && !ShouldImportUserData(service, serial, commandText, manualUserSyncUntilUtcBySerial, clearAllDataPendingBySerial))
             {
                 AddLog(
                     "INFO",
@@ -5412,9 +6879,9 @@ app.MapMethods("/iclock/devicecmd", ["POST"], async (HttpRequest request) =>
                         mappedSetup.Area.Code,
                         mappedSetup.Department.Code),
                     "ATTLOG" => repository.RunInTransaction(() =>
-                        HandleAttendancePayload(service, serial, dataPayload, allowUnknownEmployeeAutoCreate: deviceAllowUnknownEmployeeAutoCreate)),
+                        HandleAttendancePayload(service, serial, dataPayload, allowUnknownEmployeeAutoCreate: IsRegistrationDevice(service, serial) || IsManualUserSyncWindowActive(manualUserSyncUntilUtcBySerial, serial))),
                     "OPERLOG" => repository.RunInTransaction(() =>
-                        HandleAttendancePayload(service, serial, dataPayload, allowUnknownEmployeeAutoCreate: deviceAllowUnknownEmployeeAutoCreate)),
+                        HandleAttendancePayload(service, serial, dataPayload, allowUnknownEmployeeAutoCreate: IsRegistrationDevice(service, serial) || IsManualUserSyncWindowActive(manualUserSyncUntilUtcBySerial, serial))),
                     _ => 0
                 };
 
@@ -5444,6 +6911,12 @@ app.MapMethods("/iclock/devicecmd", ["POST"], async (HttpRequest request) =>
 
 app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
 {
+    // Per protocol (Attendance_PUSH_Communication_Protocol p.21): the device reads the HTTP
+    // Date response header to keep its own clock synchronized in real time. Previously only the
+    // GET options=all branch set this explicitly; most firmware actually heartbeats via POST, so
+    // set it unconditionally here (covers every response this endpoint returns, GET or POST).
+    request.HttpContext.Response.Headers.Date = DateTime.UtcNow.ToString("R");
+
     var serialNumber = TryGetSerialNumber(request);
     var ipAddress = request.HttpContext.Connection.RemoteIpAddress?.ToString();
     var knownDevice = IsKnownDevice(service, serialNumber);
@@ -5466,18 +6939,91 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
             request.HttpContext.Response.Headers.Date = DateTime.UtcNow.ToString("R");
             AddLog("INFO", "DeviceEvent", $"CDATA options=all from {serialNumber ?? "unknown"}", $"ip={ipAddress ?? string.Empty}");
             ApplyInitOptionsAllUpdate(service, discoveredDevices, serialNumber, request.Query, ipAddress);
+
+            if (!knownDevice)
+            {
+                // Device is not registered in the software — reject initialization so it does not show as connected
+                return Results.Text("ERROR: Device not registered. Please add this device in the software first.", "text/plain");
+            }
+
+            if (string.IsNullOrWhiteSpace(serialNumber))
+            {
+                AddLog("WARN", "DeviceEvent", "CDATA options=all from known device without serial number.", $"ip={ipAddress ?? string.Empty}");
+                return Results.Text("OK", "text/plain");
+            }
+
             var forceFullDataReset = knownDevice && ConsumeFullDataResetPending(fullDataResetUtcBySerial, serialNumber);
-            var includeUserRealtimeSync = knownDevice && IsRegistrationDevice(service, serialNumber);
-            return Results.Text(
-                BuildOptionsResponse(
-                    service,
-                    serialNumber,
-                    devicePollDelaySeconds,
-                    deviceDefaultTimeZoneMinutes,
-                    deviceEnableAttPhoto,
-                    forceFullDataReset,
-                    includeUserRealtimeSync),
-                "text/plain");
+            // If "clear all data" is pending for this device, suppress the user/biometric upload
+            // (no fetch — even for a registration device) and make sure a CLEAR DATA command is
+            // queued. We PEEK the flag (don't consume here): it is cleared in ApplyInfoUpdate once
+            // the device reports it is actually empty, so the suppression holds across the whole
+            // clear cycle and the data can't be re-fetched in the meantime.
+            var clearAllDataPending = knownDevice && IsClearAllDataPending(clearAllDataPendingBySerial, serialNumber);
+            if (clearAllDataPending)
+            {
+                var hasPendingClear = service.GetDeviceCommands(serialNumber, 100).Any(c =>
+                    string.IsNullOrWhiteSpace(c.ReplyText) &&
+                    (c.CommandText ?? string.Empty).TrimStart().StartsWith("CLEAR DATA", StringComparison.OrdinalIgnoreCase));
+                if (!hasPendingClear)
+                {
+                    service.QueueDeviceCommand(serialNumber, "CLEAR DATA");
+                    AddLog("INFO", "Command", $"Clearing all data on device {serialNumber}; fetch suppressed until cleared.");
+                }
+            }
+            var includeUserRealtimeSync = knownDevice && IsRegistrationDevice(service, serialNumber) && !clearAllDataPending;
+
+            // Auto clock-sync on every reconnect/reboot handshake, not just device add/manual sync —
+            // see timeSyncUtcBySerial declaration for why. Throttled to once per 5 minutes per device.
+            if (knownDevice && !string.IsNullOrWhiteSpace(serialNumber))
+            {
+                var tzSn = serialNumber.Trim();
+                if (!timeSyncUtcBySerial.TryGetValue(tzSn, out var lastSync) ||
+                    DateTime.UtcNow - lastSync >= TimeSpan.FromMinutes(5))
+                {
+                    timeSyncUtcBySerial[tzSn] = DateTime.UtcNow;
+                    var syncDevice = service.ListDevices().FirstOrDefault(d =>
+                        string.Equals(d.SerialNumber, tzSn, StringComparison.OrdinalIgnoreCase));
+                    if (syncDevice is not null)
+                    {
+                        service.QueueDeviceCommand(tzSn, protocolService.CreateMachineTzCommand(syncDevice));
+                        service.QueueDeviceCommand(tzSn, protocolService.CreateTimezoneCommand(syncDevice));
+                    }
+                    service.QueueDeviceCommand(tzSn, protocolService.CreateTimeSyncCommand(DateTime.Now));
+                    service.QueueDeviceCommand(tzSn, $"SHELL date -s \"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\"");
+                    service.QueueDeviceCommand(tzSn, "SHELL hwclock -w");
+                    AddLog("INFO", "Command", $"Auto clock-sync queued for {tzSn} on options=all handshake.");
+                }
+            }
+
+            // Registration device (Yes/No = No): auto-fetch ATTENDANCE LOGS ONLY on connect — no user/
+            // biometric pull. Registration devices (Yes) already get a full fetch-all on add/enable and
+            // sync user data in realtime; a non-registration device should still auto-pull its attendance
+            // so the transactions dashboard and reports stay current. Throttled to once per 60s.
+            if (knownDevice && !clearAllDataPending && !string.IsNullOrWhiteSpace(serialNumber) &&
+                !IsRegistrationDevice(service, serialNumber))
+            {
+                var attSn = serialNumber.Trim();
+                if (!attLogFetchUtcBySerial.TryGetValue(attSn, out var lastAtt) ||
+                    DateTime.UtcNow - lastAtt >= TimeSpan.FromSeconds(60))
+                {
+                    attLogFetchUtcBySerial[attSn] = DateTime.UtcNow;
+                    var attStart = attLogRangeStartBySerial.TryGetValue(attSn, out var prevEnd) ? prevEnd : "2000-01-01 00:00:00";
+                    var attEnd = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                    service.QueueDeviceCommand(attSn, $"DATA QUERY ATTLOG StartTime={attStart}\tEndTime={attEnd}");
+                    attLogRangeStartBySerial[attSn] = attEnd;
+                    AddLog("INFO", "Command", $"Auto attendance-log fetch queued for non-registration device {attSn}: {attStart} to {attEnd}.");
+                }
+            }
+
+            var optionsBody = BuildOptionsResponse(
+                service,
+                serialNumber,
+                devicePollDelaySeconds,
+                deviceDefaultTimeZoneMinutes,
+                deviceEnableAttPhoto,
+                forceFullDataReset,
+                includeUserRealtimeSync);
+            return Results.Text(optionsBody, "text/plain");
         }
 
         if (knownDevice && !string.IsNullOrWhiteSpace(serialNumber))
@@ -5570,6 +7116,26 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
 
     var payload = await ReadBodyAsync(request);
 
+    // A "Clear All Data" is in progress for this device: the CLEAR DATA command has been queued
+    // but the device hasn't yet confirmed it's actually empty (see IsClearAllDataPending/
+    // ConsumeClearAllDataPending in ApplyInfoUpdate). ShouldImportUserData already blocks
+    // USERINFO/BIODATA/etc. during this window, but attendance records pushed via ATTLOG/OPERLOG
+    // were never gated the same way — the device's pre-clear backlog could still land in
+    // TransactionDetails before the clear actually takes effect. Drop (don't persist) attendance
+    // data for both tables while a clear is pending; the device's own buffer is wiped once CLEAR
+    // DATA executes, so there's nothing legitimate lost by skipping this stale window.
+    if ((string.Equals(table, "ATTLOG", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(table, "OPERLOG", StringComparison.OrdinalIgnoreCase)) &&
+        IsClearAllDataPending(clearAllDataPendingBySerial, serialNumber))
+    {
+        AddLog(
+            "INFO",
+            "DeviceEvent",
+            $"CDATA {table} from {serialNumber ?? "unknown"} suppressed — clear-all-data pending.",
+            $"bytes={payload.Length}; ip={ipAddress ?? string.Empty}");
+        return Results.Text("OK", "text/plain");
+    }
+
     if (string.Equals(table, "ATTLOG", StringComparison.OrdinalIgnoreCase))
     {
         var count = repository.RunInTransaction(() =>
@@ -5578,26 +7144,34 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
                 service,
                 serialNumber,
                 payload,
-                allowUnknownEmployeeAutoCreate: deviceAllowUnknownEmployeeAutoCreate);
+                allowUnknownEmployeeAutoCreate: IsRegistrationDevice(service, serialNumber) || IsManualUserSyncWindowActive(manualUserSyncUntilUtcBySerial, serialNumber));
             TryUpdateDeviceTableStampFromRequest(service, serialNumber, "ATTLOG", request.Query);
             return added;
         });
         QueueTransactionDetails(serialNumber, "ATTLOG", payload);
         AddLog("INFO", "DeviceEvent", $"CDATA ATTLOG from {serialNumber ?? "unknown"}", $"records={count}; ip={ipAddress ?? string.Empty}");
         AddLog("INFO", "Attendance", $"ATTLOG received from {serialNumber ?? "unknown"}: {count} record(s).");
-        // Fallback delivery path: some devices post cdata regularly but poll getrequest inconsistently.
-        // If commands are pending, return command payload here so queue can still drain.
-        if (!string.IsNullOrWhiteSpace(serialNumber))
+
+        // Same idle-heartbeat delivery as OPERLOG below: never deliver commands while a real
+        // backlog is actively draining (count > 0) — low-end devices with a large ATTLOG backlog
+        // (e.g. hundreds of records) POST table=ATTLOG chunks back-to-back for a while and never
+        // call /iclock/getrequest during that burst, so once the chunk is empty (backlog drained)
+        // this is the only channel left to hand it the queued commands.
+        if (count == 0 && !string.IsNullOrWhiteSpace(serialNumber))
         {
-            var commandPayload = BuildPendingCommandPayload(
+            var idleCommandPayload = BuildPendingCommandPayload(
                 service,
                 serialNumber,
                 ResolveCommandBatchSize(manualUserSyncUntilUtcBySerial, serialNumber),
                 commandSerialById);
-            if (!string.Equals(commandPayload, "OK", StringComparison.Ordinal))
+            if (!string.Equals(idleCommandPayload, "OK", StringComparison.Ordinal))
             {
-                AddLog("INFO", "DeviceEvent", $"Delivered pending commands via CDATA ATTLOG to {serialNumber}.", $"ip={ipAddress ?? string.Empty}");
-                return Results.Text(commandPayload, "text/plain");
+                AddLog(
+                    "INFO",
+                    "DeviceEvent",
+                    $"Delivered pending commands to {serialNumber} via idle ATTLOG heartbeat.",
+                    $"ip={ipAddress ?? string.Empty}; payload={idleCommandPayload.Replace('\r', ' ').Replace('\n', '|')}");
+                return Results.Text(idleCommandPayload, "text/plain");
             }
         }
 
@@ -5606,29 +7180,69 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
 
     if (string.Equals(table, "OPERLOG", StringComparison.OrdinalIgnoreCase))
     {
-        var mappedSetup = ResolveMappedSetupForCurrentDevice();
-        var mappedPosition = ResolvePositionNameFromSetup(personnelStore, null, mappedSetup.Department.Name);
-        var includeUserData = ShouldImportUserData(service, serialNumber, null, manualUserSyncUntilUtcBySerial);
-        var summary = repository.RunInTransaction(() =>
+        (int Attendance, int UserInfo, int BioData, int BioPhoto, int FingerTmp, int Face, int UserPic) summary = (0, 0, 0, 0, 0, 0, 0);
+        try
         {
-            var imported = HandleOperLogPayload(
-                service,
-                repository,
-                personnelStore,
-                serialNumber,
-                payload,
-                mappedSetup.Department.Name,
-                mappedPosition,
-                mappedSetup.Area.Code,
-                mappedSetup.Department.Code,
-                includeUserData,
-                allowUnknownEmployeeAutoCreate: deviceAllowUnknownEmployeeAutoCreate);
-            TryUpdateDeviceTableStampFromRequest(service, serialNumber, "OPERLOG", request.Query);
-            return imported;
-        });
-        if (summary.UserInfo > 0 || summary.BioData > 0 || summary.BioPhoto > 0 || summary.FingerTmp > 0 || summary.Face > 0 || summary.UserPic > 0)
+            var mappedSetup = ResolveMappedSetupForCurrentDevice();
+            var mappedPosition = ResolvePositionNameFromSetup(personnelStore, null, mappedSetup.Department.Name);
+            var includeUserData = ShouldImportUserData(service, serialNumber, null, manualUserSyncUntilUtcBySerial, clearAllDataPendingBySerial);
+            summary = repository.RunInTransaction(() =>
+            {
+                var imported = HandleOperLogPayload(
+                    service,
+                    repository,
+                    personnelStore,
+                    serialNumber,
+                    payload,
+                    mappedSetup.Department.Name,
+                    mappedPosition,
+                    mappedSetup.Area.Code,
+                    mappedSetup.Department.Code,
+                    includeUserData,
+                    allowUnknownEmployeeAutoCreate: IsRegistrationDevice(service, serialNumber) || IsManualUserSyncWindowActive(manualUserSyncUntilUtcBySerial, serialNumber));
+                TryUpdateDeviceTableStampFromRequest(service, serialNumber, "OPERLOG", request.Query);
+                // Some devices (e.g. SpeedFace-V5L) send USERINFO/BIODATA/etc. embedded inside
+                // table=OPERLOG rather than as separate tables. Update every stamp that the device
+                // included in the query (the calls are no-ops when the key is absent).
+                TryUpdateDeviceTableStampFromRequest(service, serialNumber, "USERINFO", request.Query);
+                TryUpdateDeviceTableStampFromRequest(service, serialNumber, "BIODATA", request.Query);
+                TryUpdateDeviceTableStampFromRequest(service, serialNumber, "BIOPHOTO", request.Query);
+                TryUpdateDeviceTableStampFromRequest(service, serialNumber, "FINGERTMP", request.Query);
+                TryUpdateDeviceTableStampFromRequest(service, serialNumber, "FACE", request.Query);
+                TryUpdateDeviceTableStampFromRequest(service, serialNumber, "USERPIC", request.Query);
+                return imported;
+            });
+            if (summary.UserInfo > 0 || summary.BioData > 0 || summary.BioPhoto > 0 || summary.FingerTmp > 0 || summary.Face > 0 || summary.UserPic > 0)
+            {
+                SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+                // If the device sends these types embedded in OPERLOG but doesn't include
+                // separate stamp keys in the query, advance the stamps to the current time so
+                // the device stops re-uploading the same records every cycle.
+                var nowStamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                if (!string.IsNullOrWhiteSpace(serialNumber))
+                {
+                    if (summary.UserInfo > 0) service.UpsertDeviceTableStamp(serialNumber, "USERINFO", nowStamp);
+                    if (summary.BioData > 0) service.UpsertDeviceTableStamp(serialNumber, "BIODATA", nowStamp);
+                    if (summary.BioPhoto > 0) service.UpsertDeviceTableStamp(serialNumber, "BIOPHOTO", nowStamp);
+                    if (summary.FingerTmp > 0) service.UpsertDeviceTableStamp(serialNumber, "FINGERTMP", nowStamp);
+                    if (summary.Face > 0) service.UpsertDeviceTableStamp(serialNumber, "FACE", nowStamp);
+                    if (summary.UserPic > 0) service.UpsertDeviceTableStamp(serialNumber, "USERPIC", nowStamp);
+                }
+            }
+        }
+        catch (Exception ex)
         {
-            SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+            // Never let a malformed/unexpected OPERLOG payload bubble into the global exception
+            // handler: a non-"OK" HTTP response here makes some firmware (e.g. SpeedFace-V5L)
+            // assume the upload failed and retry the same payload forever, silently — with zero
+            // visibility, since this whole branch's AddLog calls never execute if it throws first.
+            var failPreview = payload.Length <= 200 ? payload : payload[..200];
+            failPreview = failPreview.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            AddLog(
+                "WARN",
+                "DeviceEvent",
+                $"CDATA OPERLOG from {serialNumber ?? "unknown"} failed to process — returning OK anyway.",
+                $"error={ex.GetType().Name}: {ex.Message}; bytes={payload.Length}; ip={ipAddress ?? string.Empty}; preview={failPreview}");
         }
 
         QueueTransactionDetails(serialNumber, "OPERLOG", payload);
@@ -5641,22 +7255,31 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
             $"attlog={summary.Attendance}; userinfo={summary.UserInfo}; biodata={summary.BioData}; biophoto={summary.BioPhoto}; fingertmp={summary.FingerTmp}; face={summary.Face}; userpic={summary.UserPic}; bytes={payload.Length}; ip={ipAddress ?? string.Empty}; preview={operlogPreview}");
         AddLog("INFO", "Attendance", $"OPERLOG received from {serialNumber ?? "unknown"}: {summary.Attendance} attendance record(s).");
 
-        // Fallback delivery path: some devices post cdata regularly but poll getrequest inconsistently.
-        if (!string.IsNullOrWhiteSpace(serialNumber))
+        var processedTotal = summary.Attendance + summary.UserInfo + summary.BioData + summary.BioPhoto + summary.FingerTmp + summary.Face + summary.UserPic;
+
+        // Do not deliver pending commands while an actual upload is in flight (processedTotal > 0) —
+        // ZK devices ignore commands riding a non-trivial OPERLOG reply and assume the upload failed,
+        // causing hangs and retries. But some firmware (e.g. SpeedFace-V5L) heartbeats exclusively via
+        // empty OPERLOG POSTs and never calls /iclock/getrequest, so an idle (0-record) OPERLOG poll is
+        // the only channel it ever offers us — deliver queued commands on that idle heartbeat.
+        if (processedTotal == 0 && !string.IsNullOrWhiteSpace(serialNumber))
         {
-            var commandPayload = BuildPendingCommandPayload(
+            var idleCommandPayload = BuildPendingCommandPayload(
                 service,
                 serialNumber,
                 ResolveCommandBatchSize(manualUserSyncUntilUtcBySerial, serialNumber),
                 commandSerialById);
-            if (!string.Equals(commandPayload, "OK", StringComparison.Ordinal))
+            if (!string.Equals(idleCommandPayload, "OK", StringComparison.Ordinal))
             {
-                AddLog("INFO", "DeviceEvent", $"Delivered pending commands via CDATA OPERLOG to {serialNumber}.", $"ip={ipAddress ?? string.Empty}");
-                return Results.Text(commandPayload, "text/plain");
+                AddLog(
+                    "INFO",
+                    "DeviceEvent",
+                    $"Delivered pending commands to {serialNumber} via idle OPERLOG heartbeat.",
+                    $"ip={ipAddress ?? string.Empty}; payload={idleCommandPayload.Replace('\r', ' ').Replace('\n', '|')}");
+                return Results.Text(idleCommandPayload, "text/plain");
             }
         }
 
-        var processedTotal = summary.Attendance + summary.UserInfo + summary.BioData + summary.BioPhoto + summary.FingerTmp + summary.Face + summary.UserPic;
         return Results.Text($"OK: {processedTotal}", "text/plain");
     }
 
@@ -5665,22 +7288,13 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
         UpdateDiscoveredFromOptions(discoveredDevices, serialNumber, payload, ipAddress);
         ApplyOptionsUpdate(service, serialNumber, ipAddress, payload);
         AddLog("INFO", "DeviceEvent", $"CDATA options from {serialNumber}", $"ip={ipAddress ?? string.Empty}; payloadBytes={payload.Length}");
-        var commandPayload = TryBuildCdataCommandPayload(
-            service,
-            serialNumber,
-            ipAddress,
-            ResolveCommandBatchSize(manualUserSyncUntilUtcBySerial, serialNumber),
-            commandSerialById,
-            AddLog,
-            "CDATA options");
-        if (!string.IsNullOrWhiteSpace(commandPayload))
-        {
-            return Results.Text(commandPayload, "text/plain");
-        }
+        // Commands are NOT delivered here — the device re-initializes immediately after with
+        // GET options=all, which clears any commands queued from this POST response body.
+        // Commands are delivered in the GET options=all response instead.
         return Results.Text("OK", "text/plain");
     }
 
-    if (IsUserDataTable(table) && !ShouldImportUserData(service, serialNumber, null, manualUserSyncUntilUtcBySerial))
+    if (IsUserDataTable(table) && !ShouldImportUserData(service, serialNumber, null, manualUserSyncUntilUtcBySerial, clearAllDataPendingBySerial))
     {
         AddLog(
             "INFO",
@@ -5900,250 +7514,97 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
         preview = preview.Replace('\r', ' ').Replace('\n', ' ').Trim();
         AddLog("INFO", "DeviceEvent", $"CDATA {table} from {serialNumber ?? "unknown"}", $"bytes={payload.Length}; ip={ipAddress ?? string.Empty}; preview={preview}");
     }
+    else
+    {
+        // Some firmware (e.g. SpeedFace-V5L) heartbeats via POST /iclock/cdata with no `table`
+        // param at all instead of table=OPERLOG. Previously this fell through completely silently
+        // (no log, no command delivery), so devices that only ever send this kind of heartbeat could
+        // never receive queued commands. Treat it the same as an idle OPERLOG poll.
+        AddLog("INFO", "DeviceEvent", $"CDATA heartbeat (no table) from {serialNumber ?? "unknown"}", $"bytes={payload.Length}; ip={ipAddress ?? string.Empty}");
+    }
+
+    if (string.IsNullOrWhiteSpace(table) && !string.IsNullOrWhiteSpace(serialNumber))
+    {
+        var idleCommandPayload = BuildPendingCommandPayload(
+            service,
+            serialNumber,
+            ResolveCommandBatchSize(manualUserSyncUntilUtcBySerial, serialNumber),
+            commandSerialById);
+        if (!string.Equals(idleCommandPayload, "OK", StringComparison.Ordinal))
+        {
+            AddLog(
+                "INFO",
+                "DeviceEvent",
+                $"Delivered pending commands to {serialNumber} via no-table CDATA heartbeat.",
+                $"ip={ipAddress ?? string.Empty}; payload={idleCommandPayload.Replace('\r', ' ').Replace('\n', '|')}");
+            return Results.Text(idleCommandPayload, "text/plain");
+        }
+    }
 
     return Results.Text("OK", "text/plain");
 });
 
 app.MapProductionApiEndpoints();
 
+// Seed per-area access-control defaults (Time Period 1 / Access Group 1 / Combination 1) for any
+// areas that already exist, so they are present without opening the Access Control page. Runs in
+// the background after startup settles; area-create and device-add paths handle new areas/devices.
+_ = Task.Run(async () =>
+{
+    try
+    {
+        await Task.Delay(TimeSpan.FromSeconds(8));
+        using var scope = app.Services.CreateScope();
+        var sync = scope.ServiceProvider.GetRequiredService<ConfigSyncService>();
+        await EnsureAccessControlDefaultsForAllAreas(postgresConnectionString, service, personnelStore, sync);
+    }
+    catch (Exception ex) { Console.WriteLine($"Startup AC defaults seed error: {ex.Message}"); }
+});
+
 app.Run();
 
-static string BuildLicenseBlockedHtml(LicenseAccessSnapshot state)
+static byte[] LoadOrCreateJwtSigningKey(string path)
 {
-    var message = string.IsNullOrWhiteSpace(state.ActivationMessage)
-        ? "Invalid or expired license."
-        : state.ActivationMessage;
-    var machineHash = state.Validation.MachineHash;
-    var expiry = state.EffectiveExpiryUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "N/A";
-    var trialExpiry = state.TrialExpiryUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "N/A";
-
-    return $$"""
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>E-Attendance - License Required</title>
-  <style>
-    :root {
-      color-scheme: light;
-      font-family: "Segoe UI", Arial, sans-serif;
-    }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: linear-gradient(160deg, #eef4fb 0%, #f8fbff 100%);
-      color: #173f62;
-      padding: 20px;
-    }
-    .card {
-      width: min(720px, 100%);
-      border: 1px solid #cfe0f2;
-      background: #ffffff;
-      border-radius: 16px;
-      padding: 22px;
-      box-shadow: 0 12px 30px -20px rgba(17, 54, 85, 0.4);
-    }
-    h1 {
-      margin: 0 0 6px;
-      font-size: 24px;
-    }
-    p {
-      margin: 0 0 12px;
-      font-size: 14px;
-      line-height: 1.55;
-    }
-    .hint {
-      margin-top: 14px;
-      border: 1px solid #d9e8f7;
-      border-radius: 10px;
-      background: #f6faff;
-      padding: 12px;
-      font-size: 13px;
-    }
-    .actions {
-      margin-top: 14px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-    }
-    .upload {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      border: 1px dashed #9ec1e3;
-      border-radius: 10px;
-      background: #f8fbff;
-      color: #14446d;
-      padding: 8px 10px;
-      font-size: 13px;
-      cursor: pointer;
-    }
-    .upload input {
-      display: none;
-    }
-    .btn {
-      border: 1px solid #b7d1ec;
-      border-radius: 10px;
-      background: #ffffff;
-      color: #164a74;
-      padding: 8px 12px;
-      font-size: 13px;
-      cursor: pointer;
-    }
-    .btn:hover {
-      background: #eef6ff;
-    }
-    .btn-primary {
-      background: #1f6aa5;
-      border-color: #1f6aa5;
-      color: #ffffff;
-    }
-    .btn-primary:hover {
-      background: #1a5a8c;
-    }
-    .status {
-      margin-top: 10px;
-      border: 1px solid #d9e8f7;
-      border-radius: 10px;
-      background: #f8fbff;
-      padding: 10px;
-      font-size: 13px;
-      color: #18476f;
-      display: none;
-    }
-    .status.ok {
-      border-color: #b9e2c6;
-      background: #f1fbf4;
-      color: #16653a;
-    }
-    .status.err {
-      border-color: #efc5c5;
-      background: #fff2f2;
-      color: #8a2d2d;
-    }
-    .status.warn {
-      border-color: #f3dfb1;
-      background: #fff9eb;
-      color: #7b5a12;
-    }
-    code {
-      background: #edf4fc;
-      border-radius: 6px;
-      padding: 2px 6px;
-      font-family: Consolas, monospace;
-      font-size: 12px;
-    }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>Product Not Activated</h1>
-    <p>{{message}}</p>
-    <p>Machine Hash: <code>{{machineHash}}</code></p>
-    <p>Trial Expiry: <code>{{trialExpiry}}</code></p>
-    <p>License Expiry (if present): <code>{{expiry}}</code></p>
-    <div class="actions">
-      <label class="upload">
-        <span>Select .key file</span>
-        <input id="licenseKey" type="file" accept=".key" />
-      </label>
-      <button id="activateBtn" class="btn btn-primary" type="button">Activate License</button>
-      <button id="refreshBtn" class="btn" type="button">Refresh</button>
-    </div>
-    <div id="statusBox" class="status"></div>
-  </div>
-  <script>
-    (function () {
-      const keyInput = document.getElementById("licenseKey");
-      const activateBtn = document.getElementById("activateBtn");
-      const refreshBtn = document.getElementById("refreshBtn");
-      const statusBox = document.getElementById("statusBox");
-
-      function setStatus(kind, text) {
-        statusBox.className = "status " + (kind || "");
-        statusBox.style.display = "block";
-        statusBox.textContent = text;
-      }
-
-      async function postRefresh() {
-        await fetch("/api/license/reload", { method: "POST", cache: "no-store" });
-      }
-
-      async function activateFromFile() {
-        const file = keyInput && keyInput.files ? keyInput.files[0] : null;
-        if (!file) {
-          setStatus("warn", "Please select a .key file first.");
-          return;
+    try
+    {
+        if (File.Exists(path))
+        {
+            var existing = Convert.FromBase64String(File.ReadAllText(path).Trim());
+            if (existing.Length >= 32)
+            {
+                return existing;
+            }
         }
+    }
+    catch
+    {
+        // Fall through and regenerate a fresh key if the stored one is unreadable/corrupt.
+    }
 
-        activateBtn.disabled = true;
-        refreshBtn.disabled = true;
-        setStatus("", "Activating license...");
+    var key = RandomNumberGenerator.GetBytes(64);
+    File.WriteAllText(path, Convert.ToBase64String(key));
+    return key;
+}
 
-        try {
-          const formData = new FormData();
-          formData.append("licenseKey", file, file.name || "PB-Activated.key");
-
-          const response = await fetch("/api/license/activate", {
-            method: "POST",
-            body: formData,
-            cache: "no-store",
-          });
-
-          const payload = await response.json().catch(() => ({}));
-          const status = payload && (payload.status || payload);
-          const message =
-            (payload && payload.message) ||
-            (status && status.activationMessage) ||
-            (status && status.message) ||
-            (response.ok ? "License processed." : "Activation failed.");
-
-          await postRefresh();
-
-          if (response.ok && status && status.isValid) {
-            setStatus("ok", "License activated successfully. Reloading...");
-            setTimeout(function () { window.location.reload(); }, 1000);
-            return;
-          }
-
-          if (response.ok && status && status.isAccessGranted) {
-            setStatus("warn", message + " Trial may still be active.");
-            setTimeout(function () { window.location.reload(); }, 1200);
-            return;
-          }
-
-          setStatus("err", message);
-        } catch (error) {
-          setStatus("err", error && error.message ? error.message : "Activation request failed.");
-        } finally {
-          activateBtn.disabled = false;
-          refreshBtn.disabled = false;
-        }
-      }
-
-      activateBtn.addEventListener("click", activateFromFile);
-      refreshBtn.addEventListener("click", async function () {
-        refreshBtn.disabled = true;
-        setStatus("", "Refreshing license status...");
-        try {
-          await postRefresh();
-          setStatus("ok", "Status refreshed. Reloading...");
-          setTimeout(function () { window.location.reload(); }, 700);
-        } catch (error) {
-          setStatus("err", error && error.message ? error.message : "Refresh failed.");
-        } finally {
-          refreshBtn.disabled = false;
-        }
-      });
-    })();
-  </script>
-</body>
-</html>
-""";
+static string GenerateJwtToken(byte[] signingKey, string issuer, string audience, string userId, string username, string role, TimeSpan lifetime)
+{
+    var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+    var credentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(
+        new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(signingKey),
+        Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256);
+    var claims = new[]
+    {
+        new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, userId ?? string.Empty),
+        new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, username ?? string.Empty),
+        new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, role ?? string.Empty),
+    };
+    var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
+        issuer: issuer,
+        audience: audience,
+        claims: claims,
+        expires: DateTime.UtcNow.Add(lifetime),
+        signingCredentials: credentials);
+    return handler.WriteToken(token);
 }
 
 static string ResolveLicenseDirectory(string? configuredDirectory)
@@ -6314,7 +7775,34 @@ static void SaveTrialSnapshot(string trialStatePath, LicenseTrialSnapshot snapsh
     {
         WriteIndented = true
     });
-    File.WriteAllText(trialStatePath, json);
+
+    try
+    {
+        var directory = Path.GetDirectoryName(trialStatePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        if (File.Exists(trialStatePath))
+        {
+            var attributes = File.GetAttributes(trialStatePath);
+            if ((attributes & FileAttributes.ReadOnly) != 0)
+            {
+                File.SetAttributes(trialStatePath, attributes & ~FileAttributes.ReadOnly);
+            }
+        }
+
+        File.WriteAllText(trialStatePath, json);
+    }
+    catch (UnauthorizedAccessException ex)
+    {
+        Console.Error.WriteLine($"[License] Unable to write trial state '{trialStatePath}': {ex.Message}");
+    }
+    catch (IOException ex)
+    {
+        Console.Error.WriteLine($"[License] Unable to write trial state '{trialStatePath}': {ex.Message}");
+    }
 }
 
 static int CalculateTrialDaysRemaining(DateTimeOffset checkedAtUtc, DateTimeOffset trialExpiryUtc)
@@ -6353,55 +7841,42 @@ static string SanitizeLicenseKeyFileName(string? fileName)
 
 static string ResolvePostgresConnectionString(string configuredConnectionString)
 {
-    const string expectedDb = "E_Attendace";
-    const string expectedUser = "E_Attendace";
-    const string expectedSchema = "E_Attendace";
-
     var configured = new NpgsqlConnectionStringBuilder(configuredConnectionString);
+    
+    // Use configured values or defaults if missing/empty
+    var expectedDb = string.IsNullOrWhiteSpace(configured.Database) ? "E_Attendace" : configured.Database;
+    var expectedUser = string.IsNullOrWhiteSpace(configured.Username) ? "E_Attendace" : configured.Username;
+    var expectedSchema = string.IsNullOrWhiteSpace(configured.SearchPath) ? "E_Attendace" : configured.SearchPath;
+
     if (string.IsNullOrWhiteSpace(configured.Password))
     {
         configured.Password = ResolveExpectedPostgreSqlPassword();
     }
 
     var host = string.IsNullOrWhiteSpace(configured.Host) ? "127.0.0.1" : configured.Host;
-    var configuredPort = configured.Port > 0 ? configured.Port : 1277;
+    
+    // User requested strict adherence to port 1277.
+    var configuredPort = 1277;
+    
     configured.Host = host;
     configured.Port = configuredPort;
     configured.Database = expectedDb;
     configured.Username = expectedUser;
     configured.SearchPath = expectedSchema;
-    var configuredWithPassword = configured.ConnectionString;
+    
+    var finalConnectionString = configured.ConnectionString;
 
-    if (CanOpenConnection(configuredWithPassword))
+    Console.WriteLine($"[Startup] Database connection: Host={host}, Port={configuredPort}, Database={expectedDb}, User={expectedUser}");
+
+    if (CanOpenConnection(finalConnectionString))
     {
-        return configuredWithPassword;
-    }
-
-    foreach (var fallbackPort in new[] { 1277, 5432, 5433 })
-    {
-        if (configuredPort == fallbackPort)
-        {
-            continue;
-        }
-
-        var fallbackBuilder = new NpgsqlConnectionStringBuilder(configuredWithPassword)
-        {
-            Host = host,
-            Port = fallbackPort
-        };
-        var fallback = fallbackBuilder.ConnectionString;
-        if (CanOpenConnection(fallback))
-        {
-            Console.WriteLine(
-                $"[Startup] PostgreSQL was unreachable on configured port {configuredPort}. Using fallback port {fallbackPort}.");
-            return fallback;
-        }
+        return finalConnectionString;
     }
 
     Console.Error.WriteLine(
-        $"[Startup] PostgreSQL is unreachable on configured host/port ({host}:{configuredPort}). " +
-        "The API will start, but DB-backed endpoints may fail until database connectivity is restored.");
-    return configuredWithPassword;
+        $"[Startup] PostgreSQL is unreachable on {host}:{configuredPort} or credentials for {expectedUser}@{expectedDb} are invalid. " +
+        "Database connectivity is required for core functionality.");
+    return finalConnectionString;
 }
 
 static string BuildDefaultPostgresConnectionString()
@@ -6410,8 +7885,8 @@ static string BuildDefaultPostgresConnectionString()
     {
         Host = "127.0.0.1",
         Port = 1277,
-        Database = "PB_Attendance",
-        Username = "PB_Attendance",
+        Database = "E_Attendace",
+        Username = "E_Attendace",
         Password = ResolveExpectedPostgreSqlPassword(),
         SearchPath = "E_Attendace",
         IncludeErrorDetail = true,
@@ -6501,21 +7976,364 @@ static int RunHiddenProcess(string fileName, string arguments)
     }
 }
 
-static void EnsurePostgresSchema(string connectionString)
+// Returns true only when the core tables actually exist — used by the startup retry loop so we keep
+// re-running EnsurePostgresSchema until PostgreSQL is fully ready and the schema is really created.
+static bool AuthUsersTableExists(NpgsqlConnection conn)
+{
+    try
+    {
+        using var cmd = new NpgsqlCommand(
+            "SELECT to_regclass('\"E_Attendace\".\"auth_users\"') IS NOT NULL;", conn);
+        return cmd.ExecuteScalar() is bool b && b;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+// Creates ONLY the auth_users table (+ default admin) independently of the full schema
+// bootstrap. Used as a login-time self-heal so a fresh install whose background schema
+// setup hasn't finished (or partially failed) never blocks login with
+// "relation E_Attendace.auth_users does not exist".
+static void EnsureAuthUsersTable(NpgsqlConnection conn)
+{
+    TryExec(conn, """CREATE SCHEMA IF NOT EXISTS "E_Attendace";""");
+    TryExec(conn, """
+        CREATE TABLE IF NOT EXISTS "E_Attendace"."auth_users" (
+            "Id" BIGSERIAL PRIMARY KEY,
+            "UserName" TEXT NOT NULL,
+            "PasswordHash" TEXT NOT NULL DEFAULT '',
+            "FullName" TEXT NULL,
+            "Role" TEXT NOT NULL DEFAULT 'Operator',
+            "Status" TEXT NOT NULL DEFAULT 'active',
+            "FeatureAccessJson" jsonb NOT NULL DEFAULT '{}',
+            "CreatedAtUtc" timestamptz NOT NULL DEFAULT NOW(),
+            "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+        );
+        """);
+    TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "UserName" TEXT;""");
+    TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "PasswordHash" TEXT NOT NULL DEFAULT '';""");
+    TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "FullName" TEXT NULL;""");
+    TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "Role" TEXT NOT NULL DEFAULT 'Operator';""");
+    TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "Status" TEXT NOT NULL DEFAULT 'active';""");
+    TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "FeatureAccessJson" jsonb NOT NULL DEFAULT '{}';""");
+    TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "CreatedAtUtc" timestamptz NOT NULL DEFAULT NOW();""");
+    TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW();""");
+    TryExec(conn, """CREATE UNIQUE INDEX IF NOT EXISTS "UX_auth_users_UserName" ON "E_Attendace"."auth_users" (LOWER(TRIM("UserName")));""");
+    TryExec(conn, """INSERT INTO "E_Attendace"."auth_users" ("UserName","PasswordHash","FullName","Role","Status","FeatureAccessJson") VALUES ('admin',md5('PB@TechZone'),'Admin User','Admin','active','{}') ON CONFLICT DO NOTHING;""");
+}
+
+static bool PostgresCoreTablesExist(string connectionString)
 {
     try
     {
         using var conn = new NpgsqlConnection(connectionString);
         conn.Open();
+        using var cmd = new NpgsqlCommand(
+            "SELECT to_regclass('\"E_Attendace\".\"auth_users\"') IS NOT NULL " +
+            "AND to_regclass('\"E_Attendace\".\"Devices\"') IS NOT NULL " +
+            "AND to_regclass('\"E_Attendace\".\"Employees\"') IS NOT NULL;",
+            conn);
+        return cmd.ExecuteScalar() is bool b && b;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+/// <summary>
+/// Idempotent startup migration that:
+/// 1. Backfills a stub row in "users" for every orphan pin in biometric_photos /
+///    biometric_templates so no existing data is stranded by the FK.
+/// 2. Upgrades both FK constraints to DEFERRABLE INITIALLY DEFERRED so they are
+///    checked at COMMIT time rather than per-row INSERT — preventing the 23503
+///    error when biometric data arrives before the matching USERINFO push.
+/// Safe to call repeatedly (all statements are idempotent).
+/// </summary>
+static void MigrateBiometricFkConstraints(string connectionString)
+{
+    try
+    {
+        using var conn = new NpgsqlConnection(connectionString);
+        conn.Open();
+
+        // ── 1. Backfill orphan user stubs ────────────────────────────────────────
+        // Any pin in biometric_photos or biometric_templates that is NOT yet in
+        // users would cause a FK violation on the next write. Insert a minimal stub
+        // row (ON CONFLICT DO NOTHING so existing records are never touched).
+        TryExec(conn, """
+            INSERT INTO "E_Attendace"."users" (pin, name, created_at, updated_at)
+            SELECT DISTINCT user_pin, user_pin, NOW(), NOW()
+            FROM   "E_Attendace"."biometric_photos"
+            WHERE  user_pin NOT IN (SELECT pin FROM "E_Attendace"."users")
+            ON CONFLICT (pin) DO NOTHING;
+            """);
+
+        TryExec(conn, """
+            INSERT INTO "E_Attendace"."users" (pin, name, created_at, updated_at)
+            SELECT DISTINCT user_pin, user_pin, NOW(), NOW()
+            FROM   "E_Attendace"."biometric_templates"
+            WHERE  user_pin NOT IN (SELECT pin FROM "E_Attendace"."users")
+            ON CONFLICT (pin) DO NOTHING;
+            """);
+
+        // ── 2. Make FK constraints DEFERRABLE ─────────────────────────────────────
+        // Drop the old non-deferrable constraint (if present) and re-add as
+        // DEFERRABLE INITIALLY DEFERRED. The IF NOT EXISTS / DO $$ guards make
+        // this safe to re-run on an already-migrated database.
+
+        // biometric_photos
+        TryExec(conn, """
+            DO $$ BEGIN
+                -- Drop only if it is NOT already deferrable
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'biometric_photos_user_pin_fkey'
+                      AND conrelid = '"E_Attendace".biometric_photos'::regclass
+                      AND NOT condeferrable
+                ) THEN
+                    ALTER TABLE "E_Attendace"."biometric_photos"
+                        DROP CONSTRAINT biometric_photos_user_pin_fkey;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'biometric_photos_user_pin_fkey'
+                      AND conrelid = '"E_Attendace".biometric_photos'::regclass
+                ) THEN
+                    ALTER TABLE "E_Attendace"."biometric_photos"
+                        ADD CONSTRAINT biometric_photos_user_pin_fkey
+                        FOREIGN KEY (user_pin)
+                        REFERENCES "E_Attendace"."users"(pin)
+                        ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+                END IF;
+            END $$;
+            """);
+
+        // biometric_templates
+        TryExec(conn, """
+            DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'biometric_templates_user_pin_fkey'
+                      AND conrelid = '"E_Attendace".biometric_templates'::regclass
+                      AND NOT condeferrable
+                ) THEN
+                    ALTER TABLE "E_Attendace"."biometric_templates"
+                        DROP CONSTRAINT biometric_templates_user_pin_fkey;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'biometric_templates_user_pin_fkey'
+                      AND conrelid = '"E_Attendace".biometric_templates'::regclass
+                ) THEN
+                    ALTER TABLE "E_Attendace"."biometric_templates"
+                        ADD CONSTRAINT biometric_templates_user_pin_fkey
+                        FOREIGN KEY (user_pin)
+                        REFERENCES "E_Attendace"."users"(pin)
+                        ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+                END IF;
+            END $$;
+            """);
+
+        Console.WriteLine("[Startup] Biometric FK constraints verified/migrated to DEFERRABLE.");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[Startup] MigrateBiometricFkConstraints failed (non-fatal): {ex.Message}");
+    }
+}
+
+static void EnsurePostgresSchema(string connectionString)
+{
+    try
+    {
+        var builder = new NpgsqlConnectionStringBuilder(connectionString);
+        var dbName = builder.Database ?? "E_Attendace";
+        var dbUser = builder.Username ?? "E_Attendace";
+
+        using var conn = new NpgsqlConnection(connectionString);
+        conn.Open();
         TryExec(conn, """CREATE SCHEMA IF NOT EXISTS "E_Attendace";""");
-        TryExec(conn, """SET search_path TO E_Attendace;""");
-        TryExec(conn, """GRANT USAGE ON SCHEMA "E_Attendace" TO "PB_Attendance";""");
-        TryExec(conn, """GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA "E_Attendace" TO "PB_Attendance";""");
-        TryExec(conn, """GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA "E_Attendace" TO "PB_Attendance";""");
-        TryExec(conn, """ALTER DEFAULT PRIVILEGES IN SCHEMA "E_Attendace" GRANT ALL ON TABLES TO "PB_Attendance";""");
-        TryExec(conn, """ALTER DEFAULT PRIVILEGES IN SCHEMA "E_Attendace" GRANT ALL ON SEQUENCES TO "PB_Attendance";""");
-        TryExec(conn, """ALTER DATABASE "PB_Attendance" SET search_path TO E_Attendace;""");
-        TryExec(conn, """ALTER ROLE "PB_Attendance" IN DATABASE "PB_Attendance" SET search_path TO E_Attendace;""");
+        TryExec(conn, """SET search_path TO "E_Attendace";""");
+        TryExec(conn, $"""GRANT USAGE ON SCHEMA "E_Attendace" TO "{dbUser}";""");
+        TryExec(conn, $"""GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA "E_Attendace" TO "{dbUser}";""");
+        TryExec(conn, $"""GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA "E_Attendace" TO "{dbUser}";""");
+        TryExec(conn, $"""ALTER DEFAULT PRIVILEGES IN SCHEMA "E_Attendace" GRANT ALL ON TABLES TO "{dbUser}";""");
+        TryExec(conn, $"""ALTER DEFAULT PRIVILEGES IN SCHEMA "E_Attendace" GRANT ALL ON SEQUENCES TO "{dbUser}";""");
+        TryExec(conn, $"""ALTER DATABASE "{dbName}" SET search_path TO "E_Attendace";""");
+        TryExec(conn, $"""ALTER ROLE "{dbUser}" IN DATABASE "{dbName}" SET search_path TO "E_Attendace";""");
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."Employees" (
+                "Id" TEXT PRIMARY KEY,
+                "EmployeeCode" TEXT NOT NULL DEFAULT '',
+                "FirstName" TEXT NOT NULL DEFAULT '',
+                "LastName" TEXT NOT NULL DEFAULT '',
+                "FullName" TEXT NOT NULL DEFAULT '',
+                "Email" TEXT NULL,
+                "Phone" TEXT NULL,
+                "BranchId" INTEGER NULL,
+                "DepartmentId" INTEGER NULL,
+                "DesignationId" INTEGER NULL,
+                "ShiftId" INTEGER NULL,
+                "JoinDate" date NULL,
+                "Status" TEXT NOT NULL DEFAULT 'active',
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """);
+
+        // Migrate legacy Employees table if needed
+        TryExec(conn, """
+            DO $$
+            BEGIN
+                -- Rename EmployeeCode to EmployeeCode if it exists and EmployeeCode does not
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'Employees' AND column_name = 'EmployeeCode') 
+                   AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'Employees' AND column_name = 'EmployeeCode') THEN
+                    ALTER TABLE "E_Attendace"."Employees" RENAME COLUMN "EmployeeCode" TO "EmployeeCode";
+                END IF;
+            END $$;
+            """);
+
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "EmployeeCode" TEXT NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "FirstName" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "LastName" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "FullName" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "Email" TEXT NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "Phone" TEXT NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "BranchId" INTEGER NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "DesignationId" INTEGER NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "ShiftId" INTEGER NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "JoinDate" date NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "Status" TEXT NOT NULL DEFAULT 'active';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "UpdatedAt" timestamptz NOT NULL DEFAULT NOW();""");
+        // ── Biometric/sync columns required by SqliteAttendanceRepository.GetEmployees() ──
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "Area" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "Department" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "AreaId" INTEGER NOT NULL DEFAULT 1;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "DepartmentsJson" TEXT NOT NULL DEFAULT '[]';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "Position" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "CardNumber" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "Password" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "MobileNumber" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "Gender" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "Privilege" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "VerifyMode" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "FaceTemplateVisible" TEXT NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "FaceTemplateInfrared" TEXT NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "ProfilePhoto" TEXT NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "FingerprintTemplates" TEXT NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "CreatedAt" timestamptz NOT NULL DEFAULT NOW();""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "SyncedAt" timestamptz NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Employees" ADD COLUMN IF NOT EXISTS "IsActive" INTEGER NOT NULL DEFAULT 1;""");
+        TryExec(conn, """CREATE UNIQUE INDEX IF NOT EXISTS "IX_Employees_EmployeeCode" ON "E_Attendace"."Employees" ("EmployeeCode") WHERE "EmployeeCode" IS NOT NULL AND "EmployeeCode" <> '';""");
+        // Normalise Employees.IsActive to INTEGER (C# sends 0/1, not true/false)
+        TryExec(conn, """
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='Employees' AND column_name='IsActive' AND data_type='boolean') THEN
+                    ALTER TABLE "E_Attendace"."Employees" ALTER COLUMN "IsActive" TYPE INTEGER USING ("IsActive"::integer);
+                END IF;
+            END $$;
+            """);
+
+        TryExec(conn, """
+            DO $$
+            BEGIN
+                -- NOTE: We keep Employees.Id as TEXT (not uuid) so our text params work
+                -- The uuid→TEXT migration runs later in this function
+                -- Populate EmployeeCode from EmployeeCode if still null
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'Employees' AND column_name = 'EmployeeCode') 
+                   AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'Employees' AND column_name = 'EmployeeCode') THEN
+                    UPDATE "E_Attendace"."Employees" SET "EmployeeCode" = "EmployeeCode" WHERE "EmployeeCode" IS NULL;
+                END IF;
+                -- FullName split
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'Employees' AND column_name = 'FullName') THEN
+                    UPDATE "E_Attendace"."Employees"
+                    SET
+                        "FirstName" = split_part("FullName", ' ', 1),
+                        "LastName" = substring("FullName" from position(' ' in "FullName") + 1)
+                    WHERE ("FirstName" = '' OR "FirstName" IS NULL) AND "FullName" <> '';
+                END IF;
+                -- Status mapping
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'Employees' AND column_name = 'IsActive') THEN
+                    UPDATE "E_Attendace"."Employees" SET "Status" = 'active' WHERE "IsActive" = 1 AND "Status" = 'active';
+                    UPDATE "E_Attendace"."Employees" SET "Status" = 'inactive' WHERE "IsActive" = 0 AND "Status" = 'active';
+                END IF;
+            END $$;
+            """);
+
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."DevicePunchLogs" (
+                "Id" TEXT PRIMARY KEY,
+                "EmployeeId" TEXT NOT NULL,
+                "EmployeeCode" TEXT NOT NULL,
+                "Timestamp" TEXT NOT NULL,
+                "Status" INTEGER NOT NULL,
+                "StatusCode" INTEGER NULL,
+                "VerifyMode" INTEGER NULL,
+                "Workcode" TEXT NULL,
+                "DeviceId" TEXT NULL,
+                "DeviceSerialNumber" TEXT NULL
+            );
+            """);
+        TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_DevicePunchLogs_Timestamp" ON "E_Attendace"."DevicePunchLogs" ("Timestamp");""");
+        TryExec(conn, """
+            CREATE UNIQUE INDEX IF NOT EXISTS "UX_DevicePunchLogs_Dedup" 
+            ON "E_Attendace"."DevicePunchLogs" (COALESCE("DeviceSerialNumber",''), "EmployeeCode", "Timestamp", COALESCE("StatusCode",-1), COALESCE("VerifyMode",-1), COALESCE("Workcode",''));
+            """);
+
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."DeviceSyncLogs" (
+                "Id" TEXT PRIMARY KEY,
+                "DeviceSerialNumber" TEXT NOT NULL,
+                "Type" INTEGER NOT NULL,
+                "Status" INTEGER NOT NULL,
+                "CommandText" TEXT NOT NULL,
+                "ResponseText" TEXT NULL,
+                "CreatedUtc" TEXT NOT NULL,
+                "CompletedUtc" TEXT NULL
+            );
+            """);
+        TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_DeviceSyncLogs_DeviceStatus" ON "E_Attendace"."DeviceSyncLogs" ("DeviceSerialNumber", "Status", "CreatedUtc");""");
+
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."DeviceProtocolCommands" (
+                "Id" TEXT PRIMARY KEY,
+                "DeviceSerialNumber" TEXT NOT NULL,
+                "CommandText" TEXT NOT NULL,
+                "CreatedUtc" TEXT NOT NULL,
+                "SentUtc" TEXT NULL,
+                "ReplyText" TEXT NULL
+            );
+            """);
+        TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_DeviceProtocolCommands_Pending" ON "E_Attendace"."DeviceProtocolCommands" ("DeviceSerialNumber", "SentUtc");""");
+
+        // AttendanceRecords — RAW PUNCH schema matching SqliteAttendanceRepository.
+        // (Id/EmployeeId/DeviceId are TEXT, Timestamp is timestamptz, Status is INTEGER.)
+        // This is the single canonical definition; the old "processed" schema was removed
+        // because it conflicted with the repository and broke device punches.
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."AttendanceRecords" (
+                "Id" TEXT PRIMARY KEY,
+                "EmployeeId" TEXT NOT NULL DEFAULT '',
+                "EmployeeCode" TEXT NOT NULL DEFAULT '',
+                "Timestamp" timestamptz NOT NULL DEFAULT NOW(),
+                "Status" INTEGER NOT NULL DEFAULT 0,
+                "StatusCode" INTEGER NULL,
+                "VerifyMode" INTEGER NULL,
+                "Workcode" TEXT NULL,
+                "DeviceId" TEXT NULL,
+                "DeviceSerialNumber" TEXT NULL,
+                "AreaId" INTEGER NOT NULL DEFAULT 1,
+                "DepartmentId" INTEGER NOT NULL DEFAULT 1
+            );
+            """);
+        TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_AttendanceRecords_Timestamp" ON "E_Attendace"."AttendanceRecords" ("Timestamp");""");
+
         TryExec(conn, """
             CREATE TABLE IF NOT EXISTS "E_Attendace"."AppLogs" (
                 "Id" TEXT PRIMARY KEY,
@@ -6542,6 +8360,7 @@ static void EnsurePostgresSchema(string connectionString)
                 "ParsedOk" INTEGER NOT NULL DEFAULT 0
             );
             """);
+        TryExec(conn, """ALTER TABLE "E_Attendace"."TransactionDetails" ADD COLUMN IF NOT EXISTS "Remarks" TEXT NULL;""");
         TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_ReceivedUtc" ON "E_Attendace"."TransactionDetails" ("ReceivedUtc" DESC);""");
         TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_PunchTime" ON "E_Attendace"."TransactionDetails" ("PunchTime" DESC);""");
         TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_DeviceSerial" ON "E_Attendace"."TransactionDetails" ("DeviceSerialNumber");""");
@@ -6552,6 +8371,129 @@ static void EnsurePostgresSchema(string connectionString)
             CREATE UNIQUE INDEX IF NOT EXISTS "UX_TransactionDetails_SourceSerialRaw"
             ON "E_Attendace"."TransactionDetails" (COALESCE("DeviceSerialNumber",''), "SourceTable", "RawLine");
             """);
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."Devices" (
+                "Id" TEXT PRIMARY KEY,
+                "SerialNumber" TEXT NOT NULL UNIQUE,
+                "Name" TEXT NOT NULL DEFAULT '',
+                "Model" TEXT NOT NULL DEFAULT '',
+                "IpAddress" TEXT NOT NULL DEFAULT '',
+                "Location" TEXT NOT NULL DEFAULT '',
+                "TimeZone" TEXT NOT NULL DEFAULT '+5:45',
+                "Status" INTEGER NOT NULL DEFAULT 0,
+                "IsOnline" INTEGER NOT NULL DEFAULT 0,
+                "LastSeenUtc" timestamptz NULL,
+                "LastPushTime" timestamptz NULL,
+                "SecretKey" TEXT NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """);
+
+        // ── All columns required by SqliteAttendanceRepository.GetDevices() ──
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "Name" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "Model" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "IpAddress" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "Location" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "TimeZone" TEXT NOT NULL DEFAULT '+5:45';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "SupportsVisibleLightFace" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "SupportsInfraredFace" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "SupportsFingerprint" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "FaceAlgorithmVersion" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "FingerprintAlgorithmVersion" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "FirmwareVersion" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "DeviceType" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "PushVer" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "Language" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "MultiBioDataSupport" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "MultiBioPhotoSupport" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "MultiBioVersion" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "MaxMultiBioDataCount" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "MaxMultiBioPhotoCount" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "FingerFunOn" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "FaceFunOn" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "VisiLightFunOn" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "BioDataFun" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "BioPhotoFun" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "SupportsPalm" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "SupportsFingerVein" INTEGER NOT NULL DEFAULT 0;""");
+        // Normalise ALL device boolean-like columns to INTEGER 0/1.
+        // Our C# code always sends 0/1 integers — never true/false booleans.
+        // Any column that is BOOLEAN (legacy schema) gets converted back to INTEGER.
+        // CRITICAL: a boolean column may carry a DEFAULT false/true that cannot auto-cast to
+        // integer — we MUST DROP DEFAULT first, then change type, then restore DEFAULT 0.
+        // Each column is its OWN TryExec/DO block so one failure can never roll back the rest.
+        TryExec(conn, """
+            DO $$
+            DECLARE col TEXT;
+            BEGIN
+                FOREACH col IN ARRAY ARRAY[
+                    'IsOnline','IsRegistrationDevice','IsRegistered',
+                    'FingerFunOn','FaceFunOn','VisiLightFunOn','BioDataFun','BioPhotoFun',
+                    'SupportsPalm','SupportsFingerVein','SupportsVisibleLightFace',
+                    'SupportsInfraredFace','SupportsFingerprint'
+                ] LOOP
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema='E_Attendace' AND table_name='Devices'
+                          AND column_name=col AND data_type='boolean'
+                    ) THEN
+                        BEGIN
+                            EXECUTE format('ALTER TABLE "E_Attendace"."Devices" ALTER COLUMN %I DROP DEFAULT', col);
+                            EXECUTE format('ALTER TABLE "E_Attendace"."Devices" ALTER COLUMN %I TYPE INTEGER USING (CASE WHEN %I THEN 1 ELSE 0 END)', col, col);
+                            EXECUTE format('ALTER TABLE "E_Attendace"."Devices" ALTER COLUMN %I SET DEFAULT 0', col);
+                        EXCEPTION WHEN OTHERS THEN
+                            -- never let one column block the others
+                            NULL;
+                        END;
+                    END IF;
+                END LOOP;
+            END $$;
+            """);
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "CapabilitiesJson" JSONB NOT NULL DEFAULT '{}';""");
+        // Convert CapabilitiesJson from TEXT to JSONB if it was created as TEXT
+        TryExec(conn, """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='E_Attendace' AND table_name='Devices'
+                      AND column_name='CapabilitiesJson' AND data_type='text'
+                ) THEN
+                    ALTER TABLE "E_Attendace"."Devices" ALTER COLUMN "CapabilitiesJson" TYPE JSONB
+                        USING COALESCE(NULLIF(TRIM("CapabilitiesJson"),''),'{}')::jsonb;
+                END IF;
+            END $$;
+            """);
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "CreatedAtUtc" timestamptz NOT NULL DEFAULT NOW();""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW();""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "Status" INTEGER NOT NULL DEFAULT 0;""");
+        // If Status column was created as TEXT (e.g. 'offline'), convert it to INTEGER so enum values work
+        TryExec(conn, """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='E_Attendace' AND table_name='Devices'
+                      AND column_name='Status' AND data_type='text'
+                ) THEN
+                    ALTER TABLE "E_Attendace"."Devices" ALTER COLUMN "Status" TYPE INTEGER
+                        USING CASE WHEN LOWER("Status") IN ('offline','0','') THEN 0
+                                   WHEN LOWER("Status") IN ('online','1') THEN 1
+                                   WHEN LOWER("Status") IN ('busy','2') THEN 2
+                                   ELSE 0 END;
+                END IF;
+            END $$;
+            """);
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "IsRegistrationDevice" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "IsOnline" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "IsRegistered" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "LastSeenUtc" timestamptz NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "AreaId" INTEGER NOT NULL DEFAULT 1;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "DepartmentId" INTEGER NOT NULL DEFAULT 1;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "LastPushTime" timestamptz NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "SecretKey" TEXT NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Devices" ADD COLUMN IF NOT EXISTS "CreatedAt" timestamptz NOT NULL DEFAULT NOW();""");
+
         TryExec(conn, """
             CREATE TABLE IF NOT EXISTS "E_Attendace"."Timetables" (
                 "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -6568,9 +8510,13 @@ static void EnsurePostgresSchema(string connectionString)
                 "StartTime" time NOT NULL,
                 "EndTime" time NOT NULL,
                 "DurationMinutes" INTEGER NOT NULL DEFAULT 0,
+                "CalculateType" TEXT NOT NULL DEFAULT 'auto_deduct',
+                "MinimumBreakMinutes" INTEGER NOT NULL DEFAULT 0,
                 "IsActive" BOOLEAN NOT NULL DEFAULT TRUE
             );
             """);
+        TryExec(conn, """ALTER TABLE "E_Attendace"."BreakTimes" ADD COLUMN IF NOT EXISTS "CalculateType" TEXT NOT NULL DEFAULT 'auto_deduct';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."BreakTimes" ADD COLUMN IF NOT EXISTS "MinimumBreakMinutes" INTEGER NOT NULL DEFAULT 0;""");
         TryExec(conn, """
             CREATE TABLE IF NOT EXISTS "E_Attendace"."TimetableDays" (
                 "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -6588,6 +8534,18 @@ static void EnsurePostgresSchema(string connectionString)
                 "UseBreakTime" BOOLEAN NOT NULL DEFAULT FALSE,
                 "BreakTimeId" INTEGER NULL
             );
+            """);
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."TimetableDayBreakTimes" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "TimetableDayId" INTEGER NOT NULL REFERENCES "E_Attendace"."TimetableDays"("Id") ON DELETE CASCADE,
+                "BreakTimeId" INTEGER NOT NULL REFERENCES "E_Attendace"."BreakTimes"("Id") ON DELETE CASCADE,
+                "SortOrder" INTEGER NOT NULL DEFAULT 0
+            );
+            """);
+        TryExec(conn, """
+            CREATE UNIQUE INDEX IF NOT EXISTS "UX_TimetableDayBreakTimes_Day_Break"
+            ON "E_Attendace"."TimetableDayBreakTimes" ("TimetableDayId","BreakTimeId");
             """);
         TryExec(conn, """ALTER TABLE "E_Attendace"."TimetableDays" ADD COLUMN IF NOT EXISTS "CheckInTime" time NOT NULL DEFAULT TIME '10:00';""");
         TryExec(conn, """ALTER TABLE "E_Attendace"."TimetableDays" ADD COLUMN IF NOT EXISTS "CheckInStartTime" time NOT NULL DEFAULT TIME '00:00';""");
@@ -6625,7 +8583,7 @@ static void EnsurePostgresSchema(string connectionString)
         TryExec(conn, """
             CREATE TABLE IF NOT EXISTS "E_Attendace"."EmployeeTimetables" (
                 "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                "PersonnelId" INTEGER NOT NULL,
+                "PersonnelId" TEXT NOT NULL,
                 "TimetableId" INTEGER NOT NULL REFERENCES "E_Attendace"."Timetables"("Id") ON DELETE CASCADE,
                 "EffectiveFrom" date NOT NULL,
                 "IsActive" BOOLEAN NOT NULL DEFAULT TRUE
@@ -6648,11 +8606,13 @@ static void EnsurePostgresSchema(string connectionString)
                 "Description" TEXT NULL,
                 "IsRecurring" BOOLEAN NOT NULL DEFAULT FALSE,
                 "DepartmentId" INTEGER NULL,
+                "TimeZoneId" INTEGER NULL,
                 "IsActive" BOOLEAN NOT NULL DEFAULT TRUE
             );
             """);
         TryExec(conn, """ALTER TABLE "E_Attendace"."Holidays" ADD COLUMN IF NOT EXISTS "Description" TEXT NULL;""");
         TryExec(conn, """ALTER TABLE "E_Attendace"."Holidays" ADD COLUMN IF NOT EXISTS "IsRecurring" BOOLEAN NOT NULL DEFAULT FALSE;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."Holidays" ADD COLUMN IF NOT EXISTS "TimeZoneId" INTEGER NULL;""");
         TryExec(conn, """
             CREATE TABLE IF NOT EXISTS "E_Attendace"."AttendancePolicies" (
                 "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -6707,7 +8667,7 @@ static void EnsurePostgresSchema(string connectionString)
         TryExec(conn, """
             CREATE TABLE IF NOT EXISTS "E_Attendace"."LeaveRequests" (
                 "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                "PersonnelId" INTEGER NOT NULL,
+                "PersonnelId" TEXT NOT NULL,
                 "LeaveTypeId" INTEGER NOT NULL REFERENCES "E_Attendace"."LeaveTypes"("Id") ON DELETE CASCADE,
                 "FromDate" date NOT NULL,
                 "ToDate" date NOT NULL,
@@ -6717,7 +8677,7 @@ static void EnsurePostgresSchema(string connectionString)
                 "Reason" TEXT NULL,
                 "Status" TEXT NOT NULL DEFAULT 'pending',
                 "AppliedDate" timestamptz NOT NULL DEFAULT NOW(),
-                "ApprovedBy" INTEGER NULL,
+                "ApprovedBy" TEXT NULL,
                 "ApprovedDate" timestamptz NULL,
                 "CancelledDate" timestamptz NULL
             );
@@ -6728,13 +8688,13 @@ static void EnsurePostgresSchema(string connectionString)
         TryExec(conn, """ALTER TABLE "E_Attendace"."LeaveRequests" ADD COLUMN IF NOT EXISTS "Reason" TEXT NULL;""");
         TryExec(conn, """ALTER TABLE "E_Attendace"."LeaveRequests" ADD COLUMN IF NOT EXISTS "Status" TEXT NOT NULL DEFAULT 'pending';""");
         TryExec(conn, """ALTER TABLE "E_Attendace"."LeaveRequests" ADD COLUMN IF NOT EXISTS "AppliedDate" timestamptz NOT NULL DEFAULT NOW();""");
-        TryExec(conn, """ALTER TABLE "E_Attendace"."LeaveRequests" ADD COLUMN IF NOT EXISTS "ApprovedBy" INTEGER NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."LeaveRequests" ADD COLUMN IF NOT EXISTS "ApprovedBy" TEXT NULL;""");
         TryExec(conn, """ALTER TABLE "E_Attendace"."LeaveRequests" ADD COLUMN IF NOT EXISTS "ApprovedDate" timestamptz NULL;""");
         TryExec(conn, """ALTER TABLE "E_Attendace"."LeaveRequests" ADD COLUMN IF NOT EXISTS "CancelledDate" timestamptz NULL;""");
         TryExec(conn, """
             CREATE TABLE IF NOT EXISTS "E_Attendace"."LeaveBalances" (
                 "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                "PersonnelId" INTEGER NOT NULL,
+                "PersonnelId" TEXT NOT NULL,
                 "LeaveTypeId" INTEGER NOT NULL REFERENCES "E_Attendace"."LeaveTypes"("Id") ON DELETE CASCADE,
                 "Year" INTEGER NOT NULL,
                 "TotalAllocated" numeric(10,2) NOT NULL DEFAULT 0,
@@ -6754,7 +8714,7 @@ static void EnsurePostgresSchema(string connectionString)
                 "FileName" TEXT NOT NULL,
                 "FileUrl" TEXT NOT NULL,
                 "UploadedAt" timestamptz NOT NULL DEFAULT NOW(),
-                "UploadedBy" INTEGER NULL
+                "UploadedBy" TEXT NULL
             );
             """);
         TryExec(conn, """
@@ -6763,7 +8723,7 @@ static void EnsurePostgresSchema(string connectionString)
                 "LeaveRequestId" INTEGER NOT NULL REFERENCES "E_Attendace"."LeaveRequests"("Id") ON DELETE CASCADE,
                 "Action" TEXT NOT NULL,
                 "Remarks" TEXT NULL,
-                "ActorId" INTEGER NULL,
+                "ActorId" TEXT NULL,
                 "CreatedAt" timestamptz NOT NULL DEFAULT NOW()
             );
             """);
@@ -6875,6 +8835,236 @@ static void EnsurePostgresSchema(string connectionString)
             FROM "E_Attendace"."LeaveTypes";
             """);
         TryExec(conn, """
+            DO $$
+            BEGIN
+                -- LeaveRequests.PersonnelId
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'LeaveRequests' AND column_name = 'PersonnelId' AND (data_type = 'integer' OR data_type = 'text')) THEN
+                    ALTER TABLE "E_Attendace"."LeaveRequests" ALTER COLUMN "PersonnelId" TYPE uuid USING "PersonnelId"::uuid;
+                END IF;
+                -- LeaveRequests.ApprovedBy
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'LeaveRequests' AND column_name = 'ApprovedBy' AND (data_type = 'integer' OR data_type = 'text')) THEN
+                    ALTER TABLE "E_Attendace"."LeaveRequests" ALTER COLUMN "ApprovedBy" TYPE uuid USING "ApprovedBy"::uuid;
+                END IF;
+                -- LeaveBalances.PersonnelId
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'LeaveBalances' AND column_name = 'PersonnelId' AND (data_type = 'integer' OR data_type = 'text')) THEN
+                    ALTER TABLE "E_Attendace"."LeaveBalances" ALTER COLUMN "PersonnelId" TYPE uuid USING "PersonnelId"::uuid;
+                END IF;
+                -- EmployeeTimetables.PersonnelId
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'EmployeeTimetables' AND column_name = 'PersonnelId' AND (data_type = 'integer' OR data_type = 'text')) THEN
+                    ALTER TABLE "E_Attendace"."EmployeeTimetables" ALTER COLUMN "PersonnelId" TYPE uuid USING "PersonnelId"::uuid;
+                END IF;
+                -- LeaveAttachments.UploadedBy
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'LeaveAttachments' AND column_name = 'UploadedBy' AND (data_type = 'integer' OR data_type = 'text')) THEN
+                    ALTER TABLE "E_Attendace"."LeaveAttachments" ALTER COLUMN "UploadedBy" TYPE uuid USING "UploadedBy"::uuid;
+                END IF;
+                -- LeaveRemarks.ActorId
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'LeaveRemarks' AND column_name = 'ActorId' AND (data_type = 'integer' OR data_type = 'text')) THEN
+                    ALTER TABLE "E_Attendace"."LeaveRemarks" ALTER COLUMN "ActorId" TYPE uuid USING "ActorId"::uuid;
+                END IF;
+                -- Ensure AttendanceRecords has all columns SqliteAttendanceRepository needs
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'E_Attendace' AND table_name = 'AttendanceRecords') THEN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'AttendanceRecords' AND column_name = 'EmployeeId') THEN
+                        ALTER TABLE "E_Attendace"."AttendanceRecords" ADD COLUMN "EmployeeId" TEXT NOT NULL DEFAULT '';
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'AttendanceRecords' AND column_name = 'EmployeeCode') THEN
+                        ALTER TABLE "E_Attendace"."AttendanceRecords" ADD COLUMN "EmployeeCode" TEXT NOT NULL DEFAULT '';
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'AttendanceRecords' AND column_name = 'Timestamp') THEN
+                        ALTER TABLE "E_Attendace"."AttendanceRecords" ADD COLUMN "Timestamp" timestamptz;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'AttendanceRecords' AND column_name = 'DeviceSerialNumber') THEN
+                        ALTER TABLE "E_Attendace"."AttendanceRecords" ADD COLUMN "DeviceSerialNumber" TEXT NULL;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'AttendanceRecords' AND column_name = 'AreaId') THEN
+                        ALTER TABLE "E_Attendace"."AttendanceRecords" ADD COLUMN "AreaId" INTEGER NOT NULL DEFAULT 1;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'AttendanceRecords' AND column_name = 'DepartmentId') THEN
+                        ALTER TABLE "E_Attendace"."AttendanceRecords" ADD COLUMN "DepartmentId" INTEGER NOT NULL DEFAULT 1;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'AttendanceRecords' AND column_name = 'AttendanceDate') THEN
+                        ALTER TABLE "E_Attendace"."AttendanceRecords" ADD COLUMN "AttendanceDate" date;
+                        UPDATE "E_Attendace"."AttendanceRecords" SET "AttendanceDate" = "Timestamp"::date WHERE "AttendanceDate" IS NULL;
+                    END IF;
+                END IF;
+                -- (Devices/Employees/AttendanceRecords uuid->TEXT conversions moved to
+                --  their own independent TryExec calls below so a failure in the Leave
+                --  conversions above cannot block them.)
+                -- AttendanceExceptions migrations
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'E_Attendace' AND table_name = 'AttendanceExceptions') THEN
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'E_Attendace' AND table_name = 'AttendanceExceptions' AND column_name = 'AttendanceId' AND (data_type = 'integer' OR data_type = 'text')) THEN
+                        ALTER TABLE "E_Attendace"."AttendanceExceptions" ALTER COLUMN "AttendanceId" TYPE uuid USING "AttendanceId"::uuid;
+                    END IF;
+                END IF;
+            END $$;
+            """);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // CRITICAL uuid → TEXT conversions — EACH IN ITS OWN TryExec so one failure
+        // never blocks the others. The C# repository passes Guid.ToString() text, so
+        // these ID columns MUST be TEXT. This is the fix that makes add-device,
+        // create-employee etc. work. (Runs every startup; no-op once already TEXT.)
+        // ════════════════════════════════════════════════════════════════════════
+        TryExec(conn, """
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='Devices' AND column_name='Id' AND data_type='uuid') THEN
+                    ALTER TABLE "E_Attendace"."Devices" DROP CONSTRAINT IF EXISTS "Devices_pkey" CASCADE;
+                    ALTER TABLE "E_Attendace"."Devices" ALTER COLUMN "Id" TYPE TEXT USING "Id"::text;
+                    ALTER TABLE "E_Attendace"."Devices" ADD PRIMARY KEY ("Id");
+                END IF;
+            END $$;
+            """);
+        TryExec(conn, """
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='Employees' AND column_name='Id' AND data_type='uuid') THEN
+                    ALTER TABLE "E_Attendace"."Employees" DROP CONSTRAINT IF EXISTS "Employees_pkey" CASCADE;
+                    ALTER TABLE "E_Attendace"."Employees" ALTER COLUMN "Id" TYPE TEXT USING "Id"::text;
+                    ALTER TABLE "E_Attendace"."Employees" ADD PRIMARY KEY ("Id");
+                END IF;
+            END $$;
+            """);
+        TryExec(conn, """
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='DeviceCommands' AND column_name='Id' AND data_type='uuid') THEN
+                    ALTER TABLE "E_Attendace"."DeviceCommands" DROP CONSTRAINT IF EXISTS "DeviceCommands_pkey" CASCADE;
+                    ALTER TABLE "E_Attendace"."DeviceCommands" ALTER COLUMN "Id" TYPE TEXT USING "Id"::text;
+                    ALTER TABLE "E_Attendace"."DeviceCommands" ADD PRIMARY KEY ("Id");
+                END IF;
+            END $$;
+            """);
+        TryExec(conn, """
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='DeviceSyncLogs' AND column_name='Id' AND data_type='uuid') THEN
+                    ALTER TABLE "E_Attendace"."DeviceSyncLogs" DROP CONSTRAINT IF EXISTS "DeviceSyncLogs_pkey" CASCADE;
+                    ALTER TABLE "E_Attendace"."DeviceSyncLogs" ALTER COLUMN "Id" TYPE TEXT USING "Id"::text;
+                    ALTER TABLE "E_Attendace"."DeviceSyncLogs" ADD PRIMARY KEY ("Id");
+                END IF;
+            END $$;
+            """);
+        TryExec(conn, """
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='AttendanceRecords' AND column_name='Id' AND data_type='uuid') THEN
+                    ALTER TABLE "E_Attendace"."AttendanceRecords" DROP CONSTRAINT IF EXISTS "AttendanceRecords_pkey" CASCADE;
+                    ALTER TABLE "E_Attendace"."AttendanceRecords" ALTER COLUMN "Id" TYPE TEXT USING "Id"::text;
+                    ALTER TABLE "E_Attendace"."AttendanceRecords" ADD PRIMARY KEY ("Id");
+                END IF;
+            END $$;
+            """);
+        TryExec(conn, """ALTER TABLE "E_Attendace"."AttendanceRecords" ALTER COLUMN "EmployeeId" TYPE TEXT USING "EmployeeId"::text;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."AttendanceRecords" ALTER COLUMN "DeviceId" TYPE TEXT USING "DeviceId"::text;""");
+
+        // ════════════════════════════════════════════════════════════════════
+        // COMPREHENSIVE TYPE RECONCILIATION — runs every startup as the table owner.
+        // Converts any legacy column to the type SqliteAttendanceRepository requires.
+        // CRITICAL: each conversion DROPS the column DEFAULT first (a boolean DEFAULT
+        // false/true cannot auto-cast to integer, which is what silently broke add-device),
+        // and is wrapped in its OWN exception handler so one failure never rolls back the rest.
+        // Idempotent: only fires when the column is actually the wrong type.
+        // ════════════════════════════════════════════════════════════════════
+        TryExec(conn, """
+            DO $recon$
+            DECLARE
+                bt TEXT[][] := ARRAY[
+                    ['Devices','IsOnline'],['Devices','IsRegistrationDevice'],['Devices','IsRegistered'],
+                    ['Devices','FingerFunOn'],['Devices','FaceFunOn'],['Devices','VisiLightFunOn'],
+                    ['Devices','BioDataFun'],['Devices','BioPhotoFun'],['Devices','SupportsPalm'],
+                    ['Devices','SupportsFingerVein'],['Devices','SupportsVisibleLightFace'],
+                    ['Devices','SupportsInfraredFace'],['Devices','SupportsFingerprint'],
+                    ['Employees','IsActive'],['users','expires_enabled'],
+                    ['biometric_templates','valid'],['biometric_templates','duress']
+                ];
+                tst TEXT[][] := ARRAY[
+                    ['users','created_at'],['users','updated_at'],['users','valid_from'],['users','valid_to'],
+                    ['biometric_templates','created_at'],['biometric_templates','updated_at'],
+                    ['biometric_photos','created_at'],['biometric_photos','updated_at']
+                ];
+                i INT; t TEXT; c TEXT;
+            BEGIN
+                -- boolean -> integer (repo sends 1/0)
+                FOR i IN 1..array_length(bt,1) LOOP
+                    t := bt[i][1]; c := bt[i][2];
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name=t AND column_name=c AND data_type='boolean') THEN
+                        BEGIN
+                            EXECUTE format('ALTER TABLE "E_Attendace".%I ALTER COLUMN %I DROP DEFAULT', t, c);
+                            EXECUTE format('ALTER TABLE "E_Attendace".%I ALTER COLUMN %I TYPE INTEGER USING (CASE WHEN %I THEN 1 ELSE 0 END)', t, c, c);
+                            EXECUTE format('ALTER TABLE "E_Attendace".%I ALTER COLUMN %I SET DEFAULT 0', t, c);
+                        EXCEPTION WHEN OTHERS THEN NULL; END;
+                    END IF;
+                END LOOP;
+                -- timestamp -> text (biometric tables store ISO text)
+                FOR i IN 1..array_length(tst,1) LOOP
+                    t := tst[i][1]; c := tst[i][2];
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name=t AND column_name=c AND data_type LIKE 'timestamp%') THEN
+                        BEGIN
+                            EXECUTE format('ALTER TABLE "E_Attendace".%I ALTER COLUMN %I DROP DEFAULT', t, c);
+                            EXECUTE format('ALTER TABLE "E_Attendace".%I ALTER COLUMN %I TYPE TEXT USING %I::text', t, c, c);
+                        EXCEPTION WHEN OTHERS THEN NULL; END;
+                    END IF;
+                END LOOP;
+                -- EmployeeDepartments uuid -> text (composite PK)
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='EmployeeDepartments' AND column_name='EmployeeId' AND data_type='uuid') THEN
+                    BEGIN
+                        ALTER TABLE "E_Attendace"."EmployeeDepartments" DROP CONSTRAINT IF EXISTS "EmployeeDepartments_pkey" CASCADE;
+                        ALTER TABLE "E_Attendace"."EmployeeDepartments" ALTER COLUMN "EmployeeId" TYPE TEXT USING "EmployeeId"::text;
+                        ALTER TABLE "E_Attendace"."EmployeeDepartments" ADD PRIMARY KEY ("EmployeeId","DepartmentId");
+                    EXCEPTION WHEN OTHERS THEN NULL; END;
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='EmployeeDepartments' AND column_name='AssignedBy' AND data_type='uuid') THEN
+                    BEGIN
+                        ALTER TABLE "E_Attendace"."EmployeeDepartments" ALTER COLUMN "AssignedBy" TYPE TEXT USING "AssignedBy"::text;
+                    EXCEPTION WHEN OTHERS THEN NULL; END;
+                END IF;
+                -- Devices.Status legacy text -> integer
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='Devices' AND column_name='Status' AND data_type='text') THEN
+                    BEGIN
+                        ALTER TABLE "E_Attendace"."Devices" ALTER COLUMN "Status" DROP DEFAULT;
+                        ALTER TABLE "E_Attendace"."Devices" ALTER COLUMN "Status" TYPE INTEGER USING CASE WHEN LOWER("Status")='online' THEN 1 WHEN LOWER("Status")='busy' THEN 2 ELSE 0 END;
+                        ALTER TABLE "E_Attendace"."Devices" ALTER COLUMN "Status" SET DEFAULT 0;
+                    EXCEPTION WHEN OTHERS THEN NULL; END;
+                END IF;
+                -- Leave/Timetable personnel-reference columns: PbAttendanceDbContext.EnsureCreated()
+                -- can create these tables (Guid-typed in the EF model) before the TEXT-based bootstrap
+                -- below ever runs, leaving them as uuid — which breaks every EF query touching
+                -- PersonnelEntity (mapped to Employees, whose real Id is TEXT), e.g. "operator does
+                -- not exist: uuid = character varying". leave_applications/leave_balance views depend
+                -- on the LeaveRequests/LeaveBalances columns, so those two are dropped and recreated;
+                -- the rest have no dependents and use the same generic loop as the booleans above.
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='LeaveRequests' AND column_name='PersonnelId' AND data_type='uuid') THEN
+                    BEGIN
+                        DROP VIEW IF EXISTS "E_Attendace".leave_applications;
+                        ALTER TABLE "E_Attendace"."LeaveRequests" ALTER COLUMN "PersonnelId" TYPE TEXT USING "PersonnelId"::text;
+                        ALTER TABLE "E_Attendace"."LeaveRequests" ALTER COLUMN "ApprovedBy" TYPE TEXT USING "ApprovedBy"::text;
+                        CREATE VIEW "E_Attendace".leave_applications AS
+                            SELECT "Id" AS id, "PersonnelId" AS employee_id, "LeaveTypeId" AS leave_type_id,
+                                   "FromDate" AS from_date, "ToDate" AS to_date, "TotalDays" AS total_days,
+                                   "IsHalfDay" AS is_half_day, "Reason" AS reason, "Status" AS status,
+                                   "AppliedDate" AS applied_date, "ApprovedBy" AS approved_by, "ApprovedDate" AS approved_date
+                            FROM "E_Attendace"."LeaveRequests";
+                    EXCEPTION WHEN OTHERS THEN NULL; END;
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='LeaveBalances' AND column_name='PersonnelId' AND data_type='uuid') THEN
+                    BEGIN
+                        DROP VIEW IF EXISTS "E_Attendace".leave_balance;
+                        ALTER TABLE "E_Attendace"."LeaveBalances" ALTER COLUMN "PersonnelId" TYPE TEXT USING "PersonnelId"::text;
+                        CREATE VIEW "E_Attendace".leave_balance AS
+                            SELECT "Id" AS id, "PersonnelId" AS employee_id, "LeaveTypeId" AS leave_type_id,
+                                   "Year" AS year, "TotalAllocated" AS total_allocated, "Used" AS used, "Remaining" AS remaining
+                            FROM "E_Attendace"."LeaveBalances";
+                    EXCEPTION WHEN OTHERS THEN NULL; END;
+                END IF;
+                FOR i IN 1..3 LOOP
+                    t := (ARRAY['LeaveAttachments','LeaveRemarks','EmployeeTimetables'])[i];
+                    c := (ARRAY['UploadedBy','ActorId','PersonnelId'])[i];
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name=t AND column_name=c AND data_type='uuid') THEN
+                        BEGIN
+                            EXECUTE format('ALTER TABLE "E_Attendace".%I ALTER COLUMN %I TYPE TEXT USING %I::text', t, c, c);
+                        EXCEPTION WHEN OTHERS THEN NULL; END;
+                    END IF;
+                END LOOP;
+            END
+            $recon$;
+            """);
+
+        TryExec(conn, """
             CREATE OR REPLACE VIEW "E_Attendace"."leave_applications" AS
             SELECT
                 "Id" AS id,
@@ -6914,6 +9104,281 @@ static void EnsurePostgresSchema(string connectionString)
                 "DepartmentId" AS department_id
             FROM "E_Attendace"."Holidays";
             """);
+        // ── auth_users (login system) ───────────────────────────────────────────
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."auth_users" (
+                "Id" BIGSERIAL PRIMARY KEY,
+                "UserName" TEXT NOT NULL,
+                "PasswordHash" TEXT NOT NULL DEFAULT '',
+                "FullName" TEXT NULL,
+                "Role" TEXT NOT NULL DEFAULT 'Operator',
+                "Status" TEXT NOT NULL DEFAULT 'active',
+                "FeatureAccessJson" jsonb NOT NULL DEFAULT '{}',
+                "CreatedAtUtc" timestamptz NOT NULL DEFAULT NOW(),
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """);
+        TryExec(conn, """CREATE UNIQUE INDEX IF NOT EXISTS "UX_auth_users_UserName" ON "E_Attendace"."auth_users" (LOWER(TRIM("UserName")));""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "UserName" TEXT;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "FullName" TEXT NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "Role" TEXT NOT NULL DEFAULT 'Operator';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "Status" TEXT NOT NULL DEFAULT 'active';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "FeatureAccessJson" jsonb NOT NULL DEFAULT '{}';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "CreatedAtUtc" timestamptz NOT NULL DEFAULT NOW();""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_users" ADD COLUMN IF NOT EXISTS "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW();""");
+        TryExec(conn, """UPDATE "E_Attendace"."auth_users" SET "UserName" = "Username" WHERE "UserName" IS NULL AND "Username" IS NOT NULL;""");
+        // Default admin user (password: PB@TechZone)
+        TryExec(conn, """INSERT INTO "E_Attendace"."auth_users" ("UserName","PasswordHash","FullName","Role","Status","FeatureAccessJson") VALUES ('admin',md5('PB@TechZone'),'Admin User','Admin','active','{}') ON CONFLICT DO NOTHING;""");
+
+        // ── auth_login_attempts ─────────────────────────────────────────────────
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."auth_login_attempts" (
+                "UserName" TEXT PRIMARY KEY,
+                "FailureCount" INTEGER NOT NULL DEFAULT 0,
+                "LastFailedAtUtc" timestamptz NULL,
+                "LockedUntilUtc" timestamptz NULL,
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """);
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_login_attempts" ADD COLUMN IF NOT EXISTS "FailureCount" INTEGER NOT NULL DEFAULT 0;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_login_attempts" ADD COLUMN IF NOT EXISTS "LastFailedAtUtc" timestamptz NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_login_attempts" ADD COLUMN IF NOT EXISTS "LockedUntilUtc" timestamptz NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."auth_login_attempts" ADD COLUMN IF NOT EXISTS "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW();""");
+
+        // ── app_config ──────────────────────────────────────────────────────────
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."app_config" (
+                "ConfigKey" TEXT PRIMARY KEY,
+                "JsonValue" TEXT NOT NULL DEFAULT '',
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """);
+        TryExec(conn, """ALTER TABLE "E_Attendace"."app_config" ADD COLUMN IF NOT EXISTS "ConfigKey" TEXT;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."app_config" ADD COLUMN IF NOT EXISTS "JsonValue" TEXT NOT NULL DEFAULT '';""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."app_config" ADD COLUMN IF NOT EXISTS "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW();""");
+        TryExec(conn, """UPDATE "E_Attendace"."app_config" SET "ConfigKey"="Key","JsonValue"="Value" WHERE "ConfigKey" IS NULL AND "Key" IS NOT NULL;""");
+
+        // ── Areas / Departments / EmployeeDepartments (integer-based hierarchy) ─
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."Areas" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "Name" TEXT NOT NULL,
+                "IsDefault" BOOLEAN NOT NULL DEFAULT FALSE,
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                UNIQUE ("Name")
+            );
+            """);
+        TryExec(conn, """INSERT INTO "E_Attendace"."Areas" ("Name","IsDefault") VALUES ('Default Area',TRUE) ON CONFLICT ("Name") DO NOTHING;""");
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."Departments" (
+                "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                "Name" TEXT NOT NULL,
+                "AreaId" INTEGER NOT NULL DEFAULT 1,
+                "IsDefault" BOOLEAN NOT NULL DEFAULT FALSE,
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "UpdatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                UNIQUE ("AreaId","Name")
+            );
+            """);
+        TryExec(conn, """INSERT INTO "E_Attendace"."Departments" ("Name","AreaId","IsDefault") VALUES ('Default Department',1,TRUE) ON CONFLICT ("AreaId","Name") DO NOTHING;""");
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."EmployeeDepartments" (
+                "EmployeeId" TEXT NOT NULL,
+                "DepartmentId" INTEGER NOT NULL,
+                "AssignedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "AssignedBy" TEXT NULL,
+                PRIMARY KEY ("EmployeeId","DepartmentId")
+            );
+            """);
+        // Migrate EmployeeId from UUID to TEXT if created by older schema
+        TryExec(conn, """
+            DO $migrate_ed$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema='E_Attendace' AND table_name='EmployeeDepartments'
+                             AND column_name='EmployeeId' AND data_type='uuid') THEN
+                    BEGIN
+                        ALTER TABLE "E_Attendace"."EmployeeDepartments" DROP CONSTRAINT IF EXISTS "EmployeeDepartments_pkey" CASCADE;
+                        ALTER TABLE "E_Attendace"."EmployeeDepartments" ALTER COLUMN "EmployeeId" TYPE TEXT USING "EmployeeId"::text;
+                        ALTER TABLE "E_Attendace"."EmployeeDepartments" ADD PRIMARY KEY ("EmployeeId","DepartmentId");
+                    EXCEPTION WHEN OTHERS THEN NULL; END;
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema='E_Attendace' AND table_name='EmployeeDepartments'
+                             AND column_name='AssignedBy' AND data_type='uuid') THEN
+                    BEGIN
+                        ALTER TABLE "E_Attendace"."EmployeeDepartments" ALTER COLUMN "AssignedBy" TYPE TEXT USING "AssignedBy"::text;
+                    EXCEPTION WHEN OTHERS THEN NULL; END;
+                END IF;
+            END $migrate_ed$;
+            """);
+
+        // ── Device command/sync tables ──────────────────────────────────────────
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."DeviceCommands" (
+                "Id" TEXT PRIMARY KEY,
+                "DeviceSerialNumber" TEXT NOT NULL,
+                "CommandText" TEXT NOT NULL,
+                "CreatedUtc" timestamptz NOT NULL DEFAULT NOW(),
+                "SentUtc" timestamptz NULL,
+                "ReplyText" TEXT NULL
+            );
+            """);
+        TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_DeviceCommands_Pending" ON "E_Attendace"."DeviceCommands" ("DeviceSerialNumber","SentUtc");""");
+        // SyncLogs is the table the repository's AddSyncLog/GetSyncLogs actually use (distinct from DeviceSyncLogs).
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."SyncLogs" (
+                "Id" TEXT PRIMARY KEY,
+                "DeviceSerialNumber" TEXT NOT NULL,
+                "Type" INTEGER NOT NULL DEFAULT 0,
+                "Status" INTEGER NOT NULL DEFAULT 0,
+                "CommandText" TEXT NOT NULL DEFAULT '',
+                "ResponseText" TEXT NULL,
+                "CreatedUtc" timestamptz NOT NULL DEFAULT NOW(),
+                "CompletedUtc" timestamptz NULL
+            );
+            """);
+        TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_SyncLogs_DeviceStatus" ON "E_Attendace"."SyncLogs" ("DeviceSerialNumber","Status","CreatedUtc");""");
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."DeviceTableStamps" (
+                "DeviceSerialNumber" TEXT NOT NULL,
+                "TableName" TEXT NOT NULL,
+                "StampValue" BIGINT NOT NULL DEFAULT 0,
+                "UpdatedUtc" timestamptz NOT NULL DEFAULT NOW(),
+                PRIMARY KEY ("DeviceSerialNumber","TableName")
+            );
+            """);
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."SyncQueue" (
+                "Id" BIGSERIAL PRIMARY KEY,
+                "EntityType" TEXT NOT NULL,
+                "EntityId" TEXT NOT NULL,
+                "Operation" TEXT NOT NULL,
+                "Status" INTEGER NOT NULL DEFAULT 0,
+                "RetryCount" INTEGER NOT NULL DEFAULT 0,
+                "MaxRetries" INTEGER NOT NULL DEFAULT 3,
+                "Payload" TEXT NULL,
+                "ErrorMessage" TEXT NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
+                "ProcessedAt" timestamptz NULL,
+                "NextRetryAt" timestamptz NULL
+            );
+            """);
+
+        // ── Biometric tables ────────────────────────────────────────────────────
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."users" (
+                pin VARCHAR(50) PRIMARY KEY,
+                name VARCHAR(255),
+                privilege INT,
+                password VARCHAR(255),
+                primary_card VARCHAR(255),
+                secondary_card VARCHAR(255),
+                group_id INT,
+                timezone_profile VARCHAR(32),
+                verify_mode INT,
+                valid_from TIMESTAMP,
+                valid_to TIMESTAMP,
+                expires_enabled BOOLEAN,
+                phone VARCHAR(50),
+                gender INT,
+                nation INT,
+                id_number VARCHAR(50),
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+            """);
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."biometric_templates" (
+                id BIGSERIAL PRIMARY KEY,
+                user_pin VARCHAR(50) NOT NULL,
+                type INT NOT NULL, no INT NOT NULL, idx INT NOT NULL,
+                valid INTEGER NOT NULL DEFAULT 1, duress INTEGER NOT NULL DEFAULT 0,
+                major_ver INT NOT NULL DEFAULT 0, minor_ver INT, format INT, template_data TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(), updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (user_pin, type, no, idx, major_ver)
+            );
+            """);
+        // major_ver was not originally part of the uniqueness key, so re-enrolling/re-syncing the
+        // same finger from a device running a different fingerprint algorithm version (e.g. v13
+        // after an earlier v10 capture) silently overwrote the older version's template instead of
+        // keeping both — defeating HydrateEmployeeBiometricsForDeviceSync's per-device version
+        // matching, since only one version's row ever survived. Migrate existing installs: widen the
+        // constraint so both versions can coexist per employee+finger.
+        TryExec(conn, """ALTER TABLE "E_Attendace"."biometric_templates" ALTER COLUMN major_ver SET DEFAULT 0;""");
+        TryExec(conn, """UPDATE "E_Attendace"."biometric_templates" SET major_ver = 0 WHERE major_ver IS NULL;""");
+        TryExec(conn, """ALTER TABLE "E_Attendace"."biometric_templates" ALTER COLUMN major_ver SET NOT NULL;""");
+        TryExec(conn, """
+            DO $$
+            DECLARE
+                old_constraint_name TEXT;
+            BEGIN
+                SELECT conname INTO old_constraint_name
+                FROM pg_constraint
+                WHERE conrelid = '"E_Attendace".biometric_templates'::regclass
+                  AND contype = 'u'
+                  AND array_length(conkey, 1) = 4;
+                IF old_constraint_name IS NOT NULL THEN
+                    EXECUTE 'ALTER TABLE "E_Attendace"."biometric_templates" DROP CONSTRAINT ' || quote_ident(old_constraint_name);
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = '"E_Attendace".biometric_templates'::regclass
+                      AND contype = 'u'
+                      AND array_length(conkey, 1) = 5
+                ) THEN
+                    ALTER TABLE "E_Attendace"."biometric_templates" ADD CONSTRAINT biometric_templates_pin_type_no_idx_ver_key UNIQUE (user_pin, type, no, idx, major_ver);
+                END IF;
+            END $$;
+            """);
+        // Add FK separately so we can make it DEFERRABLE (checked at COMMIT not per-row).
+        // This prevents 23503 when biometric data arrives before USERINFO in the same txn.
+        TryExec(conn, """
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'biometric_templates_user_pin_fkey'
+                      AND conrelid = '"E_Attendace".biometric_templates'::regclass
+                ) THEN
+                    ALTER TABLE "E_Attendace"."biometric_templates"
+                        ADD CONSTRAINT biometric_templates_user_pin_fkey
+                        FOREIGN KEY (user_pin)
+                        REFERENCES "E_Attendace"."users"(pin)
+                        ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+                END IF;
+            END $$;
+            """);
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."biometric_photos" (
+                id BIGSERIAL PRIMARY KEY,
+                user_pin VARCHAR(50) NOT NULL,
+                type INT NOT NULL, no INT NOT NULL, idx INT NOT NULL,
+                format INT, content TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(), updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE (user_pin, type, no, idx)
+            );
+            """);
+        // Add FK separately so we can make it DEFERRABLE.
+        TryExec(conn, """
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'biometric_photos_user_pin_fkey'
+                      AND conrelid = '"E_Attendace".biometric_photos'::regclass
+                ) THEN
+                    ALTER TABLE "E_Attendace"."biometric_photos"
+                        ADD CONSTRAINT biometric_photos_user_pin_fkey
+                        FOREIGN KEY (user_pin)
+                        REFERENCES "E_Attendace"."users"(pin)
+                        ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+                END IF;
+            END $$;
+            """);
+
+        // ── Grant all on everything created ─────────────────────────────────────
+        TryExec(conn, $"""GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA "E_Attendace" TO "{dbUser}";""");
+        TryExec(conn, $"""GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA "E_Attendace" TO "{dbUser}";""");
     }
     catch (Exception ex)
     {
@@ -7153,6 +9618,55 @@ static void PersistTransactionDetailRequests(string connectionString, IReadOnlyL
     }
 }
 
+static int StatusCodeForAttendanceStatus(AttendanceStatus status) => status switch
+{
+    AttendanceStatus.In => 0,
+    AttendanceStatus.Out => 1,
+    AttendanceStatus.BreakIn => 4,
+    AttendanceStatus.BreakOut => 5,
+    _ => 0,
+};
+
+static void InsertManualTransactionDetail(
+    string connectionString,
+    string employeeCode,
+    DateTime punchTime,
+    int? statusCode,
+    int? verifyMode,
+    string? workcode,
+    string? remarks,
+    int parsedOk = 1)
+{
+    try
+    {
+        using var conn = new NpgsqlConnection(connectionString);
+        conn.Open();
+        using var cmd = new NpgsqlCommand(
+            """
+            INSERT INTO "E_Attendace"."TransactionDetails"
+            ("Id","ReceivedUtc","DeviceSerialNumber","SourceTable","RawLine","EmployeeCode","PunchTime","StatusCode","VerifyMode","Workcode","ParsedOk","Remarks")
+            VALUES (@id,@received,@serial,'MANUAL',@raw,@employee,@punch,@status,@verify,@work,@parsed,@remarks);
+            """,
+            conn);
+        cmd.Parameters.AddWithValue("id", Guid.NewGuid().ToString("N"));
+        cmd.Parameters.AddWithValue("received", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue("serial", "MANUAL");
+        cmd.Parameters.AddWithValue("raw", remarks ?? "Manual punch");
+        cmd.Parameters.AddWithValue("employee", employeeCode);
+        cmd.Parameters.AddWithValue("punch", punchTime);
+        cmd.Parameters.AddWithValue("status", statusCode.HasValue ? statusCode.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("verify", verifyMode.HasValue ? verifyMode.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("work", (object?)workcode ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("remarks", (object?)remarks ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("parsed", parsedOk);
+        cmd.ExecuteNonQuery();
+    }
+    catch
+    {
+        // Non-blocking
+    }
+}
+
 static void PersistTransactionDetailsBatch(NpgsqlConnection conn, IReadOnlyList<TransactionDetailRow> rows)
 {
     if (rows.Count == 0)
@@ -7192,32 +9706,6 @@ static void PersistTransactionDetailsBatch(NpgsqlConnection conn, IReadOnlyList<
     sql.Append(" ON CONFLICT DO NOTHING;");
     cmd.CommandText = sql.ToString();
     cmd.ExecuteNonQuery();
-}
-
-static void PersistAppLog(string connectionString, AppLogEntry entry)
-{
-    try
-    {
-        using var conn = new NpgsqlConnection(connectionString);
-        conn.Open();
-        using var cmd = new NpgsqlCommand(
-            """
-            INSERT INTO "E_Attendace"."AppLogs" ("Id","TimestampUtc","Level","Source","Message","Detail")
-            VALUES (@id,@ts,@level,@source,@message,@detail);
-            """,
-            conn);
-        cmd.Parameters.AddWithValue("id", Guid.NewGuid().ToString("N"));
-        cmd.Parameters.AddWithValue("ts", entry.TimestampUtc);
-        cmd.Parameters.AddWithValue("level", entry.Level ?? string.Empty);
-        cmd.Parameters.AddWithValue("source", entry.Source ?? string.Empty);
-        cmd.Parameters.AddWithValue("message", entry.Message ?? string.Empty);
-        cmd.Parameters.AddWithValue("detail", (object?)entry.Detail ?? DBNull.Value);
-        cmd.ExecuteNonQuery();
-    }
-    catch
-    {
-        // Keep runtime stable even if DB logging fails.
-    }
 }
 
 static IReadOnlyList<AppLogEntry> LoadAppLogs(
@@ -7280,6 +9768,90 @@ static IReadOnlyList<AppLogEntry> LoadAppLogs(
     return rows;
 }
 
+static (IReadOnlyList<AppLogEntry> Data, int Total) LoadAppLogsPaged(
+    string connectionString,
+    string? search,
+    string? level,
+    string? source,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+    int take,
+    int skip)
+{
+    var rows = new List<AppLogEntry>();
+    int total = 0;
+    try
+    {
+        using var conn = new NpgsqlConnection(connectionString);
+        conn.Open();
+
+        var where = new StringBuilder(" WHERE 1=1");
+        using var countCmd = new NpgsqlCommand();
+        using var dataCmd = new NpgsqlCommand();
+        countCmd.Connection = conn;
+        dataCmd.Connection = conn;
+
+        if (fromUtc.HasValue)
+        {
+            where.Append(""" AND "TimestampUtc" >= @fromUtc""");
+            countCmd.Parameters.AddWithValue("fromUtc", fromUtc.Value);
+            dataCmd.Parameters.AddWithValue("fromUtc", fromUtc.Value);
+        }
+        if (toUtc.HasValue)
+        {
+            where.Append(""" AND "TimestampUtc" <= @toUtc""");
+            countCmd.Parameters.AddWithValue("toUtc", toUtc.Value);
+            dataCmd.Parameters.AddWithValue("toUtc", toUtc.Value);
+        }
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            where.Append(""" AND ("Message" ILIKE @search OR COALESCE("Detail",'') ILIKE @search)""");
+            countCmd.Parameters.AddWithValue("search", $"%{search.Trim()}%");
+            dataCmd.Parameters.AddWithValue("search", $"%{search.Trim()}%");
+        }
+        if (!string.IsNullOrWhiteSpace(level))
+        {
+            where.Append(""" AND "Level" ILIKE @level""");
+            countCmd.Parameters.AddWithValue("level", level.Trim());
+            dataCmd.Parameters.AddWithValue("level", level.Trim());
+        }
+        if (!string.IsNullOrWhiteSpace(source))
+        {
+            where.Append(""" AND "Source" ILIKE @source""");
+            countCmd.Parameters.AddWithValue("source", source.Trim());
+            dataCmd.Parameters.AddWithValue("source", source.Trim());
+        }
+
+        countCmd.CommandText = $"""SELECT COUNT(*) FROM "E_Attendace"."AppLogs"{where}""";
+        total = (int)(long)countCmd.ExecuteScalar()!;
+
+        dataCmd.Parameters.AddWithValue("take", take);
+        dataCmd.Parameters.AddWithValue("skip", skip);
+        dataCmd.CommandText = $"""
+            SELECT "TimestampUtc","Level","Source","Message","Detail"
+            FROM "E_Attendace"."AppLogs"{where}
+            ORDER BY "TimestampUtc" DESC LIMIT @take OFFSET @skip
+            """;
+
+        using var reader = dataCmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new AppLogEntry(
+                reader.GetFieldValue<DateTime>(0),
+                reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4)));
+        }
+    }
+    catch
+    {
+        // On error return empty with 0 total.
+    }
+
+    return (rows, total);
+}
+
 static void ClearAppLogs(string connectionString)
 {
     try
@@ -7294,104 +9866,60 @@ static void ClearAppLogs(string connectionString)
     }
 }
 
-static void PersistTransactionDetails(
-    string connectionString,
-    string? serialNumber,
-    string sourceTable,
-    string payload)
-{
-    try
-    {
-        var normalizedSerial = serialNumber?.Trim() ?? string.Empty;
-        var lines = payload
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(static l => !l.StartsWith("OK", StringComparison.OrdinalIgnoreCase))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        if (lines.Length == 0)
-        {
-            return;
-        }
-
-        using var conn = new NpgsqlConnection(connectionString);
-        conn.Open();
-        using var tx = conn.BeginTransaction();
-        foreach (var line in lines)
-        {
-            var parsedOk = TryParseAttendanceLine(
-                line,
-                out var employeeCode,
-                out var punchTime,
-                out var statusCode,
-                out var verifyMode,
-                out var workcode,
-                out _);
-
-            using var cmd = new NpgsqlCommand(
-                """
-                INSERT INTO "E_Attendace"."TransactionDetails"
-                ("Id","ReceivedUtc","DeviceSerialNumber","SourceTable","RawLine","EmployeeCode","PunchTime","StatusCode","VerifyMode","Workcode","ParsedOk")
-                SELECT @id,@received,@serial,@source,@raw,@employee,@punch,@status,@verify,@work,@parsed
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM "E_Attendace"."TransactionDetails" t
-                    WHERE COALESCE(t."DeviceSerialNumber",'') = @serialKey
-                      AND t."SourceTable" = @source
-                      AND t."RawLine" = @raw
-                );
-                """,
-                conn,
-                tx);
-            cmd.Parameters.AddWithValue("id", Guid.NewGuid().ToString("N"));
-            cmd.Parameters.AddWithValue("received", DateTime.UtcNow);
-            cmd.Parameters.AddWithValue("serial", normalizedSerial);
-            cmd.Parameters.AddWithValue("serialKey", normalizedSerial);
-            cmd.Parameters.AddWithValue("source", sourceTable);
-            cmd.Parameters.AddWithValue("raw", line);
-            cmd.Parameters.AddWithValue("employee", parsedOk && !string.IsNullOrWhiteSpace(employeeCode) ? employeeCode : (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("punch", parsedOk ? punchTime : (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("status", parsedOk ? statusCode : (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("verify", parsedOk ? verifyMode : (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("work", parsedOk && !string.IsNullOrWhiteSpace(workcode) ? workcode : (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("parsed", parsedOk ? 1 : 0);
-            cmd.ExecuteNonQuery();
-        }
-
-        tx.Commit();
-    }
-    catch
-    {
-        // Non-blocking: transaction persistence should not block device ACK path.
-    }
-}
-
 static IReadOnlyList<object> LoadTransactionDetails(
     string connectionString,
     DateTime? fromUtc,
     DateTime? toUtc,
     string? search,
     string? deviceSerial,
+    string[]? filterCodes,
     int take,
     IReadOnlyDictionary<string, Employee> employeeByCode,
     string fallbackDepartment,
     bool usePunchTime,
-    bool lite)
+    bool lite,
+    bool approvedOnly = false)
 {
     var rows = new List<object>();
     try
     {
+        var searchToken = search?.Trim();
+        var employeeSearchCodes = Array.Empty<string>();
+        if (!string.IsNullOrWhiteSpace(searchToken))
+        {
+            // Search by employee NAME only here; employee ID (EmployeeCode) is matched directly
+            // in the SQL WHERE below. Device serial / workcode / department are intentionally
+            // excluded so search behaves as "by employee ID or name" only.
+            employeeSearchCodes = employeeByCode.Values
+                .Where(e => !string.IsNullOrWhiteSpace(e.FullName) && e.FullName.Contains(searchToken, StringComparison.OrdinalIgnoreCase))
+                .Select(e => e.EmployeeCode)
+                .Where(code => !string.IsNullOrWhiteSpace(code))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
         using var conn = new NpgsqlConnection(connectionString);
         conn.Open();
         using var cmd = new NpgsqlCommand();
         cmd.Connection = conn;
 
-        var timeColumn = usePunchTime ? "\"PunchTime\"" : "\"ReceivedUtc\"";
+        // Use PunchTime when requested, but fall back to ReceivedUtc for rows where PunchTime
+        // is NULL (e.g. failed-parse rows kept for audit). This ensures all records are visible.
+        var timeColumn = usePunchTime
+            ? "COALESCE(\"PunchTime\", \"ReceivedUtc\")"
+            : "\"ReceivedUtc\"";
         var selectColumns = lite
-            ? "\"Id\",\"ReceivedUtc\",\"DeviceSerialNumber\",\"EmployeeCode\",\"PunchTime\",\"StatusCode\",\"VerifyMode\""
-            : "\"Id\",\"ReceivedUtc\",\"DeviceSerialNumber\",\"SourceTable\",\"RawLine\",\"EmployeeCode\",\"PunchTime\",\"StatusCode\",\"VerifyMode\",\"Workcode\",\"ParsedOk\"";
+            ? "\"Id\",\"ReceivedUtc\",\"DeviceSerialNumber\",\"EmployeeCode\",\"PunchTime\",\"StatusCode\",\"VerifyMode\",\"Remarks\""
+            : "\"Id\",\"ReceivedUtc\",\"DeviceSerialNumber\",\"SourceTable\",\"RawLine\",\"EmployeeCode\",\"PunchTime\",\"StatusCode\",\"VerifyMode\",\"Workcode\",\"ParsedOk\",\"Remarks\"";
 
         var sql = new StringBuilder(
             $"SELECT {selectColumns} FROM \"E_Attendace\".\"TransactionDetails\" WHERE 1=1");
+
+        if (filterCodes is not null)
+        {
+            sql.Append(" AND \"EmployeeCode\" = ANY(@filterCodes)");
+            cmd.Parameters.AddWithValue("filterCodes", filterCodes);
+        }
 
         if (fromUtc.HasValue)
         {
@@ -7408,20 +9936,37 @@ static IReadOnlyList<object> LoadTransactionDetails(
             sql.Append(""" AND COALESCE("DeviceSerialNumber",'') ILIKE @deviceSerial""");
             cmd.Parameters.AddWithValue("deviceSerial", $"%{deviceSerial.Trim()}%");
         }
-        if (!string.IsNullOrWhiteSpace(search))
+        if (!string.IsNullOrWhiteSpace(searchToken))
         {
             sql.Append(
                 " AND (" +
                 "COALESCE(\"EmployeeCode\",'') ILIKE @search OR " +
                 "COALESCE(\"DeviceSerialNumber\",'') ILIKE @search OR " +
                 "COALESCE(\"Workcode\",'') ILIKE @search OR " +
-                "COALESCE(\"RawLine\",'') ILIKE @search" +
-                ")");
-            cmd.Parameters.AddWithValue("search", $"%{search.Trim()}%");
+                "COALESCE(\"RawLine\",'') ILIKE @search");
+            if (employeeSearchCodes.Length > 0)
+            {
+                sql.Append(" OR \"EmployeeCode\" = ANY(@employeeCodes)");
+                cmd.Parameters.AddWithValue("employeeCodes", employeeSearchCodes);
+            }
+            sql.Append(")");
+            cmd.Parameters.AddWithValue("search", $"%{searchToken}%");
         }
 
-        sql.Append(""" AND "SourceTable" IN ('ATTLOG','OPERLOG')""");
-        sql.Append(""" AND "ParsedOk" = 1""");
+        sql.Append(""" AND "SourceTable" IN ('ATTLOG','OPERLOG','MANUAL')""");
+        // approvedOnly: reports show only approved punches (ParsedOk=1) so pending QR/manual
+        // requests don't count until an admin approves them.
+        // approvedOnly restricts to ParsedOk=1 for reports. Normal view shows everything except
+        // device-side raw data that was stored but never parsed (ParsedOk=0 rows are still kept
+        // for audit but are filtered out from dashboard to prevent blank/bad records).
+        if (approvedOnly)
+        {
+            sql.Append(""" AND "ParsedOk" = 1""");
+        }
+        else
+        {
+            sql.Append(""" AND "ParsedOk" IN (1, 2, 3)""");
+        }
         sql.Append($" ORDER BY {timeColumn} DESC LIMIT @take");
         cmd.Parameters.AddWithValue("take", take);
         cmd.CommandText = sql.ToString();
@@ -7451,7 +9996,8 @@ static IReadOnlyList<object> LoadTransactionDetails(
                     verifyMode = reader.IsDBNull(6) ? (int?)null : reader.GetInt32(6),
                     verifyModeDescription = reader.IsDBNull(6) ? string.Empty : DescribeVerifyMode(reader.GetInt32(6)),
                     workcode = string.Empty,
-                    parsedOk = true
+                    remarks = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
+                    parsedOk = 1
                 });
             }
             else
@@ -7476,7 +10022,8 @@ static IReadOnlyList<object> LoadTransactionDetails(
                     verifyMode = reader.IsDBNull(8) ? (int?)null : reader.GetInt32(8),
                     verifyModeDescription = reader.IsDBNull(8) ? string.Empty : DescribeVerifyMode(reader.GetInt32(8)),
                     workcode = reader.IsDBNull(9) ? string.Empty : reader.GetString(9),
-                    parsedOk = !reader.IsDBNull(10) && reader.GetInt32(10) == 1
+                    parsedOk = reader.IsDBNull(10) ? 0 : reader.GetInt32(10),
+                    remarks = reader.IsDBNull(11) ? string.Empty : reader.GetString(11)
                 });
             }
         }
@@ -7487,6 +10034,168 @@ static IReadOnlyList<object> LoadTransactionDetails(
     }
 
     return rows;
+}
+
+static (IReadOnlyList<object> Data, int Total) LoadTransactionDetailsPaged(
+    string connectionString,
+    DateTime? fromUtc,
+    DateTime? toUtc,
+    string? search,
+    string? deviceSerial,
+    string[]? filterCodes,
+    int take,
+    int skip,
+    IReadOnlyDictionary<string, Employee> employeeByCode,
+    string fallbackDepartment,
+    bool usePunchTime,
+    bool lite)
+{
+    var rows = new List<object>();
+    int total = 0;
+    try
+    {
+        using var conn = new NpgsqlConnection(connectionString);
+        conn.Open();
+
+        var searchToken = search?.Trim();
+        var employeeSearchCodes = Array.Empty<string>();
+        if (!string.IsNullOrWhiteSpace(searchToken))
+        {
+            // Search by employee NAME only here; employee ID (EmployeeCode) is matched directly
+            // in the SQL WHERE below. Device serial / workcode / department are intentionally
+            // excluded so search behaves as "by employee ID or name" only.
+            employeeSearchCodes = employeeByCode.Values
+                .Where(e => !string.IsNullOrWhiteSpace(e.FullName) && e.FullName.Contains(searchToken, StringComparison.OrdinalIgnoreCase))
+                .Select(e => e.EmployeeCode)
+                .Where(code => !string.IsNullOrWhiteSpace(code))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        var timeColumn = usePunchTime
+            ? "COALESCE(\"PunchTime\", \"ReceivedUtc\")"
+            : "\"ReceivedUtc\"";
+        var selectColumns = lite
+            ? "\"Id\",\"ReceivedUtc\",\"DeviceSerialNumber\",\"EmployeeCode\",\"PunchTime\",\"StatusCode\",\"VerifyMode\",\"Remarks\""
+            : "\"Id\",\"ReceivedUtc\",\"DeviceSerialNumber\",\"SourceTable\",\"RawLine\",\"EmployeeCode\",\"PunchTime\",\"StatusCode\",\"VerifyMode\",\"Workcode\",\"ParsedOk\",\"Remarks\"";
+
+        var whereBuilder = new StringBuilder(" WHERE 1=1");
+        var paramList = new List<(string Name, object Value)>();
+
+        if (filterCodes is not null)
+        {
+            whereBuilder.Append(" AND \"EmployeeCode\" = ANY(@filterCodes)");
+            paramList.Add(("filterCodes", filterCodes));
+        }
+
+        if (fromUtc.HasValue)
+        {
+            whereBuilder.Append($" AND {timeColumn} >= @fromUtc");
+            paramList.Add(("fromUtc", fromUtc.Value));
+        }
+        if (toUtc.HasValue)
+        {
+            whereBuilder.Append($" AND {timeColumn} <= @toUtc");
+            paramList.Add(("toUtc", toUtc.Value));
+        }
+        if (!string.IsNullOrWhiteSpace(deviceSerial))
+        {
+            whereBuilder.Append(""" AND COALESCE("DeviceSerialNumber",'') ILIKE @deviceSerial""");
+            paramList.Add(("deviceSerial", $"%{deviceSerial.Trim()}%"));
+        }
+        if (!string.IsNullOrWhiteSpace(searchToken))
+        {
+            // Match employee ID (EmployeeCode) directly, plus codes resolved from a name match.
+            whereBuilder.Append(" AND (COALESCE(\"EmployeeCode\",'') ILIKE @search");
+            if (employeeSearchCodes.Length > 0)
+            {
+                whereBuilder.Append(" OR \"EmployeeCode\" = ANY(@employeeCodes)");
+                paramList.Add(("employeeCodes", employeeSearchCodes));
+            }
+            whereBuilder.Append(")");
+            paramList.Add(("search", $"%{searchToken}%"));
+        }
+
+        whereBuilder.Append(""" AND "SourceTable" IN ('ATTLOG','OPERLOG','MANUAL')""");
+        // Filter out unparsed raw logs (ParsedOk = 0) to avoid bad/blank dashboard entries.
+        whereBuilder.Append(""" AND "ParsedOk" IN (1, 2, 3)""");
+
+        var whereStr = whereBuilder.ToString();
+        var tableName = "\"E_Attendace\".\"TransactionDetails\"";
+
+        // COUNT query
+        using var countCmd = new NpgsqlCommand($"SELECT COUNT(*) FROM {tableName}{whereStr}", conn);
+        foreach (var (name, value) in paramList)
+            countCmd.Parameters.AddWithValue(name, value);
+        total = (int)(long)countCmd.ExecuteScalar()!;
+
+        // DATA query
+        using var dataCmd = new NpgsqlCommand(
+            $"SELECT {selectColumns} FROM {tableName}{whereStr} ORDER BY {timeColumn} DESC LIMIT @take OFFSET @skip", conn);
+        foreach (var (name, value) in paramList)
+            dataCmd.Parameters.AddWithValue(name, value);
+        dataCmd.Parameters.AddWithValue("take", take);
+        dataCmd.Parameters.AddWithValue("skip", skip);
+
+        using var reader = dataCmd.ExecuteReader();
+        while (reader.Read())
+        {
+            if (lite)
+            {
+                var code = reader.IsDBNull(3) ? string.Empty : reader.GetString(3);
+                employeeByCode.TryGetValue(code, out var employee);
+                rows.Add(new
+                {
+                    id = reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+                    rawTimePc = reader.IsDBNull(1) ? (DateTime?)null : reader.GetFieldValue<DateTime>(1),
+                    deviceSerialNumber = reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                    sourceTable = string.Empty,
+                    rawLine = string.Empty,
+                    employeeCode = code,
+                    employeeName = employee?.FullName ?? code,
+                    employeeDepartment = string.IsNullOrWhiteSpace(employee?.Department) ? fallbackDepartment : employee!.Department,
+                    punchTime = reader.IsDBNull(4) ? (DateTime?)null : reader.GetFieldValue<DateTime>(4),
+                    statusCode = reader.IsDBNull(5) ? (int?)null : reader.GetInt32(5),
+                    statusDescription = reader.IsDBNull(5) ? string.Empty : DescribeAttendanceStatusCode(reader.GetInt32(5)),
+                    verifyMode = reader.IsDBNull(6) ? (int?)null : reader.GetInt32(6),
+                    verifyModeDescription = reader.IsDBNull(6) ? string.Empty : DescribeVerifyMode(reader.GetInt32(6)),
+                    workcode = string.Empty,
+                    remarks = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
+                    parsedOk = 1
+                });
+            }
+            else
+            {
+                var code = reader.IsDBNull(5) ? string.Empty : reader.GetString(5);
+                employeeByCode.TryGetValue(code, out var employee);
+                rows.Add(new
+                {
+                    id = reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+                    rawTimePc = reader.IsDBNull(1) ? (DateTime?)null : reader.GetFieldValue<DateTime>(1),
+                    deviceSerialNumber = reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                    sourceTable = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                    rawLine = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
+                    employeeCode = code,
+                    employeeName = employee?.FullName ?? code,
+                    employeeDepartment = string.IsNullOrWhiteSpace(employee?.Department) ? fallbackDepartment : employee!.Department,
+                    punchTime = reader.IsDBNull(6) ? (DateTime?)null : reader.GetFieldValue<DateTime>(6),
+                    statusCode = reader.IsDBNull(7) ? (int?)null : reader.GetInt32(7),
+                    statusDescription = reader.IsDBNull(7) ? string.Empty : DescribeAttendanceStatusCode(reader.GetInt32(7)),
+                    verifyMode = reader.IsDBNull(8) ? (int?)null : reader.GetInt32(8),
+                    verifyModeDescription = reader.IsDBNull(8) ? string.Empty : DescribeVerifyMode(reader.GetInt32(8)),
+                    workcode = reader.IsDBNull(9) ? string.Empty : reader.GetString(9),
+                    parsedOk = reader.IsDBNull(10) ? 0 : reader.GetInt32(10),
+                    remarks = reader.IsDBNull(11) ? string.Empty : reader.GetString(11)
+                });
+            }
+        }
+    }
+    catch
+    {
+        // Return empty on DB failure.
+    }
+
+    return (rows, total);
 }
 
 static List<HolidayListRow> LoadHolidayRows(string connectionString)
@@ -7655,11 +10364,6 @@ static bool DeleteHoliday(string connectionString, int id)
 
 static bool IsDeviceCurrentlyOnline(DateTime? lastSeenUtc, bool isOnlineFlag)
 {
-    if (!isOnlineFlag)
-    {
-        return false;
-    }
-
     if (!lastSeenUtc.HasValue)
     {
         return false;
@@ -7688,9 +10392,9 @@ static Dictionary<string, int> LoadDevicePunchCounts(string connectionString, IE
         conn.Open();
         using var cmd = new NpgsqlCommand(
             """
-            SELECT "DeviceSerialNumber", COUNT(DISTINCT ("SourceTable" || '|' || "RawLine"))
+            SELECT "DeviceSerialNumber", COUNT(DISTINCT "RawLine")
             FROM "E_Attendace"."TransactionDetails"
-            WHERE "SourceTable" IN ('ATTLOG','OPERLOG')
+            WHERE "SourceTable" = 'ATTLOG'
               AND COALESCE("DeviceSerialNumber",'') <> ''
             GROUP BY "DeviceSerialNumber";
             """,
@@ -7992,7 +10696,7 @@ static string ReadAppConfigJson(string connectionString, string configKey)
         conn.Open();
         using var cmd = new NpgsqlCommand(
             """
-            SELECT COALESCE("JsonValue", '{}'::jsonb)::text
+            SELECT COALESCE("JsonValue"::text, '{}')
             FROM "E_Attendace"."app_config"
             WHERE "ConfigKey" = @configKey
             LIMIT 1;
@@ -8031,6 +10735,105 @@ static void SaveAppConfigJson(string connectionString, string configKey, string 
     cmd.Parameters.AddWithValue("configKey", configKey.Trim());
     cmd.Parameters.AddWithValue("jsonValue", payload);
     cmd.ExecuteNonQuery();
+}
+
+// Ensures every area has its default access-control entities (Time Period 1 = 00:00-23:59,
+// Access Group 1 = Verify Auto + TP1, Unlock Combination 1 = Group 1) and that each carries the
+// serials of the devices currently in that area, then syncs them to those devices. Runs
+// server-side so the defaults exist without anyone opening the Access Control page.
+static async Task EnsureAccessControlDefaultsForAllAreas(
+    string connectionString,
+    AttendanceService service,
+    PersonnelStore personnelStore,
+    ConfigSyncService syncService)
+{
+    try
+    {
+        var json = ReadAppConfigJson(connectionString, "access-control");
+        var root = (JsonNode.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json) as JsonObject) ?? new JsonObject();
+        if (root["timePeriods"] is not JsonArray timePeriods) { timePeriods = new JsonArray(); root["timePeriods"] = timePeriods; }
+        if (root["groups"] is not JsonArray groups) { groups = new JsonArray(); root["groups"] = groups; }
+        if (root["combinations"] is not JsonArray combinations) { combinations = new JsonArray(); root["combinations"] = combinations; }
+        if (root["privileges"] is not JsonArray) { root["privileges"] = new JsonArray(); }
+
+        var devices = service.ListDevices().ToList();
+        var now = DateTime.UtcNow.ToString("O");
+        var changed = false;
+        string NewId(string p) => $"{p}-{DateTime.UtcNow.Ticks}-{Guid.NewGuid().ToString("N")[..6]}";
+
+        foreach (var area in personnelStore.Areas)
+        {
+            var areaName = area.Name;
+            var serials = devices
+                .Where(d => string.Equals(d.Location, areaName, StringComparison.OrdinalIgnoreCase))
+                .Select(d => d.SerialNumber)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            JsonArray SerialArray() { var a = new JsonArray(); foreach (var s in serials) a.Add(s); return a; }
+            bool SerialsDiffer(JsonNode? node)
+            {
+                var existing = (node as JsonArray)?.Select(x => (string?)x ?? string.Empty).Where(x => x.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new(StringComparer.OrdinalIgnoreCase);
+                return !existing.SetEquals(serials);
+            }
+            JsonObject? Find(JsonArray arr, string slotKey, string slotVal) => arr.OfType<JsonObject>().FirstOrDefault(o =>
+                string.Equals((string?)o["area"], areaName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals((string?)o[slotKey], slotVal, StringComparison.Ordinal));
+
+            // Time Period 1
+            var tp1 = Find(timePeriods, "periodNo", "1");
+            string tp1Id;
+            if (tp1 is null)
+            {
+                tp1Id = NewId("period");
+                var days = new JsonArray();
+                for (var i = 0; i < 7; i++) days.Add(new JsonObject { ["dayOfWeek"] = i, ["startTime"] = "00:00:00", ["endTime"] = "23:59:00", ["isActive"] = true });
+                timePeriods.Add(new JsonObject { ["id"] = tp1Id, ["area"] = areaName, ["department"] = "All", ["deviceSerials"] = SerialArray(), ["periodNo"] = "1", ["name"] = "Time Period 1", ["remark"] = "Default", ["days"] = days, ["createdAt"] = now, ["updatedAt"] = now });
+                changed = true;
+            }
+            else
+            {
+                tp1Id = (string?)tp1["id"] ?? NewId("period");
+                if (SerialsDiffer(tp1["deviceSerials"])) { tp1["deviceSerials"] = SerialArray(); tp1["updatedAt"] = now; changed = true; }
+            }
+
+            // Access Group 1
+            var grp1 = Find(groups, "groupNo", "1");
+            string grp1Id;
+            if (grp1 is null)
+            {
+                grp1Id = NewId("group");
+                groups.Add(new JsonObject { ["id"] = grp1Id, ["area"] = areaName, ["department"] = "All", ["deviceSerials"] = SerialArray(), ["groupNo"] = "1", ["name"] = "Access Group 1", ["verificationMode"] = "0", ["timePeriodIds"] = new JsonArray(tp1Id, "", ""), ["includeHoliday"] = false, ["remark"] = "Default", ["createdAt"] = now, ["updatedAt"] = now });
+                changed = true;
+            }
+            else
+            {
+                grp1Id = (string?)grp1["id"] ?? NewId("group");
+                if (SerialsDiffer(grp1["deviceSerials"])) { grp1["deviceSerials"] = SerialArray(); grp1["updatedAt"] = now; changed = true; }
+            }
+
+            // Unlock Combination 1
+            var comb1 = Find(combinations, "combinationNo", "1");
+            if (comb1 is null)
+            {
+                combinations.Add(new JsonObject { ["id"] = NewId("combination"), ["area"] = areaName, ["department"] = "All", ["deviceSerials"] = SerialArray(), ["combinationNo"] = "1", ["name"] = "Combination 1", ["groupIds"] = new JsonArray(grp1Id, "", "", "", ""), ["remark"] = "Default", ["createdAt"] = now, ["updatedAt"] = now });
+                changed = true;
+            }
+            else if (SerialsDiffer(comb1["deviceSerials"])) { comb1["deviceSerials"] = SerialArray(); comb1["updatedAt"] = now; changed = true; }
+        }
+
+        if (changed)
+        {
+            var raw = root.ToJsonString();
+            SaveAppConfigJson(connectionString, "access-control", raw);
+            await syncService.SyncAccessControlAsync(raw);
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"EnsureAccessControlDefaultsForAllAreas error: {ex.Message}");
+    }
 }
 
 static List<AuthUserResponse> LoadAuthUsersFromDb(string connectionString)
@@ -8326,9 +11129,12 @@ static void EnsureDefaultSoftwareLoginInDb(string connectionString)
     const string defaultUserName = "admin";
     const string defaultFullName = "Admin User";
     const string defaultPassword = "PB@TechZone";
+    // All old/wrong default passwords that should be replaced with the correct default
     const string previousMistakenDefaultPassword = "PB@14891277";
+    const string installerDefaultPassword = "admin"; // installer used md5('admin')
     var defaultPasswordHash = NormalizePasswordHash(defaultPassword);
     var previousMistakenDefaultPasswordHash = NormalizePasswordHash(previousMistakenDefaultPassword);
+    var installerDefaultPasswordHash = NormalizePasswordHash(installerDefaultPassword); // 21232f297a57a5a743894a0e4a801fc3
     var defaultAdminFeatureAccess = SerializeSoftwareFeatureAccess(null, allEnabled: true);
     var defaultFeatureAccess = SerializeSoftwareFeatureAccess(null);
 
@@ -8460,8 +11266,11 @@ static void EnsureDefaultSoftwareLoginInDb(string connectionString)
             VALUES (@userName, @passwordHash, @fullName, 'Admin', 'active', CAST(@featureAccessJson AS jsonb), NOW(), NOW())
             ON CONFLICT ("UserName") DO UPDATE
             SET "PasswordHash" = CASE
+                    -- Replace if empty
                     WHEN COALESCE(NULLIF(TRIM("E_Attendace"."auth_users"."PasswordHash"), ''), '') = '' THEN EXCLUDED."PasswordHash"
+                    -- Replace old wrong defaults (PB@14891277 and installer's md5('admin'))
                     WHEN LOWER(TRIM("E_Attendace"."auth_users"."PasswordHash")) = @previousMistakenDefaultHash THEN EXCLUDED."PasswordHash"
+                    WHEN LOWER(TRIM("E_Attendace"."auth_users"."PasswordHash")) = @installerDefaultHash THEN EXCLUDED."PasswordHash"
                     ELSE "E_Attendace"."auth_users"."PasswordHash"
                 END,
                 "FullName" = EXCLUDED."FullName",
@@ -8476,6 +11285,7 @@ static void EnsureDefaultSoftwareLoginInDb(string connectionString)
         ensureAdmin.Parameters.AddWithValue("fullName", defaultFullName);
         ensureAdmin.Parameters.AddWithValue("featureAccessJson", defaultAdminFeatureAccess);
         ensureAdmin.Parameters.AddWithValue("previousMistakenDefaultHash", previousMistakenDefaultPasswordHash);
+        ensureAdmin.Parameters.AddWithValue("installerDefaultHash", installerDefaultPasswordHash);
         ensureAdmin.ExecuteNonQuery();
 
         // Remove legacy software-login tables; auth_users is the only source of truth.
@@ -8794,16 +11604,6 @@ static string? TryGetSerialNumber(HttpRequest request)
     return null;
 }
 
-static bool IsApiRoute(string? path)
-{
-    if (string.IsNullOrWhiteSpace(path))
-    {
-        return false;
-    }
-
-    return path.StartsWith("/api", StringComparison.OrdinalIgnoreCase) ||
-           path.Equals("/health", StringComparison.OrdinalIgnoreCase);
-}
 
 static bool IsDeviceRoute(string? path)
 {
@@ -8813,6 +11613,44 @@ static bool IsDeviceRoute(string? path)
     }
 
     return path.StartsWith("/iclock", StringComparison.OrdinalIgnoreCase);
+}
+
+// Self-service kiosk flows (QR check-in and QR leave application) are used by employees who never
+// log in to the software, so their endpoints must stay reachable without a bearer token. Both write
+// to a "pending" state requiring admin approval, so leaving them public does not create real records.
+static bool IsPubliclyAllowedApiRequest(string method, string path)
+{
+    if (path.StartsWith("/api/license", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    if (HttpMethods.IsPost(method) && string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    if (HttpMethods.IsGet(method) && path.StartsWith("/api/personnel/verify/", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    if (HttpMethods.IsPost(method) && string.Equals(path, "/api/attendance/request", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    if (HttpMethods.IsPost(method) && string.Equals(path, "/api/leave", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    if (HttpMethods.IsGet(method) && string.Equals(path, "/api/leave/types", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    return false;
 }
 
 static string? TryExtractSerialNumberFromPayload(string? payload)
@@ -9045,7 +11883,7 @@ static void TryUpdateDeviceTableStampFromRequest(
     var stamp = normalizedTable switch
     {
         "ATTLOG" => TryGetStamp(query, "ATTLOGStamp", "Stamp"),
-        "OPERLOG" => TryGetStamp(query, "OPERLOGStamp", "OpStamp"),
+        "OPERLOG" => TryGetStamp(query, "OPERLOGStamp", "OpStamp", "Stamp"),
         "ATTPHOTO" => TryGetStamp(query, "ATTPHOTOStamp", "PhotoStamp"),
         _ => TryGetStamp(query, $"{normalizedTable}Stamp", "Stamp")
     };
@@ -9247,13 +12085,27 @@ static string BuildOptionsResponse(
     var userPicStamp = ResolveStamp("USERPIC");
 
     var timeZoneMinutes = defaultTimeZoneMinutes;
+    var multiBioDataSupport = "0:1:1:0:0:0:0:0:0:1:0";
+    var multiBioPhotoSupport = "0:0:1:0:0:0:0:0:0:1:0";
+
     if (!string.IsNullOrWhiteSpace(normalizedSerial))
     {
         var device = service.ListDevices().FirstOrDefault(d =>
             string.Equals(d.SerialNumber, normalizedSerial, StringComparison.OrdinalIgnoreCase));
-        if (device is not null && !string.IsNullOrWhiteSpace(device.TimeZone))
+        if (device is not null)
         {
-            timeZoneMinutes = DeviceProtocolService.TimezoneToMinutes(device.TimeZone);
+            if (!string.IsNullOrWhiteSpace(device.TimeZone))
+            {
+                timeZoneMinutes = DeviceProtocolService.TimezoneToMinutes(device.TimeZone);
+            }
+            if (!string.IsNullOrWhiteSpace(device.MultiBioDataSupport))
+            {
+                multiBioDataSupport = device.MultiBioDataSupport;
+            }
+            if (!string.IsNullOrWhiteSpace(device.MultiBioPhotoSupport))
+            {
+                multiBioPhotoSupport = device.MultiBioPhotoSupport;
+            }
         }
     }
 
@@ -9266,16 +12118,18 @@ static string BuildOptionsResponse(
     }
 
     var transFlag = "TransData " + string.Join('\t', transDataParts);
-    const string serverMultiBioDataSupport = "0:1:1:0:0:0:0:0:0:1:0";
-    const string serverMultiBioPhotoSupport = "0:0:1:0:0:0:0:0:0:1:0";
     var lines = new List<string>
     {
         $"GET OPTION FROM: {sn}",
-        $"Stamp={attLogStamp}",
-        $"OpStamp={opLogStamp}",
+        // On a full data reset (triggered by a fetch-all), reset the attendance/operation stamps to 0 too
+        // so the device re-uploads ALL attendance punches — not just users/bio. Previously only the
+        // user/bio stamps below were reset, so a full fetch never re-pulled attendance and old punches
+        // stayed on the device forever.
+        $"Stamp={(forceFullDataReset ? 0 : attLogStamp)}",
+        $"OpStamp={(forceFullDataReset ? 0 : opLogStamp)}",
         $"PhotoStamp={attPhotoStamp}",
         "ErrorDelay=60",
-        $"Delay={Math.Clamp(delaySeconds, 2, 60)}",
+        $"Delay={Math.Clamp(delaySeconds, 10, 60)}",
         "TransTimes=",
         "TransInterval=1",
         $"TransFlag={transFlag}",
@@ -9285,10 +12139,16 @@ static string BuildOptionsResponse(
         "ServerVer=2.2.14",
         "PushProtVer=2.4.1",
         "PushOptionsFlag=1",
-        $"MultiBioDataSupport={serverMultiBioDataSupport}",
-        $"MultiBioPhotoSupport={serverMultiBioPhotoSupport}",
-        $"ATTLOGStamp={attLogStamp}",
-        $"OPERLOGStamp={opLogStamp}",
+        // SupportPing line intentionally OMITTED. Some ZKTeco firmware treats the mere PRESENCE of the
+        // SupportPing key as "ping enabled" regardless of its value, so even SupportPing=0 left the device
+        // heartbeating via /iclock/ping (delivers no commands) instead of /iclock/getrequest. Omitting it
+        // forces the device to use getrequest for idle heartbeat (spec p.34), which pulls pending commands.
+        // (If diagnostics show the device needs the key present, re-add "SupportPing=0".)
+        "RegistryOn=1",
+        $"MultiBioDataSupport={multiBioDataSupport}",
+        $"MultiBioPhotoSupport={multiBioPhotoSupport}",
+        $"ATTLOGStamp={(forceFullDataReset ? 0 : attLogStamp)}",
+        $"OPERLOGStamp={(forceFullDataReset ? 0 : opLogStamp)}",
         $"ATTPHOTOStamp={attPhotoStamp}"
     };
 
@@ -9439,6 +12299,7 @@ static Employee CreateEmployeeForDeviceSync(
         EmployeeCode = normalizedCode,
         FullName = employee.FullName,
         Department = departmentName,
+        DepartmentId = profile?.GroupId ?? employee.DepartmentId,
         Position = string.IsNullOrWhiteSpace(profile?.Position) ? employee.Position : profile.Position.Trim(),
         CardNumber = profile?.CardNumber ?? employee.CardNumber,
         Password = ResolveDevicePassword(profile?.Password, employee.Password),
@@ -9492,8 +12353,20 @@ static void HydrateEmployeeBiometricsForDeviceSync(
 
         if (string.IsNullOrWhiteSpace(employee.FingerprintTemplates))
         {
+            var targetVer = 10;
+            if (!string.IsNullOrWhiteSpace(device.FingerprintAlgorithmVersion))
+            {
+                if (device.FingerprintAlgorithmVersion.Contains("13", StringComparison.Ordinal)) targetVer = 13;
+                else if (device.FingerprintAlgorithmVersion.Contains("10", StringComparison.Ordinal)) targetVer = 10;
+            }
+
             var fingerprintRows = templates
                 .Where(t => t.Type != 9 && t.Type != 2 && !string.IsNullOrWhiteSpace(t.TemplateData))
+                .Where(t => {
+                    var templateVer = t.MajorVersion ?? t.Format ?? 10;
+                    if (templateVer == 0) templateVer = 10;
+                    return templateVer == targetVer;
+                })
                 .ToList();
             if (fingerprintRows.Count > 0)
             {
@@ -9573,28 +12446,46 @@ static int QueueEmployeePhotoCommandsForDevice(
     Device device,
     Employee employee)
 {
-    var profilePhotoCommand = protocolService.CreateProfilePhotoCommand(employee, employee.ProfilePhoto ?? string.Empty);
-    var visibleLightComparisonPhotoCommand = SupportsVisibleLightPhotoSync(device)
-        ? protocolService.CreateComparisonPhotoCommand(employee, employee.ProfilePhoto ?? string.Empty, biometricType: 9)
-        : string.Empty;
-    var infraredComparisonPhotoCommand = SupportsInfraredPhotoSync(device)
-        ? protocolService.CreateComparisonPhotoCommand(employee, employee.ProfilePhoto ?? string.Empty, biometricType: 2)
-        : string.Empty;
-    if (string.IsNullOrWhiteSpace(profilePhotoCommand) &&
-        string.IsNullOrWhiteSpace(visibleLightComparisonPhotoCommand) &&
-        string.IsNullOrWhiteSpace(infraredComparisonPhotoCommand))
+    // CreateEmployeeBiometricSyncCommands is the single source of truth for everything pushed to a
+    // device for one employee (fingerprint templates, face-match template, profile photo, and the
+    // BIOPHOTO comparison photo at the right Type=9/2 for the device's capability) — this used to
+    // duplicate that logic locally, which risked the two implementations drifting apart (and briefly
+    // did: queuing BIOPHOTO here AND inside the shared method would have sent it twice).
+    var commands = protocolService.CreateEmployeeBiometricSyncCommands(employee, device);
+    if (commands.Count == 0)
     {
         return 0;
     }
 
+    // CHECK triggers the device to immediately poll getrequest so it picks up the
+    // following photo/face commands without waiting for its next heartbeat interval.
+    service.QueueDeviceCommand(device.SerialNumber, "CHECK");
     var queued = QueueSyncCommand(
         service,
         device.SerialNumber,
         SyncType.UserInfo,
         protocolService.CreateUserInfoCommand(employee, device));
-    queued += QueueSyncCommand(service, device.SerialNumber, SyncType.ProfilePhoto, profilePhotoCommand);
-    queued += QueueSyncCommand(service, device.SerialNumber, SyncType.FaceTemplate, visibleLightComparisonPhotoCommand);
-    queued += QueueSyncCommand(service, device.SerialNumber, SyncType.FaceTemplate, infraredComparisonPhotoCommand);
+
+    var formats = new List<string>();
+    foreach (var (type, command) in commands)
+    {
+        queued += QueueSyncCommand(service, device.SerialNumber, type, command);
+        formats.Add(type switch
+        {
+            SyncType.Fingerprint => "FINGERTMP",
+            SyncType.FaceTemplate => "BIODATA/BIOPHOTO (face match template/photo)",
+            _ => "USERPIC (profile photo)"
+        });
+    }
+    if (formats.Count > 0)
+    {
+        service.AddSyncLog(
+            device.SerialNumber,
+            SyncType.ProfilePhoto,
+            $"Photo sync for PIN {employee.EmployeeCode}: queued {string.Join(", ", formats)}.",
+            SyncStatus.Completed);
+    }
+
     return queued;
 }
 
@@ -9613,11 +12504,6 @@ static int QueueSyncCommand(
     service.QueueDeviceCommand(deviceSerialNumber, normalized);
     service.AddSyncLog(deviceSerialNumber, type, commandText, SyncStatus.Pending);
     return 1;
-}
-
-static bool HasRealFaceTemplate(string? templateContent)
-{
-    return !string.IsNullOrWhiteSpace(templateContent) && !IsLikelyPhotoPayload(templateContent);
 }
 
 static string ResolveDevicePassword(string? profilePassword, string? storedPassword)
@@ -9668,8 +12554,14 @@ static bool SupportsInfraredPhotoSync(Device device)
         return false;
     }
 
-    return device.SupportsInfraredFace &&
-           (device.BioPhotoFun || string.IsNullOrWhiteSpace(device.MultiBioPhotoSupport));
+    // Require an explicit signal that the device can actually use a comparison photo for face
+    // verification — either BioPhotoFun=1 (can store/serve photo files), or FaceFunOn=1 (it runs
+    // a face-matching algorithm at all). An unreported/blank MultiBioPhotoSupport must NOT be
+    // treated as implicit permission on its own. Profile picture and face-match data are two
+    // different things: USERPIC (queued unconditionally elsewhere) is just a display photo and
+    // never makes punches verify: BIOPHOTO here is what the device actually compares against at
+    // check-in, so FaceFunOn=1 devices need it attempted even when BioPhotoFun wasn't reported.
+    return device.SupportsInfraredFace && (device.BioPhotoFun || device.FaceFunOn);
 }
 
 static bool SupportsMultiBioPhotoType(string? support, int type)
@@ -9703,6 +12595,34 @@ static string BuildPendingCommandPayload(
             commands = retryable;
         }
     }
+
+    // Command isolation: AccUnLockComb and ENROLL_* commands must be delivered alone in their own poll
+    // because the device drops the reply or fails to process them if delivered in a batch with other commands.
+    if (commands.Count > 0)
+    {
+        var firstCmd = commands[0].CommandText ?? string.Empty;
+        if (firstCmd.Contains("AccUnLockComb", StringComparison.OrdinalIgnoreCase) ||
+            firstCmd.Contains("ENROLL_", StringComparison.OrdinalIgnoreCase))
+        {
+            commands = commands.Take(1).ToList();
+        }
+        else
+        {
+            // If the first command is not an isolated command, but there is an isolated command later in the batch,
+            // truncate the batch before the first isolated command so it is not delivered in this batch.
+            var firstIsolatedIndex = commands.FindIndex(c =>
+            {
+                var text = c.CommandText ?? string.Empty;
+                return text.Contains("AccUnLockComb", StringComparison.OrdinalIgnoreCase) ||
+                       text.Contains("ENROLL_", StringComparison.OrdinalIgnoreCase);
+            });
+            if (firstIsolatedIndex > 0)
+            {
+                commands = commands.Take(firstIsolatedIndex).ToList();
+            }
+        }
+    }
+
     if (commands.Count == 0)
     {
         return "OK";
@@ -9712,8 +12632,33 @@ static string BuildPendingCommandPayload(
     foreach (var command in commands)
     {
         commandSerialById[command.Id] = deviceSerialNumber;
-        lines.Add($"C:{command.Id:N}:{command.CommandText}");
+        // Emit a short 13-char alias of the GUID as the command ID — REQUIRED by the ZKTeco PUSH
+        // protocol spec (Attendance_PUSH_Communication_Protocol_20250429, p.85): "${CmdID} ... with a
+        // length not over 16 digits." A full 32-char GUID violates that limit. The device echoes this
+        // exact alias back in its devicecmd reply; ResolveCommandGuid resolves it via CommandIdAlias.Map
+        // (fast path) or a prefix-scan that derives the full GUID from the 13-char prefix (restart-safe).
+        var shortId = CommandIdAlias.ShortIdFor(command.Id);
+        CommandIdAlias.Map[shortId] = command.Id;
+        lines.Add($"C:{shortId}:{command.CommandText}");
         service.MarkCommandSent(command.Id);
+        // Fire-and-forget commands: marked complete on delivery so they drain after one send and
+        // don't get recycled forever by the stale-reset + retry logic (which would never drain the
+        // queue otherwise — the core "AccUnLockComb stuck on pending" bug).
+        //   DATA QUERY / CHECK: the device answers by uploading over the cdata channel, never via a
+        //     devicecmd reply.
+        //   AccTimeZone / AccGroup / AccUnLockComb: SpeedFace-V5L (and similar firmware) APPLIES the
+        //     access-control config and then resets the PUSH session, dropping the devicecmd reply.
+        //     Without fire-and-forget they stay "sent, no reply" → recycled endlessly → AccUnLockComb
+        //     never drains. The device DID apply them, so completing on delivery is correct.
+        var ctext = command.CommandText?.TrimStart() ?? string.Empty;
+        if (ctext.StartsWith("DATA QUERY", StringComparison.OrdinalIgnoreCase) ||
+            ctext.Equals("CHECK", StringComparison.OrdinalIgnoreCase) ||
+            ctext.Contains("AccTimeZone", StringComparison.OrdinalIgnoreCase) ||
+            ctext.Contains("AccGroup", StringComparison.OrdinalIgnoreCase) ||
+            ctext.Contains("AccUnLockComb", StringComparison.OrdinalIgnoreCase))
+        {
+            service.RecordCommandReply(command.Id, "OK (delivered; device responds via cdata upload)");
+        }
     }
 
     // Keep LF separators for firmware compatibility when parsing multi-command responses.
@@ -9733,6 +12678,14 @@ static void QueueMetadataRefreshCommands(
 
     probeMap[serialNumber] = now;
 
+    // Reset commands that were delivered but never replied to (e.g. device rebooted mid-flight).
+    // GetPendingCommands only returns SentUtc IS NULL rows, so without this they stay stuck forever.
+    var resetCount = service.ResetStaleSentCommands(serialNumber, olderThanMinutes: 2);
+    if (resetCount > 0)
+    {
+        Console.WriteLine($"[DeviceAction] Reset {resetCount} stale sent command(s) for re-delivery to {serialNumber}.");
+    }
+
     var pending = service.GetPendingCommands(serialNumber, 50);
     if (pending.Count > 0)
     {
@@ -9745,23 +12698,18 @@ static void QueueMetadataRefreshCommands(
         c.CreatedUtc >= staleThreshold &&
         c.ReplyText is null &&
         string.Equals(c.CommandText, "INFO", StringComparison.OrdinalIgnoreCase));
-    var hasUnrepliedReload = recent.Any(c =>
-        c.CreatedUtc >= staleThreshold &&
-        c.ReplyText is null &&
-        string.Equals(c.CommandText, "RELOAD OPTIONS", StringComparison.OrdinalIgnoreCase));
 
-    if (hasUnrepliedInfo || hasUnrepliedReload)
+    if (hasUnrepliedInfo)
     {
         return;
     }
 
+    // Only queue INFO for routine metadata refresh. RELOAD OPTIONS is intentionally excluded:
+    // it causes a device reboot which clears the command queue and interrupts any in-flight
+    // DATA QUERY fetch commands.
     if (!pending.Any(c => string.Equals(c.CommandText, "INFO", StringComparison.OrdinalIgnoreCase)))
     {
         service.QueueDeviceCommand(serialNumber, "INFO");
-    }
-    if (!pending.Any(c => string.Equals(c.CommandText, "RELOAD OPTIONS", StringComparison.OrdinalIgnoreCase)))
-    {
-        service.QueueDeviceCommand(serialNumber, "RELOAD OPTIONS");
     }
 }
 
@@ -9839,8 +12787,16 @@ static bool ShouldImportUserData(
     AttendanceService service,
     string? serialNumber,
     string? commandText,
-    ConcurrentDictionary<string, DateTime> manualUserSyncMap)
+    ConcurrentDictionary<string, DateTime> manualUserSyncMap,
+    ConcurrentDictionary<string, DateTime>? clearAllDataPendingMap = null)
 {
+    // While a clear-all-data is pending for this device, never import uploaded user data — doing
+    // so would immediately undo the clear (the "it just fetches instead of clearing" symptom).
+    if (clearAllDataPendingMap is not null && IsClearAllDataPending(clearAllDataPendingMap, serialNumber))
+    {
+        return false;
+    }
+
     if (IsRegistrationDevice(service, serialNumber))
     {
         return true;
@@ -9898,6 +12854,59 @@ static bool ConsumeFullDataResetPending(ConcurrentDictionary<string, DateTime> p
     return age <= TimeSpan.FromMinutes(10);
 }
 
+static void MarkClearAllDataPending(ConcurrentDictionary<string, DateTime> pendingClearMap, string? serialNumber)
+{
+    if (string.IsNullOrWhiteSpace(serialNumber))
+    {
+        return;
+    }
+
+    pendingClearMap[serialNumber.Trim()] = DateTime.UtcNow;
+}
+
+// True (once) if this device was added with "clear all data". Consumes the flag so the
+// clear/no-fetch behaviour only applies to the first connect after add.
+static bool ConsumeClearAllDataPending(ConcurrentDictionary<string, DateTime> pendingClearMap, string? serialNumber)
+{
+    if (string.IsNullOrWhiteSpace(serialNumber))
+    {
+        return false;
+    }
+
+    var normalized = serialNumber.Trim();
+    if (!pendingClearMap.TryGetValue(normalized, out var requestedAt))
+    {
+        return false;
+    }
+
+    pendingClearMap.TryRemove(normalized, out _);
+    // Keep the intent valid for a generous window in case the device connects later.
+    return DateTime.UtcNow - requestedAt <= TimeSpan.FromHours(24);
+}
+
+static bool IsClearAllDataPending(ConcurrentDictionary<string, DateTime> pendingClearMap, string? serialNumber)
+{
+    if (string.IsNullOrWhiteSpace(serialNumber))
+    {
+        return false;
+    }
+
+    var normalized = serialNumber.Trim();
+    if (!pendingClearMap.TryGetValue(normalized, out var requestedAt))
+    {
+        return false;
+    }
+
+    // Safety: never suppress fetching forever — expire a stuck flag after 24h.
+    if (DateTime.UtcNow - requestedAt > TimeSpan.FromHours(24))
+    {
+        pendingClearMap.TryRemove(normalized, out _);
+        return false;
+    }
+
+    return true;
+}
+
 static string? TryBuildCdataCommandPayload(
     AttendanceService service,
     string? serialNumber,
@@ -9907,32 +12916,58 @@ static string? TryBuildCdataCommandPayload(
     Action<string, string, string, string?>? addLog = null,
     string source = "CDATA")
 {
-    if (string.IsNullOrWhiteSpace(serialNumber))
-    {
-        return null;
-    }
-
-    var payload = BuildPendingCommandPayload(service, serialNumber, maxCount, commandSerialById);
-    if (string.Equals(payload, "OK", StringComparison.Ordinal))
-    {
-        return null;
-    }
-
-    addLog?.Invoke(
-        "INFO",
-        "DeviceEvent",
-        $"Delivered pending commands via {source} to {serialNumber}.",
-        $"ip={ipAddress ?? string.Empty}");
-    return payload;
+    // Never deliver commands via CDATA POST response bodies to prevent firmware hangs and retries.
+    // The device must poll /iclock/getrequest to pull commands.
+    return null;
 }
 
 static async Task TryWakeDeviceAsync(string deviceIpAddress, string serialNumber, int apiPort)
 {
+    if (string.IsNullOrWhiteSpace(deviceIpAddress)) return;
+
+    // 1. Try UDP wake-up on port 4370 (standard ZK port)
     try
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        using var udpClient = new System.Net.Sockets.UdpClient();
+        var udpData = System.Text.Encoding.ASCII.GetBytes("CHECK");
+        _ = udpClient.SendAsync(udpData, udpData.Length, deviceIpAddress, 4370);
+    }
+    catch
+    {
+        // Ignore UDP failures
+    }
+
+    // 2. Try TCP wake-up/probe on port 80 (standard HTTP web server on device)
+    try
+    {
+        using var tcpClient = new System.Net.Sockets.TcpClient();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        _ = tcpClient.ConnectAsync(deviceIpAddress, 80).WaitAsync(cts.Token);
+    }
+    catch
+    {
+        // Ignore TCP port 80 failures
+    }
+
+    // Try TCP wake-up/probe on port 4370 (standard ZK SDK TCP port)
+    try
+    {
+        using var tcpClient = new System.Net.Sockets.TcpClient();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        _ = tcpClient.ConnectAsync(deviceIpAddress, 4370).WaitAsync(cts.Token);
+    }
+    catch
+    {
+        // Ignore TCP port 4370 failures
+    }
+
+    // 3. Try legacy HTTP request (may cover custom environments)
+    try
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         var wakeUrl = $"http://{deviceIpAddress}:{apiPort}/iclock/ping?SN={Uri.EscapeDataString(serialNumber)}";
-        _ = await client.GetAsync(wakeUrl);
+        _ = await client.GetAsync(wakeUrl, cts.Token);
     }
     catch
     {
@@ -10103,6 +13138,18 @@ static bool TryParseAttendanceLine(string line, out string employeeCode, out Dat
 
     var trimmed = line.Trim();
 
+    // "OPLOG ..." lines are OPERATION logs, NOT attendance punches. Per the ZKTeco PUSH spec
+    // (Attendance_PUSH_Communication_Protocol_20250429, p.86): an operation log is
+    // "OPLOG ${OpType}\t${OpWho}\t${OpTime}\t..." — the FIRST field is the operation TYPE code, not a
+    // user PIN. An attendance record is "${Pin}\t${Time}\t${Status}\t..." with NO prefix (via table=ATTLOG).
+    // The old code stripped "OPLOG " and parsed the OpType as the employee code, so the transactions
+    // dashboard showed opcodes (e.g. 30, 101) as the user ID even though the only real user is PIN=1.
+    // Reject OPLOG lines here so only genuine attendance punches are recorded.
+    if (trimmed.StartsWith("OPLOG", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
     if (trimmed.Contains('=', StringComparison.Ordinal))
     {
         var pairs = trimmed.Split('\t', StringSplitOptions.TrimEntries);
@@ -10176,6 +13223,12 @@ static bool TryParseAttendanceLine(string line, out string employeeCode, out Dat
         {
             if (tabParts.Length >= 4 && TryParseDeviceTimestamp($"{tabParts[1]} {tabParts[2]}", out timestamp))
             {
+                statusIndex = 3;
+            }
+            else if (tabParts.Length >= 4 && TryParseDeviceTimestamp(tabParts[2], out timestamp))
+            {
+                // OPLOG rows carry a reserved numeric field between the PIN and the timestamp
+                // (PIN\t<reserved>\t<timestamp>\t...) rather than the timestamp starting at index 1.
                 statusIndex = 3;
             }
             else
@@ -10329,23 +13382,34 @@ static void HandleCommandReplies(
                         IsOnline = true
                     });
 
-                // Only update the device's display name from INFO reply, not its model.
                 var existing = service.ListDevices().FirstOrDefault(d => string.Equals(d.SerialNumber, serial, StringComparison.OrdinalIgnoreCase));
                 if (existing is not null)
                 {
-                    // Pass null for model so UpdateDeviceInfo leaves the model column untouched.
-                    // Model is updated exclusively via UpdateDeviceCapabilities using DeviceType from OPTIONS.
-                    service.UpdateDeviceInfo(existing.Id, deviceName, null, existing.IpAddress, existing.Location);
+                    var nameNeedsInitialization =
+                        string.IsNullOrWhiteSpace(existing.Name) ||
+                        string.Equals(existing.Name, existing.SerialNumber, StringComparison.OrdinalIgnoreCase);
+                    var modelNeedsInitialization =
+                        string.IsNullOrWhiteSpace(existing.Model) ||
+                        string.Equals(existing.Model, "None", StringComparison.OrdinalIgnoreCase);
+
+                    service.UpdateDeviceInfo(
+                        existing.Id,
+                        nameNeedsInitialization ? deviceName : null,
+                        modelNeedsInitialization ? deviceName : null,
+                        existing.IpAddress,
+                        existing.Location);
                 }
             }
         }
 
         commandSerialById.TryRemove(id, out _);
+        CommandIdAlias.Map.TryRemove(CommandIdAlias.ShortIdFor(id), out _);
     }
 
     foreach (var line in lines)
     {
-        if (TryExtractCommandId(line, out var commandId))
+        if (TryExtractCommandIdToken(line, out var idToken) &&
+            ResolveCommandGuid(idToken, commandSerialById) is Guid commandId)
         {
             FlushActiveReply();
             activeCommandId = commandId;
@@ -10418,36 +13482,72 @@ static string NormalizeCommandForSyncMatch(string? commandText)
     return string.Join(' ', parts).ToUpperInvariant();
 }
 
-static bool TryExtractCommandId(string line, out Guid commandId)
+// Extracts the raw ID token from a device reply line. Device replies may use & or space
+// separators (e.g. "CMD=DATA ID=fbdc7cb4448d4 Return=0"). Resolution to a Guid is done
+// separately by ResolveCommandGuid so a truncated/variant echoed ID can still be matched.
+static bool TryExtractCommandIdToken(string line, out string idToken)
 {
-    commandId = Guid.Empty;
+    idToken = string.Empty;
     if (string.IsNullOrWhiteSpace(line))
     {
         return false;
     }
 
-    foreach (var token in line.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    foreach (var part in line.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
     {
-        if (!token.StartsWith("ID=", StringComparison.OrdinalIgnoreCase))
+        if (part.StartsWith("ID=", StringComparison.OrdinalIgnoreCase))
         {
-            continue;
-        }
-
-        var idValue = token[3..].Trim();
-        if (Guid.TryParseExact(idValue, "N", out commandId) || Guid.TryParse(idValue, out commandId))
-        {
-            return true;
+            idToken = part.Substring(3).Trim();
+            return idToken.Length > 0;
         }
     }
 
-    var match = Regex.Match(line, @"(?:^|[\s&])ID=([0-9a-fA-F-]{32,36})");
-    if (!match.Success)
+    var match = Regex.Match(line, @"(?:^|[\s&])ID=([0-9a-fA-F\-]{8,36})", RegexOptions.IgnoreCase);
+    if (match.Success)
     {
-        return false;
+        idToken = match.Groups[1].Value.Trim();
+        return idToken.Length > 0;
     }
 
-    var fallback = match.Groups[1].Value;
-    return Guid.TryParseExact(fallback, "N", out commandId) || Guid.TryParse(fallback, out commandId);
+    return false;
+}
+
+// Resolves an echoed ID token back to the internal command Guid. The device echoes the
+// 16-char hex prefix we sent, so a full Guid parse will usually fail; fall back to a prefix
+// scan over the in-flight commands. This is the proven, restart-tolerant scheme from the
+// pre-regression build (the retry path re-populates commandSerialById on re-delivery).
+static Guid? ResolveCommandGuid(string idToken, ConcurrentDictionary<Guid, string> commandSerialById)
+{
+    if (string.IsNullOrWhiteSpace(idToken))
+    {
+        return null;
+    }
+
+    if (CommandIdAlias.Map.TryGetValue(idToken, out var guid))
+    {
+        return guid;
+    }
+
+    if (Guid.TryParseExact(idToken, "N", out var exact) || Guid.TryParse(idToken, out exact))
+    {
+        return exact;
+    }
+
+    var prefix = idToken.Replace("-", string.Empty).Trim();
+    if (prefix.Length == 0)
+    {
+        return null;
+    }
+
+    foreach (var key in commandSerialById.Keys)
+    {
+        if (key.ToString("N").StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return key;
+        }
+    }
+
+    return null;
 }
 
 static string ExtractReturnCode(string? replyText)
@@ -10484,7 +13584,8 @@ static void ApplyInfoUpdate(
     AttendanceService service,
     string? serialNumber,
     string infoPayload,
-    ConcurrentDictionary<string, DateTime>? autoUserFetchUtcBySerial = null)
+    ConcurrentDictionary<string, DateTime>? autoUserFetchUtcBySerial = null,
+    ConcurrentDictionary<string, DateTime>? clearAllDataPendingBySerial = null)
 {
     if (string.IsNullOrWhiteSpace(serialNumber) || string.IsNullOrWhiteSpace(infoPayload))
     {
@@ -10530,20 +13631,38 @@ static void ApplyInfoUpdate(
         return;
     }
 
+    // If a "clear all data" is pending for this device, do NOT auto-fetch its users — that is
+    // exactly what would make cleared data reappear. Once the device reports it is empty
+    // (userCount == 0) the clear is complete, so we drop the flag and resume normal behaviour.
+    if (clearAllDataPendingBySerial is not null && IsClearAllDataPending(clearAllDataPendingBySerial, serialNumber))
+    {
+        var reportedUserCount = values.Length >= 2 && int.TryParse(values[1], out var uc) ? uc : -1;
+        if (reportedUserCount == 0)
+        {
+            ConsumeClearAllDataPending(clearAllDataPendingBySerial, serialNumber);
+        }
+        return; // skip auto user-fetch while a clear is in progress
+    }
+
     // Do not enqueue auto user-fetch while command queue is still busy.
     if (service.GetPendingCommands(serialNumber, 50).Count > 0)
     {
         return;
     }
 
-    // Avoid re-queuing if recent user-fetch commands are still waiting for reply.
+    // Avoid re-queuing if recent user-fetch commands are still waiting for reply OR were
+    // just auto-delivered (DATA QUERY commands are fire-and-forget: they get ReplyText =
+    // "OK (delivered; device responds via cdata upload)" the moment they are sent, so
+    // c.ReplyText is null is never true for them — we must also treat auto-delivered
+    // commands within the same 10-minute window as "still in-flight").
     var recent = service.GetDeviceCommands(serialNumber, 200);
     var staleThreshold = DateTime.UtcNow - TimeSpan.FromMinutes(10);
-    var hasUnrepliedUserFetch = recent.Any(c =>
+    var hasRecentUserFetch = recent.Any(c =>
         c.CreatedUtc >= staleThreshold &&
-        c.ReplyText is null &&
-        InferDataReplyTableFromCommand(c.CommandText).Length > 0);
-    if (hasUnrepliedUserFetch)
+        InferDataReplyTableFromCommand(c.CommandText).Length > 0 &&
+        (c.ReplyText is null ||
+         c.ReplyText.StartsWith("OK (delivered", StringComparison.OrdinalIgnoreCase)));
+    if (hasRecentUserFetch)
     {
         return;
     }
@@ -10579,22 +13698,73 @@ async Task<FetchAllQueueResult> QueueFetchAllCommandsAsync(
     int apiPort)
 {
     var normalizedSerial = device.SerialNumber.Trim();
-    var clearedPending = service.ClearPendingCommands(normalizedSerial);
-    if (clearedPending > 0)
+
+    // Throttle: skip a redundant fetch-all if one ran for this device in the last 60s. The dashboard
+    // re-POSTs /fetch-all on its poll loop; without this guard every call re-queues the whole DATA
+    // QUERY batch (endless re-queue loop) and the ClearPendingCommands below wipes the pending
+    // access-control command (AccUnLockComb) before the device can pull it. One fetch-all per 60s
+    // already pulls everything. QueueDeviceCommand-level work is idempotent within that window.
+    if (fetchAllUtcBySerial.TryGetValue(normalizedSerial, out var lastFetchAll) &&
+        DateTime.UtcNow - lastFetchAll < TimeSpan.FromSeconds(60))
     {
-        AddLog("INFO", "Command", $"Cleared {clearedPending} stale pending command(s) before fetch-all for {normalizedSerial}.");
+        var existingPending = service.GetPendingCommands(normalizedSerial, 200).Count;
+        AddLog("INFO", "Command", $"Skipped redundant fetch-all for {normalizedSerial} (one ran < 60s ago).");
+        return new FetchAllQueueResult(0, existingPending, false, Guid.Empty, new List<string>());
     }
+    fetchAllUtcBySerial[normalizedSerial] = DateTime.UtcNow;
+
+    // Reset ALL in-flight commands immediately — after a restart CommandIdAlias.Map is empty
+    // and in-flight commands from before restart would never get a reply match.
+    var resetStale = service.ResetStaleSentCommands(normalizedSerial, olderThanMinutes: 2);
+    if (resetStale > 0)
+    {
+        AddLog("INFO", "Command", $"Reset {resetStale} in-flight command(s) to pending before fetch-all for {normalizedSerial}.");
+    }
+    // NOTE: deliberately NOT calling ClearPendingCommands here. It deleted the pending access-control
+    // command (AccUnLockComb, queued separately) mid-flight. The 60s throttle above plus the device's
+    // own one-command-per-poll draining make clearing unnecessary; re-queuing the same DATA QUERY is
+    // harmless because delivered DATA QUERY/CHECK are marked complete (fire-and-forget) on send.
+    var clearedPending = 0;
     MarkManualUserSyncWindow(manualUserSyncUntilUtcBySerial, normalizedSerial, TimeSpan.FromMinutes(30));
     MarkFullDataResetPending(fullDataResetUtcBySerial, normalizedSerial);
-    service.QueueDeviceCommand(normalizedSerial, "RELOAD OPTIONS");
+    // RELOAD OPTIONS is intentionally NOT queued here — it causes a device reboot which
+    // clears the remaining command queue before DATA QUERY commands can execute.
     var checkCommand = service.QueueDeviceCommand(normalizedSerial, "CHECK");
-    service.QueueDeviceCommand(normalizedSerial, "LOG");
     QueueServerUserFetchCommands(service, normalizedSerial);
+    // Auto time-sync on every connect. The SET OPTION MachineTZ/TimeZone/DateTime trio below is
+    // kept (harmless if unused), but the dashboard's manual "Sync time" button — confirmed actually
+    // working — proved the real mechanism is raw SHELL commands (device runs embedded Linux):
+    // "SHELL date -s <local time>" + "SHELL hwclock -w" to persist it to the RTC. Queue that same
+    // pair here too so every device gets a real clock sync automatically on connect, not only when
+    // someone clicks the button. (Deliberately NOT queuing RELOAD OPTIONS like the manual button
+    // does — it reboots the device and would wipe the DATA QUERY batch queued above.)
+    service.QueueDeviceCommand(normalizedSerial, protocolService.CreateMachineTzCommand(device));
+    service.QueueDeviceCommand(normalizedSerial, protocolService.CreateTimezoneCommand(device));
+    service.QueueDeviceCommand(normalizedSerial, protocolService.CreateTimeSyncCommand(DateTime.Now));
+    service.QueueDeviceCommand(normalizedSerial, $"SHELL date -s \"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\"");
+    service.QueueDeviceCommand(normalizedSerial, "SHELL hwclock -w");
+    // Auto-push each active employee's photo/fingerprint/face-template data on connect too, using
+    // the device's own already-known capabilities (BioPhotoFun/FaceFunOn/SupportsInfraredFace/etc.,
+    // read from its stored INFO) to pick BIOPHOTO Type=9 (visible-light) vs Type=2 (infrared) vs
+    // USERPIC-only — the same capability-aware routing already used when an employee is edited.
+    // Previously this only ran on employee save, so a device that connects after already having
+    // employees on file never received their biometric data at all.
+    var alreadyPushedToThisDevice = employeePushedOnceBySerial.ContainsKey(normalizedSerial);
+    foreach (var employee in service.ListEmployees().Where(e => e.IsActive))
+    {
+        if (alreadyPushedToThisDevice && employee.SyncedAt.HasValue)
+        {
+            continue;
+        }
+        QueueEmployeePhotoCommandsForDevice(service, protocolService, device, employee);
+    }
+    employeePushedOnceBySerial[normalizedSerial] = true;
     var queuedSteps = new List<string>
     {
-        "RELOAD OPTIONS",
         "CHECK",
-        "LOG",
+        "SET OPTION MachineTZ",
+        "SET OPTION TimeZone",
+        "SET OPTION DateTime",
         "DATA QUERY USERINFO PIN=*",
         "DATA QUERY USERINFO",
         "DATA QUERY BIODATA",
@@ -10607,9 +13777,15 @@ async Task<FetchAllQueueResult> QueueFetchAllCommandsAsync(
 
     if (includeAttendanceLogs)
     {
-        var start = "2000-01-01 00:00:00";
+        // Incremental like the non-registration-device auto-fetch above: reuse the EndTime from
+        // this device's last ATTLOG pull as the new StartTime instead of always re-requesting the
+        // full history from 2000-01-01. Fetch-all can fire repeatedly (60s throttle, but devices
+        // that reconnect often still hit it every window) — without this a device with a large
+        // backlog would never finish, since every trigger restarted the whole dump from scratch.
+        var start = attLogRangeStartBySerial.TryGetValue(normalizedSerial, out var prevEnd) ? prevEnd : "2000-01-01 00:00:00";
         var end = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
         service.QueueDeviceCommand(normalizedSerial, $"DATA QUERY ATTLOG StartTime={start}\tEndTime={end}");
+        attLogRangeStartBySerial[normalizedSerial] = end;
         queuedSteps.Add("DATA QUERY ATTLOG");
     }
 
@@ -10662,7 +13838,7 @@ static string InferDataReplyTableFromCommand(string? commandText)
     };
 }
 
-static string ExtractDataPayloadFromDeviceCommandReply(string replyText)
+static string ExtractDataPayloadFromDeviceCommandReply(string? replyText)
 {
     if (string.IsNullOrWhiteSpace(replyText))
     {
@@ -10721,10 +13897,11 @@ static string ExtractInfoReplyDeviceName(string? replyText)
 static void ApplyOptionsUpdate(AttendanceService service, string serialNumber, string? remoteIpAddress, string body)
 {
     var options = ParseOptionPairs(body);
-    var name = FirstValue(options, "DevName", "DeviceName", "Alias", "TerminalName") ?? serialNumber;
-    var ipAddress = FirstValue(options, "IPAddress", "IP", "NetIP") ?? remoteIpAddress ?? string.Empty;
-    var location = FirstValue(options, "Area", "Location", "Addr", "Address") ?? string.Empty;
-    EnsureDeviceRegistered(service, serialNumber, ipAddress, name, location);
+    var name = FirstValue(options, "~DeviceName", "~DevName", "DevName", "DeviceName", "Alias", "TerminalName") ?? serialNumber;
+    var model = NormalizeDeviceModelToken(FirstValue(options, "~DeviceModel", "DeviceModel", "~Model", "Model", "DeviceType", "ProductType", "DevType", "TerminalType"));
+    var ipAddress = FirstValue(options, "~IPAddress", "~IP", "IPAddress", "IP", "NetIP") ?? remoteIpAddress ?? string.Empty;
+    var location = FirstValue(options, "~Area", "Area", "Location", "Addr", "Address") ?? string.Empty;
+    EnsureDeviceRegistered(service, serialNumber, ipAddress, name, location, model);
 
     // Protocol and capability fields from table=options payload.
     var firmwareVersion = FirstValue(options, "FirmwareVersion", "FWV", "FWVersion") ?? string.Empty;
@@ -10793,12 +13970,23 @@ static void ApplyOptionsUpdate(AttendanceService service, string serialNumber, s
             faceVersion = faceNirVer.ToString(CultureInfo.InvariantCulture);
         }
     }
+    var maxUserCount = ParseOptionInt(options, "~MaxUserCount", "MaxUserCount");
+    var maxAttLogCount = ParseOptionInt(options, "~MaxAttLogCount", "MaxAttLogCount", "~MaxTransactionCount", "MaxTransactionCount");
+    var maxFingerCount = ParseOptionInt(options, "~MaxFingerCount", "MaxFingerCount");
+    var maxFaceCount = ParseOptionInt(options, "~MaxFaceCount", "MaxFaceCount");
+    var maxPalmCount = ParseOptionInt(options, "~MaxPalmCount", "MaxPalmCount");
+
     var capabilitiesJson = BuildCapabilitiesJson(
         multiBioDataSupport,
         multiBioPhotoSupport,
         multiBioVersion,
         maxMultiBioDataCount,
-        maxMultiBioPhotoCount);
+        maxMultiBioPhotoCount,
+        maxUserCount,
+        maxAttLogCount,
+        maxFingerCount,
+        maxFaceCount,
+        maxPalmCount);
 
     var rawTz = FirstValue(options, "MachineTZ", "TimeZone");
     var timeZone = NormalizeTimeZoneToken(rawTz);
@@ -11028,6 +14216,7 @@ static void ApplyMappedDepartmentAndPosition(Employee employee, string? mappedDe
         var fingerLines = new StringBuilder();
         var faceLines = new StringBuilder();
         var userPicLines = new StringBuilder();
+        var opLogLinesCount = 0;
 
         foreach (var rawLine in payload.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
@@ -11038,39 +14227,69 @@ static void ApplyMappedDepartmentAndPosition(Employee employee, string? mappedDe
 
             var line = rawLine.Trim();
             var upper = line.ToUpperInvariant();
-            if (includeUserData && upper.StartsWith("USER ", StringComparison.Ordinal))
+            
+            if (upper.StartsWith("OPLOG ", StringComparison.Ordinal) ||
+                upper.StartsWith("OPLOG\t", StringComparison.Ordinal) ||
+                upper.Equals("OPLOG", StringComparison.Ordinal))
             {
-                userInfoLines.AppendLine(line);
+                opLogLinesCount++;
                 continue;
             }
 
-            if (includeUserData && (upper.StartsWith("FP ", StringComparison.Ordinal) || upper.StartsWith("FINGERTMP ", StringComparison.Ordinal)))
+            // "USER " = old ICLOCK format; "USERINFO\t" / "USERINFO " = SDK2/SpeedFace format.
+            if (upper.StartsWith("USER ", StringComparison.Ordinal) ||
+                upper.StartsWith("USERINFO\t", StringComparison.Ordinal) ||
+                upper.StartsWith("USERINFO ", StringComparison.Ordinal))
             {
-                fingerLines.AppendLine(line);
+                if (includeUserData)
+                {
+                    userInfoLines.AppendLine(line);
+                }
                 continue;
             }
 
-            if (includeUserData && upper.StartsWith("FACE ", StringComparison.Ordinal))
+            if (upper.StartsWith("FP ", StringComparison.Ordinal) || upper.StartsWith("FINGERTMP ", StringComparison.Ordinal) || upper.StartsWith("FINGERTMP\t", StringComparison.Ordinal))
             {
-                faceLines.AppendLine(line);
+                if (includeUserData)
+                {
+                    fingerLines.AppendLine(line);
+                }
                 continue;
             }
 
-            if (includeUserData && upper.StartsWith("BIODATA ", StringComparison.Ordinal))
+            if (upper.StartsWith("FACE ", StringComparison.Ordinal) || upper.StartsWith("FACE\t", StringComparison.Ordinal))
             {
-                bioDataLines.AppendLine(line);
+                if (includeUserData)
+                {
+                    faceLines.AppendLine(line);
+                }
                 continue;
             }
 
-            if (includeUserData && upper.StartsWith("BIOPHOTO ", StringComparison.Ordinal))
+            if (upper.StartsWith("BIODATA ", StringComparison.Ordinal) || upper.StartsWith("BIODATA\t", StringComparison.Ordinal))
             {
-                bioPhotoLines.AppendLine(line);
+                if (includeUserData)
+                {
+                    bioDataLines.AppendLine(line);
+                }
                 continue;
             }
 
-            if (includeUserData && upper.StartsWith("USERPIC ", StringComparison.Ordinal))
+            if (upper.StartsWith("BIOPHOTO ", StringComparison.Ordinal) || upper.StartsWith("BIOPHOTO\t", StringComparison.Ordinal))
             {
-                userPicLines.AppendLine(line);
+                if (includeUserData)
+                {
+                    bioPhotoLines.AppendLine(line);
+                }
+                continue;
+            }
+
+            if (upper.StartsWith("USERPIC ", StringComparison.Ordinal) || upper.StartsWith("USERPIC\t", StringComparison.Ordinal))
+            {
+                if (includeUserData)
+                {
+                    userPicLines.AppendLine(line);
+                }
                 continue;
             }
 
@@ -11078,8 +14297,8 @@ static void ApplyMappedDepartmentAndPosition(Employee employee, string? mappedDe
         }
 
         var attendance = HandleAttendancePayload(service, deviceSerialNumber, attendanceLines.ToString(), allowUnknownEmployeeAutoCreate);
-        var userInfo = includeUserData
-            ? HandleUserInfoPayload(repository, personnelStore, userInfoLines.ToString(), fallbackDepartment, fallbackPosition, mappedAreaCode, mappedDepartmentCode)
+        var userInfo = userInfoLines.Length > 0
+            ? HandleUserInfoPayload(repository, personnelStore, userInfoLines.ToString(), fallbackDepartment, fallbackPosition, mappedAreaCode, mappedDepartmentCode, allowUnknownEmployeeAutoCreate)
             : 0;
         var bioData = includeUserData
             ? HandleBioDataPayload(repository, personnelStore, bioDataLines.ToString(), fallbackDepartment, fallbackPosition, mappedAreaCode, mappedDepartmentCode)
@@ -11097,7 +14316,7 @@ static void ApplyMappedDepartmentAndPosition(Employee employee, string? mappedDe
             ? HandleUserPicPayload(repository, personnelStore, userPicLines.ToString(), fallbackDepartment, fallbackPosition, mappedAreaCode, mappedDepartmentCode)
             : 0;
 
-        return (attendance, userInfo, bioData, bioPhoto, fingerTmp, face, userPic);
+        return (attendance + opLogLinesCount, userInfo, bioData, bioPhoto, fingerTmp, face, userPic);
     });
 }
 
@@ -11108,7 +14327,8 @@ static int HandleUserInfoPayload(
     string? fallbackDepartment,
     string? fallbackPosition,
     string? mappedAreaCode,
-    string? mappedDepartmentCode)
+    string? mappedDepartmentCode,
+    bool allowUnknownEmployeeAutoCreate = true)
 {
     return repository.RunInTransaction(() =>
     {
@@ -11134,9 +14354,13 @@ static int HandleUserInfoPayload(
             var cardToken = FirstValue(row, "Card", "CardNo", "CardNumber", "MainCard", "CardID", "RFID");
             var mobileToken = FirstValue(row, "Phone", "Mobile", "MobileNumber", "Tel");
             var secondaryCardToken = FirstValue(row, "ViceCard", "SecondaryCard", "SubCard");
-            var groupToken = ParseIntOption(FirstValue(row, "Group", "Grp", "GroupId"));
-            var timezoneProfileToken = FirstValue(row, "TZ", "TimeZoneProfile", "TimezoneProfile");
-            var verifyModeToken = ParseIntOption(FirstValue(row, "Verify", "VerifyMode"));
+            // Access-control defaults for fetched users: if the device does not specify an access
+            // group, default to Group 1; if it does not specify a verify mode, default to -1 (Apply Group).
+            // Personal time periods stay 0000000000000000 (i.e. inherit the group's time periods 1/2/3).
+            var groupToken = ParseIntOption(FirstValue(row, "Group", "Grp", "GroupId")) ?? 1;
+            var timezoneProfileToken = FirstValue(row, "TZ", "TimeZoneProfile", "TimezoneProfile") ?? "0000000000000000";
+            if (string.IsNullOrWhiteSpace(timezoneProfileToken)) timezoneProfileToken = "0000000000000000";
+            var verifyModeToken = ParseIntOption(FirstValue(row, "Verify", "VerifyMode")) ?? -1;
             var validFromToken = ParseDateTimeOption(FirstValue(row, "StartDatetime", "ValidFrom", "BeginTime", "BeginDateTime"));
             var validToToken = ParseDateTimeOption(FirstValue(row, "EndDatetime", "ValidTo", "EndTime", "EndDateTime"));
             var expiresEnabledToken = ParseBoolOption(FirstValue(row, "Expires", "ExpiresEnabled"));
@@ -11147,6 +14371,10 @@ static int HandleUserInfoPayload(
             var employee = repository.FindEmployeeByCode(normalizedPin);
             if (employee is null)
             {
+                if (!allowUnknownEmployeeAutoCreate)
+                {
+                    continue;
+                }
                 employee = EnsureEmployeeRecord(repository, normalizedPin, fallbackDepartment);
             }
 
@@ -11156,6 +14384,10 @@ static int HandleUserInfoPayload(
             }
 
             ApplyMappedDepartmentAndPosition(employee, fallbackDepartment, fallbackPosition);
+            if (!string.IsNullOrWhiteSpace(mappedAreaCode))
+            {
+                employee.Area = mappedAreaCode.Trim();
+            }
 
             if (!string.IsNullOrWhiteSpace(cardToken))
             {
@@ -11211,6 +14443,8 @@ static int HandleUserInfoPayload(
                 employee.Position,
                 mappedAreaCode,
                 mappedDepartmentCode,
+                groupId: groupToken,
+                timezoneProfile: timezoneProfileToken,
                 verifyMode: employee.VerifyMode);
             count++;
         }
@@ -11650,6 +14884,75 @@ static string NormalizePictureDataUrlForComparison(string? value)
     return NormalizeBiometricPhotoContent(value.Trim());
 }
 
+static string EscapeCsvCell(string? value)
+{
+    var s = value ?? string.Empty;
+    if (s.Contains('"'))
+    {
+        s = s.Replace("\"", "\"\"");
+    }
+
+    return (s.Contains(',') || s.Contains('"') || s.Contains('\n') || s.Contains('\r'))
+        ? $"\"{s}\""
+        : s;
+}
+
+static string SanitizeArchiveFileName(string? value)
+{
+    var token = string.IsNullOrWhiteSpace(value) ? "employee" : value.Trim();
+    foreach (var c in Path.GetInvalidFileNameChars())
+    {
+        token = token.Replace(c, '_');
+    }
+
+    return token;
+}
+
+static bool TryDecodePictureDataUrl(string? value, out byte[] bytes, out string extension)
+{
+    bytes = [];
+    extension = ".jpg";
+    var token = value?.Trim() ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(token))
+    {
+        return false;
+    }
+
+    var commaIndex = token.IndexOf(',');
+    var header = commaIndex > 0 ? token[..commaIndex] : string.Empty;
+    var payload = commaIndex > 0 ? token[(commaIndex + 1)..] : token;
+    if (header.Contains("png", StringComparison.OrdinalIgnoreCase))
+    {
+        extension = ".png";
+    }
+    else if (header.Contains("gif", StringComparison.OrdinalIgnoreCase))
+    {
+        extension = ".gif";
+    }
+    else if (header.Contains("webp", StringComparison.OrdinalIgnoreCase))
+    {
+        extension = ".webp";
+    }
+    else if (header.Contains("bmp", StringComparison.OrdinalIgnoreCase))
+    {
+        extension = ".bmp";
+    }
+    else
+    {
+        extension = ".jpg";
+    }
+
+    try
+    {
+        bytes = Convert.FromBase64String(payload);
+        return bytes.Length > 0;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
 static string? ValidateEmployeePassword(string? value, bool required)
 {
     var token = NormalizeEmployeePassword(value);
@@ -11801,7 +15104,9 @@ static List<Dictionary<string, string>> ParseDataRows(string payload, string tab
         }
 
         var normalizedLine = line.Trim();
-        if (normalizedLine.StartsWith(normalizedTableName + " ", StringComparison.OrdinalIgnoreCase))
+        // Strip table-name prefix whether followed by space or tab (SDK2/SpeedFace uses tab).
+        if (normalizedLine.StartsWith(normalizedTableName + " ", StringComparison.OrdinalIgnoreCase) ||
+            normalizedLine.StartsWith(normalizedTableName + "\t", StringComparison.OrdinalIgnoreCase))
         {
             normalizedLine = normalizedLine[(normalizedTableName.Length + 1)..].TrimStart();
         }
@@ -11941,7 +15246,12 @@ static string BuildCapabilitiesJson(
     string multiBioPhotoSupport,
     string multiBioVersion,
     string maxMultiBioDataCount,
-    string maxMultiBioPhotoCount)
+    string maxMultiBioPhotoCount,
+    int maxUserCount = -1,
+    int maxAttLogCount = -1,
+    int maxFingerCount = -1,
+    int maxFaceCount = -1,
+    int maxPalmCount = -1)
 {
     var templateTypes = ParseSupportedTypeList(multiBioDataSupport);
     var photoTypes = ParseSupportedTypeList(multiBioPhotoSupport);
@@ -11963,7 +15273,12 @@ static string BuildCapabilitiesJson(
         supported_photos = photoTypes,
         template_versions = versions,
         max_templates = maxTemplates,
-        max_photos = maxPhotos
+        max_photos = maxPhotos,
+        max_user_qty = maxUserCount > 0 ? maxUserCount : 10000,
+        max_att_log_qty = maxAttLogCount > 0 ? maxAttLogCount : 200000,
+        max_fp_qty = maxFingerCount > 0 ? maxFingerCount : (maxTemplates.TryGetValue("1", out var f) ? f : 10000),
+        max_face_qty = maxFaceCount > 0 ? maxFaceCount : (maxTemplates.TryGetValue("9", out var fa) ? fa : (maxTemplates.TryGetValue("2", out var fa2) ? fa2 : 6000)),
+        max_palm_qty = maxPalmCount > 0 ? maxPalmCount : (maxTemplates.TryGetValue("8", out var p) ? p : (maxTemplates.TryGetValue("10", out var p2) ? p2 : 3000))
     };
 
     return JsonSerializer.Serialize(payload);
@@ -12091,7 +15406,8 @@ static void EnsureDeviceRegistered(
     string serialNumber,
     string? ipAddress,
     string? name = null,
-    string? location = null)
+    string? location = null,
+    string? model = null)
 {
     if (string.IsNullOrWhiteSpace(serialNumber))
     {
@@ -12106,11 +15422,31 @@ static void EnsureDeviceRegistered(
         return;
     }
 
-    var normalizedName = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+    // Only update name if current DB name is empty or just the serial number (i.e. not customized)
+    var trimmedName = name?.Trim();
+    var isRealNameFromPush = !string.IsNullOrWhiteSpace(trimmedName) &&
+                             !string.Equals(trimmedName, serial, StringComparison.OrdinalIgnoreCase);
+    
+    bool nameNeedsInitialization = string.IsNullOrWhiteSpace(existing.Name) || 
+                                   string.Equals(existing.Name, serial, StringComparison.OrdinalIgnoreCase);
+    var normalizedName = (isRealNameFromPush && nameNeedsInitialization) ? trimmedName : null;
+
     var normalizedIp = string.IsNullOrWhiteSpace(ipAddress) ? null : ipAddress.Trim();
-    if (normalizedName is not null || normalizedIp is not null)
+    
+    // Only update model if current DB model is empty or "None"
+    var trimmedModelFromPush = model?.Trim();
+    bool modelNeedsInitialization = string.IsNullOrWhiteSpace(existing.Model) ||
+                                    string.Equals(existing.Model, "None", StringComparison.OrdinalIgnoreCase);
+
+    string? normalizedModel = null;
+    if (modelNeedsInitialization && !string.IsNullOrWhiteSpace(trimmedModelFromPush))
     {
-        service.UpdateDeviceInfo(existing.Id, normalizedName, null, normalizedIp, null);
+        normalizedModel = trimmedModelFromPush;
+    }
+
+    if (normalizedName is not null || normalizedIp is not null || normalizedModel is not null)
+    {
+        service.UpdateDeviceInfo(existing.Id, normalizedName, normalizedModel, normalizedIp, null);
     }
 
     service.TouchDevice(serial, normalizedIp);
@@ -12120,6 +15456,219 @@ static bool IsDefaultArea(string? areaCode, string defaultAreaCode)
 {
     return !string.IsNullOrWhiteSpace(areaCode) &&
            string.Equals(areaCode.Trim(), defaultAreaCode, StringComparison.OrdinalIgnoreCase);
+}
+
+// Access-control verification modes are pushed straight to devices by
+// ConfigSyncService.SyncAccessControlAsync (per-user USERINFO Verify). No
+// employee-record mutation is required here, so nothing needs re-saving.
+static bool ApplyAccessControlPrivilegesToEmployees(
+    string rawJson,
+    PostgresAttendanceRepository repository,
+    PersonnelStore personnelStore)
+{
+    try
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(rawJson);
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("privileges", out var privs) || privs.ValueKind != System.Text.Json.JsonValueKind.Array)
+            return false;
+
+        var changed = false;
+        foreach (var priv in privs.EnumerateArray())
+        {
+            // Resolve group number from groupId
+            var groupId = priv.TryGetProperty("groupId", out var gid) ? gid.GetString() ?? "" : "";
+            if (string.IsNullOrWhiteSpace(groupId)) continue;
+
+            // Parse groupNo from the groups array
+            int groupNo = 1;
+            if (root.TryGetProperty("groups", out var groups))
+            {
+                foreach (var g in groups.EnumerateArray())
+                {
+                    if (g.TryGetProperty("id", out var gIdProp) && gIdProp.GetString() == groupId)
+                    {
+                        if (g.TryGetProperty("groupNo", out var gnProp) && int.TryParse(gnProp.GetString(), out var gn))
+                            groupNo = gn;
+                        break;
+                    }
+                }
+            }
+
+            var verMode = priv.TryGetProperty("verificationMode", out var vm) ? vm.GetString() ?? "-1" : "-1";
+            int verifyMode = int.TryParse(verMode, out var vi) ? vi : -1;
+
+            if (!priv.TryGetProperty("employeeIds", out var empIds) || empIds.ValueKind != System.Text.Json.JsonValueKind.Array)
+                continue;
+
+            foreach (var empId in empIds.EnumerateArray())
+            {
+                var code = empId.GetString()?.Trim();
+                if (string.IsNullOrWhiteSpace(code)) continue;
+
+                // Update unified user table so next USERINFO sync uses correct group
+                repository.UpsertUnifiedUser(
+                    pin: code, name: null, privilege: null, password: null,
+                    primaryCard: null, secondaryCard: null,
+                    groupId: groupNo, timezoneProfile: null,
+                    verifyMode: verifyMode,
+                    validFrom: null, validTo: null, expiresEnabled: null,
+                    phone: null, gender: null, nation: null, idNumber: null);
+
+                // Also update personnel store profile
+                var profile = personnelStore.Profiles.FirstOrDefault(p =>
+                    string.Equals(p.EmployeeCode, code, StringComparison.OrdinalIgnoreCase));
+                if (profile != null)
+                {
+                    personnelStore.Profiles.RemoveAll(p => string.Equals(p.EmployeeCode, code, StringComparison.OrdinalIgnoreCase));
+                    personnelStore.Profiles.Add(profile with { GroupId = groupNo, VerifyMode = verifyMode });
+                }
+                changed = true;
+            }
+        }
+        return changed;
+    }
+    catch { return false; }
+}
+
+static AreaCascadeDeleteResult DeleteAreaCascade(
+    PersonnelStore store,
+    PostgresAttendanceRepository repository,
+    AttendanceService service,
+    PersonnelArea target,
+    string personnelPath,
+    string connectionString,
+    string defaultAreaCode,
+    string defaultAreaName,
+    string defaultDepartmentCode,
+    string defaultDepartmentName)
+{
+    var result = new AreaCascadeDeleteResult();
+    var targetAreaCode = target.Code?.Trim() ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(targetAreaCode) || IsDefaultArea(targetAreaCode, defaultAreaCode))
+    {
+        return result;
+    }
+
+    var departmentsInArea = store.Departments
+        .Where(d => string.Equals(d.AreaCode, targetAreaCode, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+    var departmentCodes = departmentsInArea
+        .Select(d => d.Code?.Trim() ?? string.Empty)
+        .Where(code => !string.IsNullOrWhiteSpace(code))
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var departmentNames = departmentsInArea
+        .Select(d => d.Name?.Trim() ?? string.Empty)
+        .Where(name => !string.IsNullOrWhiteSpace(name))
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var employees = repository.GetEmployees().ToList();
+    var employeeCodesToDelete = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var employeeIdsToDelete = new HashSet<Guid>();
+    foreach (var employee in employees)
+    {
+        var profile = store.Profiles.FirstOrDefault(p =>
+            string.Equals(p.EmployeeCode, employee.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+        var resolvedAssignments = GetResolvedEmployeeAssignments(
+            store,
+            employee,
+            profile,
+            defaultAreaCode,
+            defaultAreaName,
+            defaultDepartmentCode,
+            defaultDepartmentName);
+        var belongsToArea =
+            resolvedAssignments.Any(x => string.Equals(x.Area.Code, targetAreaCode, StringComparison.OrdinalIgnoreCase)) ||
+            string.Equals(employee.Area?.Trim() ?? string.Empty, target.Name, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(employee.Area?.Trim() ?? string.Empty, targetAreaCode, StringComparison.OrdinalIgnoreCase) ||
+            departmentNames.Contains(employee.Department?.Trim() ?? string.Empty);
+
+        if (!belongsToArea)
+        {
+            continue;
+        }
+
+        employeeIdsToDelete.Add(employee.Id);
+        var employeeCode = employee.EmployeeCode?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(employeeCode))
+        {
+            employeeCodesToDelete.Add(employeeCode);
+        }
+    }
+
+    var allDeviceSerials = service.ListDevices()
+        .Select(d => d.SerialNumber?.Trim())
+        .Where(s => !string.IsNullOrWhiteSpace(s))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Cast<string>()
+        .ToList();
+    foreach (var serial in allDeviceSerials)
+    {
+        var queuedCheck = false;
+        foreach (var code in employeeCodesToDelete)
+        {
+            var safeCode = SanitizeCommandValue(code);
+            if (string.IsNullOrWhiteSpace(safeCode))
+            {
+                continue;
+            }
+
+            if (!queuedCheck)
+            {
+                service.QueueDeviceCommand(serial, "CHECK");
+                queuedCheck = true;
+            }
+
+            service.QueueDeviceCommand(serial, $"DATA DELETE USERINFO PIN={safeCode}");
+            result.QueuedDeviceDeletes++;
+        }
+    }
+
+    foreach (var employeeId in employeeIdsToDelete)
+    {
+        if (repository.DeleteEmployee(employeeId))
+        {
+            result.EmployeesDeleted++;
+        }
+    }
+
+    foreach (var employeeCode in employeeCodesToDelete)
+    {
+        result.DeletedArtifactRows += repository.DeleteEmployeeArtifactsByCode(employeeCode);
+        result.DeletedArtifactRows += DeletePersonnelArtifactsInPostgres(connectionString, employeeCode);
+    }
+
+    if (employeeCodesToDelete.Count > 0)
+    {
+        store.Profiles.RemoveAll(p => employeeCodesToDelete.Contains(p.EmployeeCode));
+    }
+
+    var deviceSerialsToDelete = store.DeviceAssignments
+        .Where(x =>
+            string.Equals(x.AreaCode, targetAreaCode, StringComparison.OrdinalIgnoreCase) ||
+            departmentCodes.Contains(x.DepartmentCode?.Trim() ?? string.Empty))
+        .Select(x => x.DeviceSerial?.Trim() ?? string.Empty)
+        .Where(serial => !string.IsNullOrWhiteSpace(serial))
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var device in service.ListDevices().Where(d => deviceSerialsToDelete.Contains(d.SerialNumber?.Trim() ?? string.Empty)).ToList())
+    {
+        if (service.DeleteDevice(device.Id))
+        {
+            result.DevicesDeleted++;
+        }
+    }
+
+    store.DeviceAssignments.RemoveAll(x =>
+        string.Equals(x.AreaCode, targetAreaCode, StringComparison.OrdinalIgnoreCase) ||
+        departmentCodes.Contains(x.DepartmentCode?.Trim() ?? string.Empty));
+    result.DepartmentsDeleted = store.Departments.RemoveAll(d =>
+        string.Equals(d.AreaCode, targetAreaCode, StringComparison.OrdinalIgnoreCase));
+    result.PositionsDeleted = store.Positions.RemoveAll(p => departmentNames.Contains(p.Department?.Trim() ?? string.Empty));
+    result.AreasDeleted = store.Areas.RemoveAll(a => a.Id == target.Id);
+
+    SavePersonnelStoreAndSyncDb(store, personnelPath, connectionString);
+    return result;
 }
 
 static bool IsDefaultDepartment(PersonnelDepartment department, string defaultAreaCode, string defaultDepartmentCode)
@@ -12243,145 +15792,6 @@ static void EnsureDeviceAssignmentsForExistingDevices(
     }
 }
 
-static void EnsureEmployeesBackfilledFromProfiles(
-    AttendanceService service,
-    PostgresAttendanceRepository repository,
-    PersonnelStore store,
-    string defaultDepartmentName,
-    ISet<string>? excludedCodes = null)
-{
-    var existingByCode = repository.GetEmployees()
-        .Where(e => !string.IsNullOrWhiteSpace(e.EmployeeCode))
-        .ToDictionary(e => e.EmployeeCode.Trim(), StringComparer.OrdinalIgnoreCase);
-
-    var fallbackDepartment = string.IsNullOrWhiteSpace(defaultDepartmentName)
-        ? "Default Department"
-        : defaultDepartmentName.Trim();
-
-    foreach (var profile in store.Profiles)
-    {
-        var code = profile.EmployeeCode?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(code) || existingByCode.ContainsKey(code))
-        {
-            continue;
-        }
-        if (excludedCodes is not null && excludedCodes.Contains(code))
-        {
-            continue;
-        }
-
-        Employee created;
-        try
-        {
-            created = service.CreateEmployee(code, code, fallbackDepartment);
-        }
-        catch
-        {
-            continue;
-        }
-
-        created.Privilege = ResolveConfiguredEmployeePrivilege(profile.Privilege);
-        created.Position = profile.Position?.Trim() ?? string.Empty;
-        created.CardNumber = profile.CardNumber?.Trim() ?? string.Empty;
-        created.ProfilePhoto = string.IsNullOrWhiteSpace(profile.PictureDataUrl) ? null : profile.PictureDataUrl.Trim();
-        created.MobileNumber = profile.MobileNumber?.Trim() ?? string.Empty;
-        created.Gender = string.IsNullOrWhiteSpace(profile.Gender) ? "Male" : profile.Gender.Trim();
-        created.Password = NormalizePasswordHash(profile.Password);
-        created.SyncedAt = null;
-
-        repository.UpdateEmployee(created);
-        UpsertProfilePhotoSnapshot(repository, created);
-        existingByCode[code] = created;
-    }
-}
-
-static void EnsureEmployeesBackfilledFromUnifiedUsers(
-    PostgresAttendanceRepository repository,
-    string defaultDepartmentName,
-    ISet<string>? excludedCodes = null)
-{
-    var existingByCode = repository.GetEmployees()
-        .Where(e => !string.IsNullOrWhiteSpace(e.EmployeeCode))
-        .ToDictionary(e => e.EmployeeCode.Trim(), StringComparer.OrdinalIgnoreCase);
-
-    var fallbackDepartment = string.IsNullOrWhiteSpace(defaultDepartmentName)
-        ? "Default Department"
-        : defaultDepartmentName.Trim();
-
-    foreach (var user in repository.GetAllUnifiedUsers())
-    {
-        var code = user.Pin?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(code))
-        {
-            continue;
-        }
-        if (excludedCodes is not null && excludedCodes.Contains(code))
-        {
-            continue;
-        }
-
-        if (!existingByCode.TryGetValue(code, out var employee))
-        {
-            employee = repository.AddEmployee(new Employee
-            {
-                EmployeeCode = code,
-                FullName = string.IsNullOrWhiteSpace(user.Name) ? code : user.Name.Trim(),
-                Department = fallbackDepartment,
-                CardNumber = user.PrimaryCard ?? string.Empty,
-                Password = NormalizePasswordHash(user.Password),
-                MobileNumber = user.Phone ?? string.Empty,
-                Privilege = user.Privilege.HasValue ? ResolveDeviceUserPrivilege(user.Privilege.Value) : UserPrivilege.User,
-                IsActive = true,
-                SyncedAt = DateTime.UtcNow
-            });
-            existingByCode[code] = employee;
-            continue;
-        }
-
-        var changed = false;
-        if (!string.IsNullOrWhiteSpace(user.Name) && !string.Equals(employee.FullName, user.Name, StringComparison.Ordinal))
-        {
-            employee.FullName = user.Name.Trim();
-            changed = true;
-        }
-        if (string.IsNullOrWhiteSpace(employee.Department))
-        {
-            employee.Department = fallbackDepartment;
-            changed = true;
-        }
-        if (!string.IsNullOrWhiteSpace(user.PrimaryCard) && !string.Equals(employee.CardNumber, user.PrimaryCard, StringComparison.Ordinal))
-        {
-            employee.CardNumber = user.PrimaryCard.Trim();
-            changed = true;
-        }
-        var normalizedPassword = NormalizePasswordHash(user.Password);
-        if (!string.IsNullOrWhiteSpace(normalizedPassword) && !string.Equals(employee.Password, normalizedPassword, StringComparison.OrdinalIgnoreCase))
-        {
-            employee.Password = normalizedPassword;
-            changed = true;
-        }
-        if (!string.IsNullOrWhiteSpace(user.Phone) && !string.Equals(employee.MobileNumber, user.Phone, StringComparison.Ordinal))
-        {
-            employee.MobileNumber = user.Phone.Trim();
-            changed = true;
-        }
-        if (user.Privilege.HasValue)
-        {
-            var mapped = ResolveDeviceUserPrivilege(user.Privilege.Value);
-            if (employee.Privilege != mapped)
-            {
-                employee.Privilege = mapped;
-                changed = true;
-            }
-        }
-
-        if (changed)
-        {
-            employee.SyncedAt = DateTime.UtcNow;
-            repository.UpdateEmployee(employee);
-        }
-    }
-}
 
 static (PersonnelArea Area, PersonnelDepartment Department) ResolveDeviceSetup(
     PersonnelStore store,
@@ -12437,51 +15847,9 @@ static PersonnelArea ResolveAreaFromCode(
         ?? new PersonnelArea(Guid.Empty, defaultAreaCode, defaultAreaName, string.Empty);
 }
 
-static (PersonnelArea Area, PersonnelDepartment Department) ResolveDepartmentForArea(
-    PersonnelStore store,
-    string? areaInput,
-    string? departmentInput,
-    string defaultAreaCode,
-    string defaultAreaName,
-    string defaultDepartmentCode,
-    string defaultDepartmentName)
-{
-    var areaToken = areaInput?.Trim() ?? string.Empty;
-    var area = store.Areas.FirstOrDefault(a =>
-                   !string.IsNullOrWhiteSpace(areaToken) &&
-                   (string.Equals(a.Code, areaToken, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(a.Name, areaToken, StringComparison.OrdinalIgnoreCase))) ??
-               store.Areas.FirstOrDefault(a => string.Equals(a.Code, defaultAreaCode, StringComparison.OrdinalIgnoreCase)) ??
-               new PersonnelArea(Guid.Empty, defaultAreaCode, defaultAreaName, string.Empty);
-
-    var departmentToken = departmentInput?.Trim() ?? string.Empty;
-    PersonnelDepartment? department = null;
-    if (!string.IsNullOrWhiteSpace(departmentToken))
-    {
-        department = store.Departments.FirstOrDefault(d =>
-            string.Equals(d.AreaCode, area.Code, StringComparison.OrdinalIgnoreCase) &&
-            (string.Equals(d.Code, departmentToken, StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(d.Name, departmentToken, StringComparison.OrdinalIgnoreCase)));
-    }
-
-    department ??= store.Departments
-        .Where(d => string.Equals(d.AreaCode, area.Code, StringComparison.OrdinalIgnoreCase))
-        .OrderBy(d => IsDefaultDepartment(d, defaultAreaCode, defaultDepartmentCode) ? 0 : 1)
-        .ThenBy(d => d.Code, StringComparer.OrdinalIgnoreCase)
-        .FirstOrDefault();
-
-    department ??= ResolveDepartmentFromSetup(
-        store,
-        departmentToken,
-        defaultAreaCode,
-        defaultAreaName,
-        defaultDepartmentCode,
-        defaultDepartmentName);
-
-    return (area, department);
-}
 
 static PersonnelDepartment ResolveDepartmentFromSetup(
+
     PersonnelStore store,
     string? departmentInput,
     string defaultAreaCode,
@@ -12770,8 +16138,8 @@ static bool ApplyEmployeeAssignments(
         employee.Position,
         normalizedAssignments[0].AreaCode,
         normalizedAssignments[0].DepartmentCode,
-        employee.VerifyMode,
-        normalizedAssignments);
+        verifyMode: employee.VerifyMode,
+        assignments: normalizedAssignments);
     return true;
 }
 
@@ -12793,13 +16161,30 @@ static string? ResolveEmployeeDepartmentForDevice(
         defaultAreaName,
         defaultDepartmentCode,
         defaultDepartmentName);
+    // AREA is the deciding factor for whether an employee is synced to a device. An employee
+    // may belong to multiple departments, so the department is NOT required to match — only the
+    // area must be the same. If the employee has no assignment in the device's area, they are
+    // NOT synced to that device (returns null → caller skips).
+    var deviceAreaCode = targetDepartment.AreaCode;
+
+    // Prefer an assignment that matches BOTH the device's area and department (so the device
+    // shows the most relevant department), then fall back to any assignment in the same area.
     var preferred = assignments.FirstOrDefault(x =>
+        string.Equals(x.Area.Code, deviceAreaCode, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(x.Department.Code, targetDepartment.Code, StringComparison.OrdinalIgnoreCase));
     if (preferred.Department is not null)
     {
         return preferred.Department.Name;
     }
 
+    var sameArea = assignments.FirstOrDefault(x =>
+        string.Equals(x.Area.Code, deviceAreaCode, StringComparison.OrdinalIgnoreCase));
+    if (sameArea.Department is not null)
+    {
+        return sameArea.Department.Name;
+    }
+
+    // Employee is not in this device's area → do not sync them to this device.
     return null;
 }
 
@@ -12915,6 +16300,26 @@ static void NormalizePositionsToSetup(
             store.Positions[i] = current with { Department = normalizedDepartment };
         }
     }
+}
+
+static (int AreaId, int DepartmentId) SyncSqlAreaAndDepartment(PostgresAttendanceRepository repository, string areaName, string departmentName)
+{
+    var name = string.IsNullOrWhiteSpace(areaName) ? "Default Area" : areaName.Trim();
+    var deptName = string.IsNullOrWhiteSpace(departmentName) ? "Default Department" : departmentName.Trim();
+
+    var dbArea = repository.GetAreas().FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
+    if (dbArea is null)
+    {
+        dbArea = repository.AddArea(new Area { Name = name, IsDefault = false });
+    }
+
+    var dbDept = repository.GetDepartments().FirstOrDefault(d => d.AreaId == dbArea.Id && string.Equals(d.Name, deptName, StringComparison.OrdinalIgnoreCase));
+    if (dbDept is null)
+    {
+        dbDept = repository.AddDepartment(new Department { Name = deptName, AreaId = dbArea.Id, IsDefault = false });
+    }
+
+    return (dbArea.Id, dbDept.Id);
 }
 
 static (PersonnelArea Area, PersonnelDepartment Department) ResolveDeviceSetupForSerial(
@@ -13147,8 +16552,8 @@ static PersonnelStore LoadPersonnelStoreFromDb(string connectionString)
                     ReadString(reader, 8),
                     primaryAssignment?.AreaCode ?? areaCode,
                     primaryAssignment?.DepartmentCode ?? departmentCode,
-                    reader.IsDBNull(12) ? 0 : reader.GetInt32(12),
-                    assignments));
+                    VerifyMode: reader.IsDBNull(12) ? 0 : reader.GetInt32(12),
+                    Assignments: assignments));
             }
         }
     }
@@ -13516,10 +16921,11 @@ static void UpdateDiscoveredFromInfo(ConcurrentDictionary<string, DiscoveredDevi
     var fpQty = parts.Length >= 3 && int.TryParse(parts[2], out var f) ? f : 0;
     var transactionQty = parts.Length >= 4 && int.TryParse(parts[3], out var t) ? t : -1;
     var faceQty = parts.Length >= 9 && int.TryParse(parts[8], out var fa) ? fa : 0;
+    var model = parts.Length > 9 ? string.Join(",", parts.Skip(9).Where(p => !string.IsNullOrWhiteSpace(p) && !int.TryParse(p, out _))) : string.Empty;
 
     discovered.AddOrUpdate(
         serial.Trim(),
-        _ => new DiscoveredDevice(serial.Trim(), serial.Trim(), string.Empty, ip ?? string.Empty, string.Empty, DateTime.UtcNow, true, userQty, fpQty, faceQty, 0, transactionQty),
+        _ => new DiscoveredDevice(serial.Trim(), serial.Trim(), model, ip ?? string.Empty, string.Empty, DateTime.UtcNow, true, userQty, fpQty, faceQty, 0, transactionQty),
         (_, old) => old with
         {
             IpAddress = string.IsNullOrWhiteSpace(ip) ? old.IpAddress : ip,
@@ -13528,19 +16934,21 @@ static void UpdateDiscoveredFromInfo(ConcurrentDictionary<string, DiscoveredDevi
             UserQty = userQty,
             FpQty = fpQty,
             FaceQty = faceQty,
-            TransactionQty = transactionQty >= 0 ? transactionQty : old.TransactionQty
+            TransactionQty = transactionQty >= 0 ? transactionQty : old.TransactionQty,
+            Model = string.IsNullOrWhiteSpace(model) ? old.Model : model
         });
 }
 
 static void UpdateDiscoveredFromOptions(ConcurrentDictionary<string, DiscoveredDevice> discovered, string serial, string body, string? fallbackIp)
 {
     var map = ParseOptionPairs(body);
-    var name = FirstValue(map, "DevName", "DeviceName", "Alias", "TerminalName") ?? serial;
-    var model = NormalizeDeviceModelToken(FirstValue(map, "DeviceType", "ProductType", "DevType", "TerminalType", "DeviceModel", "Model"));
-    var ip = FirstValue(map, "IPAddress", "IP", "NetIP") ?? fallbackIp ?? string.Empty;
-    var area = FirstValue(map, "Area", "Location", "Addr", "Address") ?? string.Empty;
-    var palm = map.TryGetValue("PalmCount", out var p) && int.TryParse(p, out var pv) ? pv : 0;
-    var transactionQty = ParseOptionInt(map, "AttLogCount", "AttlogCount", "ATTLOGCount", "TransactionCount");
+    var name = FirstValue(map, "~DeviceName", "~DevName", "DevName", "DeviceName", "Alias", "TerminalName") ?? serial;
+    var model = NormalizeDeviceModelToken(FirstValue(map, "~DeviceModel", "DeviceModel", "~Model", "Model", "DeviceType", "ProductType", "DevType", "TerminalType"));
+    var ip = FirstValue(map, "~IPAddress", "~IP", "IPAddress", "IP", "NetIP") ?? fallbackIp ?? string.Empty;
+    var area = FirstValue(map, "~Area", "~Location", "Area", "Location", "Addr", "Address") ?? string.Empty;
+    var palm = map.TryGetValue("~PalmCount", out var p) && int.TryParse(p, out var pv) ? pv : 0;
+    if (palm == 0 && map.TryGetValue("PalmCount", out var p2) && int.TryParse(p2, out var pv2)) { palm = pv2; }
+    var transactionQty = ParseOptionInt(map, "~AttLogCount", "~AttlogCount", "~ATTLOGCount", "~TransactionCount", "AttLogCount", "AttlogCount", "ATTLOGCount", "TransactionCount");
 
     discovered.AddOrUpdate(
         serial.Trim(),
@@ -13992,13 +17400,11 @@ static string[] BuildListenUrls(int apiPort, int frontendPort)
     if (IsValidPort(apiPort))
     {
         urls.Add($"http://0.0.0.0:{apiPort}");
-        urls.Add($"http://localhost:{apiPort}");
     }
 
     if (IsValidPort(frontendPort) && frontendPort != apiPort)
     {
         urls.Add($"http://0.0.0.0:{frontendPort}");
-        urls.Add($"http://localhost:{frontendPort}");
     }
 
     return urls.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -14029,6 +17435,8 @@ static string ResolvePreferredServerIp()
 {
     try
     {
+        var candidates = new List<(string Ip, int Priority)>();
+
         foreach (var networkInterface in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
         {
             if (networkInterface.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up)
@@ -14036,12 +17444,25 @@ static string ResolvePreferredServerIp()
                 continue;
             }
 
+            // Skip loopback and tunnel interfaces
             if (networkInterface.NetworkInterfaceType is
                 System.Net.NetworkInformation.NetworkInterfaceType.Loopback or
                 System.Net.NetworkInformation.NetworkInterfaceType.Tunnel)
             {
                 continue;
             }
+
+            // Determine priority based on interface type
+            // Lower number = higher priority
+            int priority = networkInterface.NetworkInterfaceType switch
+            {
+                System.Net.NetworkInformation.NetworkInterfaceType.Ethernet => 1,      // LAN (wired) - highest priority
+                System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211 => 2,   // WiFi
+                System.Net.NetworkInformation.NetworkInterfaceType.GigabitEthernet => 1, // Gigabit Ethernet
+                System.Net.NetworkInformation.NetworkInterfaceType.FastEthernetT => 1,   // Fast Ethernet
+                System.Net.NetworkInformation.NetworkInterfaceType.FastEthernetFx => 1,  // Fast Ethernet FX
+                _ => 99 // Other types (VPN, etc.) - lowest priority
+            };
 
             var properties = networkInterface.GetIPProperties();
             foreach (var addressInfo in properties.UnicastAddresses)
@@ -14053,12 +17474,26 @@ static string ResolvePreferredServerIp()
                     continue;
                 }
 
+                // Skip link-local (169.254.x.x) and APIPA addresses
+                var bytes = address.GetAddressBytes();
+                if (bytes[0] == 169 && bytes[1] == 254)
+                {
+                    continue;
+                }
+
                 var addressText = address.ToString();
                 if (!string.IsNullOrWhiteSpace(addressText))
                 {
-                    return addressText;
+                    candidates.Add((addressText, priority));
                 }
             }
+        }
+
+        // Sort by priority (lower = better), then return first
+        if (candidates.Count > 0)
+        {
+            candidates.Sort((a, b) => a.Priority.CompareTo(b.Priority));
+            return candidates[0].Ip;
         }
     }
     catch
@@ -14073,64 +17508,24 @@ static WebAppSettings EnsureBindableRuntimePorts(WebAppSettings settings, string
     var apiPort = settings.Port;
     var frontendPort = settings.FrontendPort;
 
+    // Same port is a configuration error — auto-fix by shifting frontend port by 1
+    if (frontendPort == apiPort)
+    {
+        frontendPort = apiPort == 65535 ? apiPort - 1 : apiPort + 1;
+        Console.Error.WriteLine(
+            $"[Startup] API port and Web UI port were both {apiPort}. Auto-corrected Web UI port to {frontendPort}.");
+        settings = settings with { FrontendPort = frontendPort };
+        try { File.WriteAllText(settingsPath, System.Text.Json.JsonSerializer.Serialize(settings)); } catch { }
+    }
+
+    // Log warnings for ports in use but let ASP.NET Core raise the real bind error at app.Run()
+    // Throwing here would crash the process before UseWindowsService() notifies the SCM → Error 1053
     if (!CanBindPort(apiPort))
-    {
-        throw new InvalidOperationException(
-            $"Configured API port {apiPort} is already in use. Stop the process using this port or change API Port in Service Controller.");
-    }
+        Console.Error.WriteLine($"[Startup] WARNING: API port {apiPort} may already be in use. Will attempt to bind.");
+    if (!CanBindPort(frontendPort))
+        Console.Error.WriteLine($"[Startup] WARNING: Web UI port {frontendPort} may already be in use. Will attempt to bind.");
 
-    if (frontendPort == apiPort || !CanBindPort(frontendPort))
-    {
-        var fallback = FindAvailableWebPort(frontendPort, apiPort);
-        Console.WriteLine(
-            $"[Startup] Web UI port {frontendPort} is unavailable. Using fallback web port {fallback}.");
-        frontendPort = fallback;
-    }
-
-    var normalized = new WebAppSettings(apiPort, frontendPort);
-    if (normalized != settings)
-    {
-        TryPersistWebSettings(settingsPath, normalized);
-    }
-
-    return normalized;
-}
-
-static int FindAvailableWebPort(int preferredPort, int apiPort)
-{
-    var candidates = new List<int>();
-
-    void AddPort(int port)
-    {
-        if (port is < 1 or > 65535 || port == apiPort || candidates.Contains(port))
-        {
-            return;
-        }
-
-        candidates.Add(port);
-    }
-
-    AddPort(preferredPort);
-
-    for (var offset = 1; offset <= 100; offset++)
-    {
-        AddPort(preferredPort + offset);
-    }
-    for (var offset = 1; offset <= 100; offset++)
-    {
-        AddPort(preferredPort - offset);
-    }
-
-    foreach (var port in candidates)
-    {
-        if (CanBindPort(port))
-        {
-            return port;
-        }
-    }
-
-    throw new InvalidOperationException(
-        "No available Web UI port was found near the configured range. Free a port and restart.");
+    return settings;
 }
 
 static bool CanBindPort(int port)
@@ -14165,18 +17560,6 @@ static bool CanBindPort(int port)
     }
 }
 
-static void TryPersistWebSettings(string path, WebAppSettings settings)
-{
-    try
-    {
-        settings.Save(path);
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[Startup] Warning: unable to persist websettings to '{path}'. {ex.Message}");
-    }
-}
-
 static bool IsAllowedFrontendOrigin(string origin)
 {
     if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
@@ -14190,29 +17573,34 @@ static bool IsAllowedFrontendOrigin(string origin)
         return false;
     }
 
-    if (string.IsNullOrWhiteSpace(uri.Host))
+    var host = uri.Host;
+    if (string.IsNullOrWhiteSpace(host))
     {
         return false;
     }
 
-    if (string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(uri.Host, "::1", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(uri.Host, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
+    // Allow localhost variants
+    if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(host, "::1", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(host, Environment.MachineName, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(host, "127.0.0.1", StringComparison.OrdinalIgnoreCase))
     {
         return true;
     }
 
-    if (!uri.Host.Contains('.'))
-    {
-        return true;
-    }
-
-    if (System.Net.IPAddress.TryParse(uri.Host, out var address))
+    // Allow private IPs
+    if (System.Net.IPAddress.TryParse(host, out var address))
     {
         return IsPrivateOrLoopbackAddress(address);
     }
 
-    return string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase);
+    // Allow hostnames without dots (local network names)
+    if (!host.Contains('.'))
+    {
+        return true;
+    }
+
+    return false;
 }
 
 static bool IsPrivateOrLoopbackAddress(System.Net.IPAddress address)
@@ -14262,7 +17650,9 @@ internal sealed record EmployeeCreateRequest(
     string? Gender,
     string? HireDate,
     string? Password,
-    int? VerifyMode = null);
+    int? VerifyMode = null,
+    int? GroupId = 1,
+    string? TimezoneProfile = null);
 internal sealed record EmployeeUpdateRequest(
     string? EmployeeCode,
     string? FullName,
@@ -14277,12 +17667,14 @@ internal sealed record EmployeeUpdateRequest(
     string? Gender,
     string? HireDate,
     string? Password,
-    int? VerifyMode = null);
+    int? VerifyMode = null,
+    int? GroupId = null,
+    string? TimezoneProfile = null);
 internal sealed record EmployeeDeleteRequest(List<Guid> Ids);
 internal sealed record EmployeeStatusRequest(List<Guid> Ids, bool IsActive);
 internal sealed record EmployeeVerifyModeRequest(List<Guid> Ids, int VerifyMode);
 internal sealed record EmployeeTransferRequest(List<Guid> Ids, List<string>? DepartmentCodes, string? Department = null);
-internal sealed record EmployeeImportRequest(List<EmployeeImportRowRequest> Items);
+internal sealed record EmployeeImportRequest(List<EmployeeImportRowRequest> Items, string? Mode = null);
 internal sealed record EmployeeImportRowRequest(
     string? UserId,
     string? FullName,
@@ -14293,8 +17685,10 @@ internal sealed record EmployeeImportRowRequest(
     string? AreaName = null,
     string? AreaCode = null,
     string? Area = null,
-    string? DepartmentCode = null);
-internal sealed record EmployeePhotoImportRequest(List<EmployeePhotoImportRowRequest> Items);
+    string? DepartmentCode = null,
+    string? CardNumber = null,
+    string? Password = null);
+internal sealed record EmployeePhotoImportRequest(List<EmployeePhotoImportRowRequest> Items, string? Mode = null);
 internal sealed record EmployeePhotoImportRowRequest(string? EmployeeCode, string? PictureDataUrl);
 internal sealed record FingerprintTemplateEntry(int FingerIndex, string Template);
 internal sealed record DeviceCreateRequest(
@@ -14305,7 +17699,8 @@ internal sealed record DeviceCreateRequest(
     string? Location,
     string? AreaCode,
     string? DepartmentCode,
-    bool? RegistrationDevice);
+    bool? RegistrationDevice,
+    bool? ClearAllDataOnAdd = null);
 internal sealed record DeviceUpdateRequest(
     string? Name,
     string? Model,
@@ -14313,7 +17708,8 @@ internal sealed record DeviceUpdateRequest(
     string? Location,
     string? AreaCode,
     string? DepartmentCode,
-    bool? RegistrationDevice);
+    bool? RegistrationDevice,
+    bool? ClearAllDataOnAdd = null);
 internal sealed record DeviceCommandRequest(string? Command);
 internal sealed record DeviceSyncSelectedRequest(List<Guid> EmployeeIds);
 internal sealed record FetchAllDataRequest(bool? IncludeAttendanceLogs);
@@ -14348,11 +17744,11 @@ internal sealed record DevicePresetCommandRequest(
     string? EndTime,
     string? TimeZone);
 internal sealed record ClockRequest(Guid EmployeeId, Guid? DeviceId, string? Action);
-internal sealed record AttendanceManualRequest(Guid EmployeeId, string? Status, DateTime? Timestamp, int? StatusCode, int? VerifyMode, string? Workcode, Guid? DeviceId, string? DeviceSerialNumber);
+internal sealed record AttendanceManualRequest(Guid EmployeeId, string? EmployeeCode, string? Status, DateTime? Timestamp, int? StatusCode, int? VerifyMode, string? Workcode, Guid? DeviceId, string? DeviceSerialNumber, string? Remarks);
 internal sealed record AttendanceDeleteRequest(List<Guid> Ids);
 internal sealed record AttendanceImportRequest(List<AttendanceImportRowRequest> Items);
 internal sealed record AttendanceImportRowRequest(string? EmployeeCode, string? Status, DateTime? Timestamp, int? StatusCode, int? VerifyMode, string? Workcode, string? DeviceSerialNumber);
-internal sealed record UpdatePortRequest(int Port);
+internal sealed record UpdatePortRequest(int Port, int? FrontendPort = null);
 internal sealed record AuthLoginRequest(string? Username, string? Password);
 internal sealed record AuthUserSaveRequest(
     string? Id,
@@ -14371,7 +17767,8 @@ internal sealed record AuthUserResponse(
     bool IsActive,
     Dictionary<string, bool> FeatureAccess,
     string CreatedAt,
-    string UpdatedAt);
+    string UpdatedAt,
+    string? Token = null);
 internal sealed record EmployeeDepartmentRequest(string Department);
 internal sealed record DepartmentRequest(string Code, string Name, string? Superior, string? Manager, string? AreaCode);
 internal sealed record DepartmentDeleteRequest(List<Guid> Ids);
@@ -14381,6 +17778,27 @@ internal sealed record PositionRequest(string Code, string Name, string? Departm
 internal sealed record PositionDeleteRequest(List<Guid> Ids);
 internal sealed record AreaRequest(string Code, string Name, string? Remark);
 internal sealed record AreaDeleteRequest(List<Guid> Ids);
+internal sealed class AreaCascadeDeleteResult
+{
+    public int AreasDeleted { get; set; }
+    public int DepartmentsDeleted { get; set; }
+    public int DevicesDeleted { get; set; }
+    public int EmployeesDeleted { get; set; }
+    public int PositionsDeleted { get; set; }
+    public int QueuedDeviceDeletes { get; set; }
+    public int DeletedArtifactRows { get; set; }
+
+    public void Add(AreaCascadeDeleteResult other)
+    {
+        AreasDeleted += other.AreasDeleted;
+        DepartmentsDeleted += other.DepartmentsDeleted;
+        DevicesDeleted += other.DevicesDeleted;
+        EmployeesDeleted += other.EmployeesDeleted;
+        PositionsDeleted += other.PositionsDeleted;
+        QueuedDeviceDeletes += other.QueuedDeviceDeletes;
+        DeletedArtifactRows += other.DeletedArtifactRows;
+    }
+}
 internal sealed record HolidayRequest(string? HolidayDate, string? HolidayName, string? Description, bool IsActive = true, bool IsRecurring = false);
 internal sealed record HolidayListRow(int Id, string HolidayDate, string HolidayName, string Description, bool IsRecurring, bool IsActive, string Department);
 internal sealed record LicenseTrialSnapshot(DateTimeOffset StartedUtc, DateTimeOffset ExpiryUtc, int TotalDays);
@@ -14417,6 +17835,8 @@ internal sealed record PersonnelEmployeeProfile(
     string Position = "",
     string AreaCode = "",
     string DepartmentCode = "",
+    int? GroupId = null,
+    string TimezoneProfile = "",
     int VerifyMode = 0,
     List<PersonnelEmployeeAssignment>? Assignments = null);
 internal sealed record AppLogEntry(DateTime TimestampUtc, string Level, string Source, string Message, string? Detail);
@@ -14433,6 +17853,19 @@ internal sealed record TransactionDetailRow(
     int? VerifyMode,
     string? Workcode,
     int ParsedOk);
+
+// Maps a short (<=16 char) wire command ID echoed by ZKTeco devices back to the full
+// command Guid used internally for reply matching. ZKTeco firmware silently ignores any
+// command whose ID exceeds 16 characters, so we cannot put a 32-char Guid on the wire.
+// Bounded like commandSerialById: entries are removed when the device replies (the short
+// ID is deterministically the Guid's first 13 hex chars, so removal needs no extra state).
+internal static class CommandIdAlias
+{
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Guid> Map = new();
+
+    public static string ShortIdFor(Guid id) => id.ToString("N")[..13];
+}
+
 internal sealed class PersonnelStore
 {
     public List<PersonnelDepartment> Departments { get; init; } = new();
@@ -14494,44 +17927,17 @@ internal sealed record WebAppSettings(int Port, int FrontendPort)
                 var loaded = JsonSerializer.Deserialize<WebAppSettings>(json);
                 if (loaded is not null)
                 {
-                    var apiPort = loaded.Port is >= 1 and <= 65535 ? loaded.Port : 8081;
-                    var frontendPort = loaded.FrontendPort is >= 1 and <= 65535 ? loaded.FrontendPort : 8001;
-                    if (frontendPort == apiPort)
-                    {
-                        frontendPort = apiPort == 8001 ? 8000 : 8001;
-                    }
-
-                    var normalized = new WebAppSettings(apiPort, frontendPort);
-                    if (loaded != normalized)
-                    {
-                        try
-                        {
-                            normalized.Save(path);
-                        }
-                        catch
-                        {
-                            // Best-effort normalization only.
-                        }
-                    }
-
-                    return normalized;
+                    // Strictly use what is in the file. If ports are invalid (0 or out of range), 
+                    // the bind check later will catch it.
+                    return loaded;
                 }
             }
         }
-        catch
-        {
-        }
+        catch { }
 
-        var defaults = new WebAppSettings(8081, 8001);
-        try
-        {
-            defaults.Save(path);
-        }
-        catch
-        {
-            // Best-effort default persistence only.
-        }
-        return defaults;
+        // If no config file exists, use the application defaults (8081/8001)
+        // until the Service Controller updates them.
+        return new WebAppSettings(8081, 8001);
     }
 
     public void Save(string path)
@@ -14584,14 +17990,14 @@ internal static class ProgramHelpers
         return verifyMode is >= -1 and <= 29 or 200;
     }
 
-    public static int NormalizeEmployeeVerifyMode(int? verifyMode, int fallbackVerifyMode = 0)
+    public static int NormalizeEmployeeVerifyMode(int? verifyMode, int fallbackVerifyMode = -1)
     {
         if (verifyMode.HasValue && IsSupportedVerifyMode(verifyMode.Value))
         {
             return verifyMode.Value;
         }
 
-        return IsSupportedVerifyMode(fallbackVerifyMode) ? fallbackVerifyMode : 0;
+        return IsSupportedVerifyMode(fallbackVerifyMode) ? fallbackVerifyMode : -1;
     }
 
     public static void UpsertEmployeeProfile(
@@ -14607,6 +18013,8 @@ internal static class ProgramHelpers
         string? position = null,
         string? areaCode = null,
         string? departmentCode = null,
+        int? groupId = null,
+        string? timezoneProfile = null,
         int? verifyMode = null,
         IReadOnlyList<PersonnelEmployeeAssignment>? assignments = null)
     {
@@ -14639,7 +18047,10 @@ internal static class ProgramHelpers
             : (!string.IsNullOrWhiteSpace(existingPassword) && !LooksLikeMd5Hash(existingPassword)
                 ? existingPassword
                 : string.Empty);
-        var verifyModeForProfile = NormalizeEmployeeVerifyMode(verifyMode, existing?.VerifyMode ?? 0);
+        var verifyModeForProfile = NormalizeEmployeeVerifyMode(verifyMode, existing?.VerifyMode ?? -1);
+        var groupIdForProfile = groupId ?? existing?.GroupId ?? 1;
+        var timezoneProfileForProfile = timezoneProfile?.Trim() ?? existing?.TimezoneProfile ?? "0000000000000000";
+        if (string.IsNullOrWhiteSpace(timezoneProfileForProfile)) timezoneProfileForProfile = "0000000000000000";
         var existingAssignments = NormalizeAssignments((existing?.Assignments ?? [])
             .Concat(!string.IsNullOrWhiteSpace(existing?.DepartmentCode)
                 ? [new PersonnelEmployeeAssignment(existing.AreaCode ?? string.Empty, existing.DepartmentCode)]
@@ -14675,6 +18086,8 @@ internal static class ProgramHelpers
             position?.Trim() ?? existing?.Position ?? string.Empty,
             primaryAreaCode,
             primaryDepartmentCode,
+            groupIdForProfile,
+            timezoneProfileForProfile,
             verifyModeForProfile,
             nextAssignments));
     }

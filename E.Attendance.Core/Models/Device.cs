@@ -38,6 +38,17 @@ public sealed class Device
     public bool IsOnline { get; set; }
     public DateTime? LastSeenUtc { get; set; }
     public bool IsRegistered { get; set; }
+    
+    // Hierarchy - mandatory per requirements
+    public int AreaId { get; set; } = 1;
+    public int DepartmentId { get; set; } = 1;
+    
+    // Navigation properties
+    public Area? Area { get; set; }
+    public Department? Department { get; set; }
+    public ICollection<AttendanceRecord> AttendanceRecords { get; init; } = new List<AttendanceRecord>();
+    public ICollection<DeviceCommand> Commands { get; init; } = new List<DeviceCommand>();
+    public ICollection<SyncLog> SyncLogs { get; init; } = new List<SyncLog>();
 }
 
 public enum DeviceStatus

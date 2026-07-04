@@ -20,13 +20,27 @@ internal static class ServiceExtensions
             options.UseNpgsql(connectionString);
         });
 
+        // Area / Department
+        services.AddScoped<IAreaRepository, AreaRepository>();
+        services.AddScoped<IDepartmentRepository, DepartmentRepository>();
+
+        // Employee / Device / Sync
         services.AddScoped<IEmployeeRepository, EmployeeRepository>();
         services.AddScoped<IDeviceRepository, DeviceRepository>();
         services.AddScoped<ISyncLogRepository, SyncLogRepository>();
+        services.AddScoped<ITimetableRepository, TimetableRepository>();
+
+        // Access control
+        services.AddScoped<AccessControlRepository>();
+        services.AddScoped<IHolidayRepository>(sp => sp.GetRequiredService<AccessControlRepository>());
+        services.AddScoped<IAccCombinationRepository>(sp => sp.GetRequiredService<AccessControlRepository>());
+
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IAttendanceRepository>(_ => new PostgresAttendanceRepository(connectionString));
 
         services.AddScoped<IDeviceProtocolService, DeviceProtocolService>();
+        services.AddScoped<AttendanceService>();
+        services.AddScoped<IAttendanceService>(sp => sp.GetRequiredService<AttendanceService>());
         services.AddScoped<IEmployeeService, EmployeeService>();
         services.AddScoped<ISyncService, SyncService>();
     }

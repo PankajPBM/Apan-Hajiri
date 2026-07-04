@@ -5,6 +5,8 @@ namespace E.Attendance.Core.Interfaces;
 public interface IAttendanceService
 {
     IEnumerable<Employee> ListEmployees();
+    IEnumerable<TimetableEntity> ListTimetables();
+    IEnumerable<DepartmentTimetableEntity> ListDepartmentTimetables();
     Employee CreateEmployee(string employeeCode, string fullName, string department);
     bool UpdateEmployeeDepartment(Guid employeeId, string department);
     bool DeactivateEmployee(Guid employeeId);
@@ -47,11 +49,14 @@ public interface IAttendanceService
         bool? supportsFingerVein = null);
     IEnumerable<Device> SearchDevices(string? query);
     DeviceCommand QueueDeviceCommand(string deviceSerialNumber, string commandText);
+    /// <summary>Queues USER_INFO commands to all devices in the employee's area+departments.</summary>
+    void SyncEmployeeToDevices(Employee employee);
     IReadOnlyList<DeviceCommand> GetPendingCommands(string deviceSerialNumber, int maxCount);
     IReadOnlyList<DeviceCommand> GetDeviceCommands(string deviceSerialNumber, int maxCount);
     void MarkCommandSent(Guid commandId);
     void RecordCommandReply(Guid commandId, string replyText);
     int ClearPendingCommands(string deviceSerialNumber);
+    int ResetStaleSentCommands(string deviceSerialNumber, int olderThanMinutes);
     SyncLog AddSyncLog(string deviceSerialNumber, SyncType type, string commandText, SyncStatus status = SyncStatus.Pending);
     IReadOnlyList<SyncLog> GetSyncLogs(string deviceSerialNumber, int maxCount);
     void UpdateSyncLogResult(Guid syncLogId, SyncStatus status, string responseText);

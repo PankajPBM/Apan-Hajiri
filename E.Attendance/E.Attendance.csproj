@@ -6,8 +6,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Npgsql" Version="10.0.0" />
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.9" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -19,6 +20,12 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>..\icon\E_Att.ico</ApplicationIcon>
+    <RollForward>LatestMinor</RollForward>
+    <!-- Ship only English satellite resources (no cs/de/fr/ja/... waste folders) -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,6 +35,18 @@
     <None Update="bs-calendar-map.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="01_CreateDatabase.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="ensure_logs_transactions_tables.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="ensure_unified_biometrics_schema.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="ensure_device_capability_columns.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
@@ -35,10 +54,15 @@
   </ItemGroup>
 
   <Target Name="BuildWebHost" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
-    <MSBuild
-      Projects="..\E.Attendance.Web\E.Attendance.Web.csproj"
-      Targets="Build"
-      Properties="Configuration=$(Configuration)" />
+    <MSBuild Projects="..\E.Attendance.Web\E.Attendance.Web.csproj" Targets="Build" Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <Target Name="PublishSelfContained" AfterTargets="BuildWebHost" Condition="'$(RunSelfContainedPublish)' == 'true' AND '$(Configuration)' == 'Release' AND '$(DesignTimeBuild)' != 'true' AND '$(IsPublishing)' != 'true'">
+    <Message Importance="High" Text="Publishing self-contained to artifacts..." />
+    <Exec Command="dotnet restore &quot;$(MSBuildProjectDirectory)\..\E.Attendance.Web\E.Attendance.Web.csproj&quot; -r win-x64 --nologo" IgnoreExitCode="false" />
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectFullPath)&quot; -c Release -r win-x64 --self-contained true -o &quot;$(MSBuildProjectDirectory)\..\artifacts\self-contained\E.Attendance.Controller&quot; --nologo /p:IsPublishing=true" IgnoreExitCode="false" />
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\E.Attendance.Web\E.Attendance.Web.csproj&quot; -c Release -r win-x64 --self-contained true -o &quot;$(MSBuildProjectDirectory)\..\artifacts\self-contained\E.Attendance.Web&quot; --nologo /p:IsPublishing=true" IgnoreExitCode="false" />
+    <Message Importance="High" Text="Self-contained artifacts ready. Compile ISS now." />
   </Target>
 
   <Target Name="StopRunningAttendanceApp" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">

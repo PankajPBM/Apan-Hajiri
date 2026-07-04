@@ -16,18 +16,21 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
     private static readonly string[] PostgresIdentifiers =
     [
         "Employees", "Devices", "AttendanceRecords", "DeviceCommands", "SyncLogs", "DeviceTableStamps",
-        "Id", "EmployeeCode", "FullName", "Area", "Department", "DepartmentId", "DepartmentsJson", "Position", "CardNumber", "Password", "MobileNumber", "Gender",
+        "Areas", "Departments", "EmployeeDepartments", "SyncQueue",
+        "Id", "EmployeeCode", "FullName", "Area", "Department", "DepartmentId", "AreaId", "DepartmentsJson", "Position", "CardNumber", "Password", "MobileNumber", "Gender",
         "Privilege", "FaceTemplateVisible", "FaceTemplateInfrared", "ProfilePhoto", "FingerprintTemplates",
-        "CreatedAt", "SyncedAt", "IsActive", "SerialNumber", "Name", "Model", "IpAddress", "Location",
+        "CreatedAt", "SyncedAt", "UpdatedAt", "IsActive", "IsDefault", "IsRegistered", "SerialNumber", "Name", "Model", "IpAddress", "Location",
         "TimeZone", "SupportsVisibleLightFace", "SupportsInfraredFace", "SupportsFingerprint",
         "FaceAlgorithmVersion", "FingerprintAlgorithmVersion", "FirmwareVersion", "DeviceType", "PushVer", "Language",
         "MultiBioDataSupport", "MultiBioPhotoSupport", "MultiBioVersion", "MaxMultiBioDataCount", "MaxMultiBioPhotoCount",
         "FingerFunOn", "FaceFunOn", "VisiLightFunOn", "BioDataFun", "BioPhotoFun", "SupportsPalm", "SupportsFingerVein",
         "CapabilitiesJson", "CreatedAtUtc", "UpdatedAtUtc",
         "Status", "IsRegistrationDevice", "IsOnline", "LastSeenUtc",
-        "EmployeeId", "Timestamp", "StatusCode", "VerifyMode", "Workcode", "DeviceId", "DeviceSerialNumber",
+        "EmployeeId", "Timestamp", "AttendanceDate", "StatusCode", "VerifyMode", "Workcode", "DeviceId", "DeviceSerialNumber",
         "TableName", "StampValue", "UpdatedUtc",
-        "CommandText", "CreatedUtc", "SentUtc", "ReplyText", "Type", "ResponseText", "CompletedUtc"
+        "CommandText", "CreatedUtc", "SentUtc", "ReplyText", "Type", "ResponseText", "CompletedUtc",
+        "AssignedAt", "AssignedBy", "EntityType", "EntityId", "Operation", "Payload", "ErrorMessage",
+        "RetryCount", "MaxRetries", "ProcessedAt", "NextRetryAt"
     ];
 
     private readonly string _connectionString;
@@ -131,7 +134,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
     public IReadOnlyList<Employee> GetEmployees()
     {
         const string sql = """
-            SELECT Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive
+            SELECT Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive, AreaId
             FROM Employees
             ORDER BY EmployeeCode
             """;
@@ -143,7 +146,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             FullName = reader.GetString(2),
             Area = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
             Department = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
-            DepartmentId = reader.IsDBNull(5) ? null : ReadInt32(reader, 5),
+            DepartmentId = reader.IsDBNull(5) ? 1 : ReadInt32(reader, 5),
             Departments = DeserializeDepartments(reader.IsDBNull(6) ? null : reader.GetString(6), reader.IsDBNull(4) ? string.Empty : reader.GetString(4)),
             Position = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
             CardNumber = reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
@@ -158,25 +161,26 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             FingerprintTemplates = reader.IsDBNull(17) ? null : reader.GetString(17),
             CreatedAt = reader.IsDBNull(18) ? DateTime.UtcNow : ReadDateTime(reader, 18),
             SyncedAt = reader.IsDBNull(19) ? null : ReadDateTime(reader, 19),
-            IsActive = ReadInt32(reader, 20) == 1
+            IsActive = ReadInt32(reader, 20) == 1,
+            AreaId = reader.IsDBNull(21) ? 1 : ReadInt32(reader, 21)
         });
     }
 
     public Employee AddEmployee(Employee employee)
     {
-        const string sql = """
-            INSERT INTO Employees (Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive)
-            VALUES ($id, $code, $name, $area, $dept, $deptId, $departmentsJson, $position, $card, $password, $mobile, $gender, $privilege, $verifyMode, $faceVisible, $faceInfra, $photo, $fingerprints, $createdAt, $syncedAt, $active)
+        var sql = $"""
+            INSERT INTO Employees (Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive, AreaId)
+            VALUES ({SqlUuid("$id")}, $code, $name, $area, $dept, $deptId, $departmentsJson, $position, $card, $password, $mobile, $gender, $privilege, $verifyMode, $faceVisible, $faceInfra, $photo, $fingerprints, {SqlTs("$createdAt")}, {SqlTs("$syncedAt")}, $active, $areaId)
             """;
 
         Execute(sql, command =>
         {
-            command.Parameters.AddWithValue("$id", employee.Id.ToString());
+            command.Parameters.AddWithValue("$id", GuidParam(employee.Id));
             command.Parameters.AddWithValue("$code", employee.EmployeeCode);
             command.Parameters.AddWithValue("$name", employee.FullName);
             command.Parameters.AddWithValue("$area", employee.Area);
             command.Parameters.AddWithValue("$dept", employee.Department);
-            command.Parameters.AddWithValue("$deptId", employee.DepartmentId.HasValue ? employee.DepartmentId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("$deptId", employee.DepartmentId > 0 ? employee.DepartmentId : (object)DBNull.Value);
             command.Parameters.AddWithValue("$departmentsJson", SerializeDepartments(employee.Departments));
             command.Parameters.AddWithValue("$position", employee.Position);
             command.Parameters.AddWithValue("$card", employee.CardNumber);
@@ -190,8 +194,9 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$photo", employee.ProfilePhoto ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("$fingerprints", employee.FingerprintTemplates ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("$createdAt", employee.CreatedAt.ToString("O"));
-            command.Parameters.AddWithValue("$syncedAt", employee.SyncedAt?.ToString("O") ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("$syncedAt", employee.SyncedAt.HasValue ? employee.SyncedAt.Value.ToString("O") : (object)DBNull.Value);
             command.Parameters.AddWithValue("$active", employee.IsActive ? 1 : 0);
+            command.Parameters.AddWithValue("$areaId", employee.AreaId > 0 ? employee.AreaId : 1);
         });
 
         return employee;
@@ -199,13 +204,14 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
 
     public bool UpdateEmployee(Employee employee)
     {
-        const string sql = """
+        var sql = $"""
             UPDATE Employees
             SET EmployeeCode = $code,
                 FullName = $name,
                 Area = $area,
                 Department = $dept,
                 DepartmentId = $deptId,
+                AreaId = $areaId,
                 DepartmentsJson = $departmentsJson,
                 Position = $position,
                 CardNumber = $card,
@@ -218,19 +224,20 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                 FaceTemplateInfrared = $faceInfra,
                 ProfilePhoto = $photo,
                 FingerprintTemplates = $fingerprints,
-                SyncedAt = $syncedAt,
+                SyncedAt = {SqlTs("$syncedAt")},
                 IsActive = $active
-            WHERE Id = $id
+            WHERE Id = {SqlUuid("$id")}
             """;
 
         var rows = Execute(sql, command =>
         {
-            command.Parameters.AddWithValue("$id", employee.Id.ToString());
+            command.Parameters.AddWithValue("$id", GuidParam(employee.Id));
             command.Parameters.AddWithValue("$code", employee.EmployeeCode);
             command.Parameters.AddWithValue("$name", employee.FullName);
             command.Parameters.AddWithValue("$area", employee.Area);
             command.Parameters.AddWithValue("$dept", employee.Department);
-            command.Parameters.AddWithValue("$deptId", employee.DepartmentId.HasValue ? employee.DepartmentId.Value : (object)DBNull.Value);
+            command.Parameters.AddWithValue("$deptId", employee.DepartmentId > 0 ? employee.DepartmentId : (object)DBNull.Value);
+            command.Parameters.AddWithValue("$areaId", employee.AreaId > 0 ? employee.AreaId : 1);
             command.Parameters.AddWithValue("$departmentsJson", SerializeDepartments(employee.Departments));
             command.Parameters.AddWithValue("$position", employee.Position);
             command.Parameters.AddWithValue("$card", employee.CardNumber);
@@ -243,7 +250,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$faceInfra", employee.FaceTemplateInfrared ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("$photo", employee.ProfilePhoto ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("$fingerprints", employee.FingerprintTemplates ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("$syncedAt", employee.SyncedAt?.ToString("O") ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("$syncedAt", employee.SyncedAt.HasValue ? employee.SyncedAt.Value.ToString("O") : (object)DBNull.Value);
             command.Parameters.AddWithValue("$active", employee.IsActive ? 1 : 0);
         });
 
@@ -252,23 +259,15 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
 
     public bool DeleteEmployee(Guid employeeId)
     {
-        const string sql = """
-            DELETE FROM Employees
-            WHERE Id = $id
-            """;
-
-        var rows = Execute(sql, command =>
-        {
-            command.Parameters.AddWithValue("$id", employeeId.ToString());
-        });
-
+        var sql = $"DELETE FROM Employees WHERE Id = {SqlUuid("$id")}";
+        var rows = Execute(sql, command => command.Parameters.AddWithValue("$id", GuidParam(employeeId)));
         return rows > 0;
     }
 
     public Employee? FindEmployeeByCode(string employeeCode)
     {
         const string sql = """
-            SELECT Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive
+            SELECT Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive, AreaId
             FROM Employees
             WHERE EmployeeCode = $code
             LIMIT 1
@@ -284,7 +283,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             FullName = reader.GetString(2),
             Area = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
             Department = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
-            DepartmentId = reader.IsDBNull(5) ? null : ReadInt32(reader, 5),
+            DepartmentId = reader.IsDBNull(5) ? 1 : ReadInt32(reader, 5),
             Departments = DeserializeDepartments(reader.IsDBNull(6) ? null : reader.GetString(6), reader.IsDBNull(4) ? string.Empty : reader.GetString(4)),
             Position = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
             CardNumber = reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
@@ -299,7 +298,8 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             FingerprintTemplates = reader.IsDBNull(17) ? null : reader.GetString(17),
             CreatedAt = reader.IsDBNull(18) ? DateTime.UtcNow : ReadDateTime(reader, 18),
             SyncedAt = reader.IsDBNull(19) ? null : ReadDateTime(reader, 19),
-            IsActive = ReadInt32(reader, 20) == 1
+            IsActive = ReadInt32(reader, 20) == 1,
+            AreaId = reader.IsDBNull(21) ? 1 : ReadInt32(reader, 21)
         });
     }
 
@@ -308,7 +308,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         const string sql = """
             SELECT Id, SerialNumber, Name, Model, IpAddress, Location, TimeZone, SupportsVisibleLightFace, SupportsInfraredFace, SupportsFingerprint, FaceAlgorithmVersion, FingerprintAlgorithmVersion,
                    FirmwareVersion, DeviceType, PushVer, Language, MultiBioDataSupport, MultiBioPhotoSupport, MultiBioVersion, MaxMultiBioDataCount, MaxMultiBioPhotoCount,
-                   FingerFunOn, FaceFunOn, VisiLightFunOn, BioDataFun, BioPhotoFun, SupportsPalm, SupportsFingerVein, CapabilitiesJson, CreatedAtUtc, UpdatedAtUtc, Status, IsRegistrationDevice, IsOnline, LastSeenUtc
+                   FingerFunOn, FaceFunOn, VisiLightFunOn, BioDataFun, BioPhotoFun, SupportsPalm, SupportsFingerVein, CapabilitiesJson, CreatedAtUtc, UpdatedAtUtc, Status, IsRegistrationDevice, IsOnline, LastSeenUtc, AreaId, DepartmentId, IsRegistered
             FROM Devices
             ORDER BY SerialNumber
             """;
@@ -349,25 +349,31 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             Status = reader.IsDBNull(31) ? DeviceStatus.Offline : (DeviceStatus)ReadInt32(reader, 31),
             IsRegistrationDevice = !reader.IsDBNull(32) && ReadInt32(reader, 32) == 1,
             IsOnline = ReadInt32(reader, 33) == 1,
-            LastSeenUtc = reader.IsDBNull(34) ? null : ReadDateTime(reader, 34)
+            LastSeenUtc = reader.IsDBNull(34) ? null : ReadDateTime(reader, 34),
+            AreaId = reader.IsDBNull(35) ? 1 : ReadInt32(reader, 35),
+            DepartmentId = reader.IsDBNull(36) ? 1 : ReadInt32(reader, 36),
+            IsRegistered = !reader.IsDBNull(37) && ReadInt32(reader, 37) == 1
         });
     }
 
     public Device AddDevice(Device device)
     {
-        var capabilitiesValueToken = _usePostgreSql ? "CAST($capabilitiesJson AS jsonb)" : "$capabilitiesJson";
+        // All boolean cols passed as INTEGER 0/1 — works for both INTEGER and BOOLEAN column types
+        // EnsurePostgresSchema normalises all these to INTEGER on startup
         var sql = $"""
             INSERT INTO Devices (Id, SerialNumber, Name, Model, IpAddress, Location, TimeZone, SupportsVisibleLightFace, SupportsInfraredFace, SupportsFingerprint, FaceAlgorithmVersion, FingerprintAlgorithmVersion,
                                  FirmwareVersion, DeviceType, PushVer, Language, MultiBioDataSupport, MultiBioPhotoSupport, MultiBioVersion, MaxMultiBioDataCount, MaxMultiBioPhotoCount,
-                                 FingerFunOn, FaceFunOn, VisiLightFunOn, BioDataFun, BioPhotoFun, SupportsPalm, SupportsFingerVein, CapabilitiesJson, CreatedAtUtc, UpdatedAtUtc, Status, IsRegistrationDevice, IsOnline, LastSeenUtc)
-            VALUES ($id, $sn, $name, $model, $ip, $loc, $timezone, $visible, $infra, $fp, $faceAlgo, $fpAlgo,
+                                 FingerFunOn, FaceFunOn, VisiLightFunOn, BioDataFun, BioPhotoFun, SupportsPalm, SupportsFingerVein, CapabilitiesJson, CreatedAtUtc, UpdatedAtUtc, Status, IsRegistrationDevice, IsOnline, LastSeenUtc, AreaId, DepartmentId, IsRegistered)
+            VALUES ({SqlUuid("$id")}, $sn, $name, $model, $ip, $loc, $timezone, $visible, $infra, $fp, $faceAlgo, $fpAlgo,
                     $firmware, $deviceType, $pushVer, $language, $multiBioDataSupport, $multiBioPhotoSupport, $multiBioVersion, $maxMultiBioDataCount, $maxMultiBioPhotoCount,
-                    $fingerFunOn, $faceFunOn, $visiLightFunOn, $bioDataFun, $bioPhotoFun, $supportsPalm, $supportsFingerVein, {capabilitiesValueToken}, $createdAtUtc, $updatedAtUtc, $status, $isReg, $online, $lastSeen)
+                    $fingerFunOn, $faceFunOn, $visiLightFunOn, $bioDataFun, $bioPhotoFun, $supportsPalm, $supportsFingerVein,
+                    {(_usePostgreSql ? "CAST($capabilitiesJson AS jsonb)" : "$capabilitiesJson")},
+                    {SqlTs("$createdAtUtc")}, {SqlTs("$updatedAtUtc")}, $status, $isReg, $online, {SqlTs("$lastSeen")}, $areaId, $deptId, $isRegistered)
             """;
 
         Execute(sql, command =>
         {
-            command.Parameters.AddWithValue("$id", device.Id.ToString());
+            command.Parameters.AddWithValue("$id", GuidParam(device.Id));
             command.Parameters.AddWithValue("$sn", device.SerialNumber);
             command.Parameters.AddWithValue("$name", device.Name);
             command.Parameters.AddWithValue("$model", device.Model ?? string.Empty);
@@ -396,12 +402,16 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$supportsPalm", device.SupportsPalm ? 1 : 0);
             command.Parameters.AddWithValue("$supportsFingerVein", device.SupportsFingerVein ? 1 : 0);
             command.Parameters.AddWithValue("$capabilitiesJson", string.IsNullOrWhiteSpace(device.CapabilitiesJson) ? "{}" : device.CapabilitiesJson);
-            command.Parameters.AddWithValue("$createdAtUtc", device.CreatedAtUtc == default ? DateTime.UtcNow : device.CreatedAtUtc);
-            command.Parameters.AddWithValue("$updatedAtUtc", DateTime.UtcNow);
+            // Pass timestamps as ISO strings — SQL CAST($x AS timestamptz) handles conversion
+            command.Parameters.AddWithValue("$createdAtUtc", (device.CreatedAtUtc == default ? DateTime.UtcNow : device.CreatedAtUtc).ToString("O"));
+            command.Parameters.AddWithValue("$updatedAtUtc", DateTime.UtcNow.ToString("O"));
             command.Parameters.AddWithValue("$status", (int)device.Status);
             command.Parameters.AddWithValue("$isReg", device.IsRegistrationDevice ? 1 : 0);
             command.Parameters.AddWithValue("$online", device.IsOnline ? 1 : 0);
-            command.Parameters.AddWithValue("$lastSeen", device.LastSeenUtc.HasValue ? device.LastSeenUtc.Value : DBNull.Value);
+            command.Parameters.AddWithValue("$lastSeen", device.LastSeenUtc.HasValue ? device.LastSeenUtc.Value.ToString("O") : (object)DBNull.Value);
+            command.Parameters.AddWithValue("$areaId", device.AreaId > 0 ? device.AreaId : 1);
+            command.Parameters.AddWithValue("$deptId", device.DepartmentId > 0 ? device.DepartmentId : 1);
+            command.Parameters.AddWithValue("$isRegistered", device.IsRegistered ? 1 : 0);
         });
 
         return device;
@@ -409,18 +419,18 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
 
     public Device? FindDeviceById(Guid deviceId)
     {
-        const string sql = """
+        var sql = $"""
             SELECT Id, SerialNumber, Name, Model, IpAddress, Location, TimeZone, SupportsVisibleLightFace, SupportsInfraredFace, SupportsFingerprint, FaceAlgorithmVersion, FingerprintAlgorithmVersion,
                    FirmwareVersion, DeviceType, PushVer, Language, MultiBioDataSupport, MultiBioPhotoSupport, MultiBioVersion, MaxMultiBioDataCount, MaxMultiBioPhotoCount,
-                   FingerFunOn, FaceFunOn, VisiLightFunOn, BioDataFun, BioPhotoFun, SupportsPalm, SupportsFingerVein, CapabilitiesJson, CreatedAtUtc, UpdatedAtUtc, Status, IsRegistrationDevice, IsOnline, LastSeenUtc
+                   FingerFunOn, FaceFunOn, VisiLightFunOn, BioDataFun, BioPhotoFun, SupportsPalm, SupportsFingerVein, CapabilitiesJson, CreatedAtUtc, UpdatedAtUtc, Status, IsRegistrationDevice, IsOnline, LastSeenUtc, AreaId, DepartmentId, IsRegistered
             FROM Devices
-            WHERE Id = $id
+            WHERE Id = {SqlUuid("$id")}
             LIMIT 1
             """;
 
         return QuerySingle(sql, command =>
         {
-            command.Parameters.AddWithValue("$id", deviceId.ToString());
+            command.Parameters.AddWithValue("$id", GuidParam(deviceId));
         }, reader => new Device
         {
             Id = ReadGuid(reader, 0),
@@ -457,7 +467,10 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             Status = reader.IsDBNull(31) ? DeviceStatus.Offline : (DeviceStatus)ReadInt32(reader, 31),
             IsRegistrationDevice = !reader.IsDBNull(32) && ReadInt32(reader, 32) == 1,
             IsOnline = ReadInt32(reader, 33) == 1,
-            LastSeenUtc = reader.IsDBNull(34) ? null : ReadDateTime(reader, 34)
+            LastSeenUtc = reader.IsDBNull(34) ? null : ReadDateTime(reader, 34),
+            AreaId = reader.IsDBNull(35) ? 1 : ReadInt32(reader, 35),
+            DepartmentId = reader.IsDBNull(36) ? 1 : ReadInt32(reader, 36),
+            IsRegistered = !reader.IsDBNull(37) && ReadInt32(reader, 37) == 1
         });
     }
 
@@ -466,7 +479,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         const string sql = """
             SELECT Id, SerialNumber, Name, Model, IpAddress, Location, TimeZone, SupportsVisibleLightFace, SupportsInfraredFace, SupportsFingerprint, FaceAlgorithmVersion, FingerprintAlgorithmVersion,
                    FirmwareVersion, DeviceType, PushVer, Language, MultiBioDataSupport, MultiBioPhotoSupport, MultiBioVersion, MaxMultiBioDataCount, MaxMultiBioPhotoCount,
-                   FingerFunOn, FaceFunOn, VisiLightFunOn, BioDataFun, BioPhotoFun, SupportsPalm, SupportsFingerVein, CapabilitiesJson, CreatedAtUtc, UpdatedAtUtc, Status, IsRegistrationDevice, IsOnline, LastSeenUtc
+                   FingerFunOn, FaceFunOn, VisiLightFunOn, BioDataFun, BioPhotoFun, SupportsPalm, SupportsFingerVein, CapabilitiesJson, CreatedAtUtc, UpdatedAtUtc, Status, IsRegistrationDevice, IsOnline, LastSeenUtc, AreaId, DepartmentId, IsRegistered
             FROM Devices
             WHERE LOWER(SerialNumber) = LOWER($sn)
             LIMIT 1
@@ -511,7 +524,10 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             Status = reader.IsDBNull(31) ? DeviceStatus.Offline : (DeviceStatus)ReadInt32(reader, 31),
             IsRegistrationDevice = !reader.IsDBNull(32) && ReadInt32(reader, 32) == 1,
             IsOnline = ReadInt32(reader, 33) == 1,
-            LastSeenUtc = reader.IsDBNull(34) ? null : ReadDateTime(reader, 34)
+            LastSeenUtc = reader.IsDBNull(34) ? null : ReadDateTime(reader, 34),
+            AreaId = reader.IsDBNull(35) ? 1 : ReadInt32(reader, 35),
+            DepartmentId = reader.IsDBNull(36) ? 1 : ReadInt32(reader, 36),
+            IsRegistered = !reader.IsDBNull(37) && ReadInt32(reader, 37) == 1
         });
     }
 
@@ -548,17 +564,20 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                 SupportsPalm = $supportsPalm,
                 SupportsFingerVein = $supportsFingerVein,
                 CapabilitiesJson = {capabilitiesValueToken},
-                UpdatedAtUtc = $updatedAtUtc,
+                UpdatedAtUtc = {SqlTs("$updatedAtUtc")},
                 Status = $status,
                 IsRegistrationDevice = $isReg,
                 IsOnline = $online,
-                LastSeenUtc = $lastSeen
-            WHERE Id = $id
+                LastSeenUtc = {SqlTs("$lastSeen")},
+                AreaId = $areaId,
+                DepartmentId = $deptId,
+                IsRegistered = $isRegistered
+            WHERE Id = {SqlUuid("$id")}
             """;
 
         var rows = Execute(sql, command =>
         {
-            command.Parameters.AddWithValue("$id", device.Id.ToString());
+            command.Parameters.AddWithValue("$id", GuidParam(device.Id));
             command.Parameters.AddWithValue("$sn", device.SerialNumber);
             command.Parameters.AddWithValue("$name", device.Name);
             command.Parameters.AddWithValue("$model", device.Model ?? string.Empty);
@@ -587,11 +606,14 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$supportsPalm", device.SupportsPalm ? 1 : 0);
             command.Parameters.AddWithValue("$supportsFingerVein", device.SupportsFingerVein ? 1 : 0);
             command.Parameters.AddWithValue("$capabilitiesJson", string.IsNullOrWhiteSpace(device.CapabilitiesJson) ? "{}" : device.CapabilitiesJson);
-            command.Parameters.AddWithValue("$updatedAtUtc", DateTime.UtcNow);
+            command.Parameters.AddWithValue("$updatedAtUtc", DateTime.UtcNow.ToString("O"));
             command.Parameters.AddWithValue("$status", (int)device.Status);
             command.Parameters.AddWithValue("$isReg", device.IsRegistrationDevice ? 1 : 0);
             command.Parameters.AddWithValue("$online", device.IsOnline ? 1 : 0);
-            command.Parameters.AddWithValue("$lastSeen", device.LastSeenUtc.HasValue ? device.LastSeenUtc.Value : DBNull.Value);
+            command.Parameters.AddWithValue("$lastSeen", device.LastSeenUtc.HasValue ? device.LastSeenUtc.Value.ToString("O") : (object)DBNull.Value);
+            command.Parameters.AddWithValue("$areaId", device.AreaId > 0 ? device.AreaId : 1);
+            command.Parameters.AddWithValue("$deptId", device.DepartmentId > 0 ? device.DepartmentId : 1);
+            command.Parameters.AddWithValue("$isRegistered", device.IsRegistered ? 1 : 0);
         });
 
         return rows > 0;
@@ -599,17 +621,38 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
 
     public bool DeleteDevice(Guid deviceId)
     {
-        const string sql = """
-            DELETE FROM Devices
-            WHERE Id = $id
+        var sql = $"DELETE FROM Devices WHERE Id = {SqlUuid("$id")}";
+        var rows = Execute(sql, command => command.Parameters.AddWithValue("$id", GuidParam(deviceId)));
+        return rows > 0;
+    }
+
+    /// <summary>
+    /// Inserts a minimal stub row into the users table for <paramref name="userPin"/> if one
+    /// does not already exist. This satisfies the FK constraints on biometric_templates and
+    /// biometric_photos (both reference users.pin ON DELETE CASCADE) when biometric data
+    /// arrives from the device before a full USERINFO push has been processed.
+    /// Uses INSERT … ON CONFLICT DO NOTHING so it never overwrites existing data.
+    /// </summary>
+    private void EnsureUserStubExists(string userPin)
+    {
+        if (string.IsNullOrWhiteSpace(userPin))
+        {
+            return;
+        }
+
+        var usersTable = _usePostgreSql ? "\"E_Attendace\".\"users\"" : "users";
+        var now = DateParam(DateTime.UtcNow);
+        var sql = $"""
+            INSERT INTO {usersTable} (pin, name, created_at, updated_at)
+            VALUES ($pin, $pin, $now, $now)
+            ON CONFLICT (pin) DO NOTHING
             """;
 
-        var rows = Execute(sql, command =>
+        Execute(sql, command =>
         {
-            command.Parameters.AddWithValue("$id", deviceId.ToString());
+            command.Parameters.AddWithValue("$pin", userPin.Trim());
+            command.Parameters.AddWithValue("$now", now);
         });
-
-        return rows > 0;
     }
 
     public void UpsertUnifiedUser(
@@ -617,6 +660,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         string? name,
         int? privilege,
         string? password,
+
         string? primaryCard,
         string? secondaryCard,
         int? groupId,
@@ -654,7 +698,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                 updated_at = excluded.updated_at
             """;
 
-        var now = DateTime.UtcNow.ToString("O");
+        var nowDt = DateTime.UtcNow; var now = nowDt.ToString("O");
         Execute(sql, command =>
         {
             command.Parameters.AddWithValue("$pin", pin);
@@ -666,15 +710,15 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$groupId", groupId.HasValue ? groupId.Value : DBNull.Value);
             command.Parameters.AddWithValue("$timezoneProfile", timezoneProfile ?? string.Empty);
             command.Parameters.AddWithValue("$verifyMode", verifyMode.HasValue ? verifyMode.Value : DBNull.Value);
-            command.Parameters.AddWithValue("$validFrom", validFrom.HasValue ? validFrom.Value.ToString("O") : DBNull.Value);
-            command.Parameters.AddWithValue("$validTo", validTo.HasValue ? validTo.Value.ToString("O") : DBNull.Value);
+            command.Parameters.AddWithValue("$validFrom", DateParam(validFrom));
+            command.Parameters.AddWithValue("$validTo", DateParam(validTo));
             command.Parameters.AddWithValue("$expiresEnabled", expiresEnabled.HasValue ? (expiresEnabled.Value ? 1 : 0) : DBNull.Value);
             command.Parameters.AddWithValue("$phone", phone ?? string.Empty);
             command.Parameters.AddWithValue("$gender", gender.HasValue ? gender.Value : DBNull.Value);
             command.Parameters.AddWithValue("$nation", nation.HasValue ? nation.Value : DBNull.Value);
             command.Parameters.AddWithValue("$idNumber", idNumber ?? string.Empty);
-            command.Parameters.AddWithValue("$createdAt", now);
-            command.Parameters.AddWithValue("$updatedAt", now);
+            command.Parameters.AddWithValue("$createdAt", DateParam(nowDt));
+            command.Parameters.AddWithValue("$updatedAt", DateParam(nowDt));
         });
     }
 
@@ -730,22 +774,36 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         int? format,
         string templateData)
     {
+        // Ensure the parent users row exists before inserting into biometric_templates.
+        // biometric_templates has FK: user_pin → users(pin) ON DELETE CASCADE.
+        // When data arrives from the device (cdata push) the user may not be in the
+        // users table yet (it might only be in the Employees table). An INSERT ... ON
+        // CONFLICT DO NOTHING is safe: it never overwrites an existing user record.
+        EnsureUserStubExists(userPin);
+
         var templatesTable = _usePostgreSql ? "\"E_Attendace\".\"biometric_templates\"" : "biometric_templates";
+        // major_ver is part of the uniqueness key (not just a data column): a finger re-enrolled from
+        // a device running a different algorithm version (e.g. v13 after an earlier v10 capture) must
+        // land in its own row instead of overwriting the older version's template, so device sync can
+        // later pick whichever version matches the target device. Default null to 0 so the conflict
+        // target always matches consistently (Postgres treats NULL as distinct from NULL in unique
+        // constraints, which would otherwise let every "unversioned" upsert insert a fresh duplicate
+        // row rather than updating in place).
+        var effectiveMajorVer = majorVer ?? 0;
         var sql = $"""
             INSERT INTO {templatesTable}
             (user_pin, type, no, idx, valid, duress, major_ver, minor_ver, format, template_data, created_at, updated_at)
             VALUES ($userPin, $type, $no, $idx, $valid, $duress, $majorVer, $minorVer, $format, $templateData, $createdAt, $updatedAt)
-            ON CONFLICT (user_pin, type, no, idx) DO UPDATE SET
+            ON CONFLICT (user_pin, type, no, idx, major_ver) DO UPDATE SET
                 valid = excluded.valid,
                 duress = excluded.duress,
-                major_ver = excluded.major_ver,
                 minor_ver = excluded.minor_ver,
                 format = excluded.format,
                 template_data = excluded.template_data,
                 updated_at = excluded.updated_at
             """;
 
-        var now = DateTime.UtcNow.ToString("O");
+        var nowDt = DateTime.UtcNow; var now = nowDt.ToString("O");
         Execute(sql, command =>
         {
             command.Parameters.AddWithValue("$userPin", userPin);
@@ -754,12 +812,12 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$idx", idx);
             command.Parameters.AddWithValue("$valid", valid ? 1 : 0);
             command.Parameters.AddWithValue("$duress", duress ? 1 : 0);
-            command.Parameters.AddWithValue("$majorVer", majorVer.HasValue ? majorVer.Value : DBNull.Value);
+            command.Parameters.AddWithValue("$majorVer", effectiveMajorVer);
             command.Parameters.AddWithValue("$minorVer", minorVer.HasValue ? minorVer.Value : DBNull.Value);
             command.Parameters.AddWithValue("$format", format.HasValue ? format.Value : DBNull.Value);
             command.Parameters.AddWithValue("$templateData", templateData ?? string.Empty);
-            command.Parameters.AddWithValue("$createdAt", now);
-            command.Parameters.AddWithValue("$updatedAt", now);
+            command.Parameters.AddWithValue("$createdAt", DateParam(nowDt));
+            command.Parameters.AddWithValue("$updatedAt", DateParam(nowDt));
         });
     }
 
@@ -771,6 +829,13 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         int? format,
         string content)
     {
+        // Ensure the parent users row exists before inserting into biometric_photos.
+        // biometric_photos has FK: user_pin → users(pin) ON DELETE CASCADE.
+        // When data arrives from the device (cdata push) the user may not be in the
+        // users table yet (it might only be in the Employees table). An INSERT ... ON
+        // CONFLICT DO NOTHING is safe: it never overwrites an existing user record.
+        EnsureUserStubExists(userPin);
+
         var photosTable = _usePostgreSql ? "\"E_Attendace\".\"biometric_photos\"" : "biometric_photos";
         var sql = $"""
             INSERT INTO {photosTable}
@@ -782,7 +847,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                 updated_at = excluded.updated_at
             """;
 
-        var now = DateTime.UtcNow.ToString("O");
+        var nowDt = DateTime.UtcNow; var now = nowDt.ToString("O");
         Execute(sql, command =>
         {
             command.Parameters.AddWithValue("$userPin", userPin);
@@ -791,8 +856,8 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$idx", idx);
             command.Parameters.AddWithValue("$format", format.HasValue ? format.Value : DBNull.Value);
             command.Parameters.AddWithValue("$content", content ?? string.Empty);
-            command.Parameters.AddWithValue("$createdAt", now);
-            command.Parameters.AddWithValue("$updatedAt", now);
+            command.Parameters.AddWithValue("$createdAt", DateParam(nowDt));
+            command.Parameters.AddWithValue("$updatedAt", DateParam(nowDt));
         });
     }
 
@@ -985,7 +1050,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
     public IReadOnlyList<AttendanceRecord> GetAttendance(DateOnly? from, DateOnly? to)
     {
         var sql = """
-            SELECT Id, EmployeeId, EmployeeCode, Timestamp, Status, StatusCode, VerifyMode, Workcode, DeviceId, DeviceSerialNumber
+            SELECT Id, EmployeeId, EmployeeCode, Timestamp, Status, StatusCode, VerifyMode, Workcode, DeviceId, DeviceSerialNumber, AreaId, DepartmentId
             FROM AttendanceRecords
             WHERE 1 = 1
             """;
@@ -1012,49 +1077,39 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             {
                 command.Parameters.AddWithValue(name, value ?? DBNull.Value);
             }
-        }, reader => new AttendanceRecord
-        {
-            Id = ReadGuid(reader, 0),
-            EmployeeId = ReadGuid(reader, 1),
-            EmployeeCode = reader.GetString(2),
-            Timestamp = ReadDateTime(reader, 3),
-            Status = (AttendanceStatus)ReadInt32(reader, 4),
-            StatusCode = reader.IsDBNull(5) ? null : ReadInt32(reader, 5),
-            VerifyMode = reader.IsDBNull(6) ? null : ReadInt32(reader, 6),
-            Workcode = reader.IsDBNull(7) ? null : reader.GetString(7),
-            DeviceId = reader.IsDBNull(8) ? null : ReadGuid(reader, 8),
-            DeviceSerialNumber = reader.IsDBNull(9) ? null : reader.GetString(9)
-        });
+        }, reader => MapAttendanceRecord(reader));
     }
 
     public AttendanceRecord AddAttendance(AttendanceRecord record)
     {
         var sql = _usePostgreSql
-            ? """
+            ? $"""
                 INSERT INTO AttendanceRecords
-                (Id, EmployeeId, EmployeeCode, Timestamp, Status, StatusCode, VerifyMode, Workcode, DeviceId, DeviceSerialNumber)
-                VALUES ($id, $employeeId, $code, $timestamp, $status, $statusCode, $verify, $workcode, $deviceId, $deviceSn)
+                (Id, EmployeeId, EmployeeCode, Timestamp, AttendanceDate, Status, StatusCode, VerifyMode, Workcode, DeviceId, DeviceSerialNumber, AreaId, DepartmentId)
+                VALUES ({SqlUuid("$id")}, {SqlUuid("$employeeId")}, $code, {SqlTs("$timestamp")}, CAST({SqlTs("$timestamp")} AS date), $status, $statusCode, $verify, $workcode, {SqlUuid("$deviceId")}, $deviceSn, $areaId, $deptId)
                 ON CONFLICT DO NOTHING
                 """
             : """
                 INSERT OR IGNORE INTO AttendanceRecords
-                (Id, EmployeeId, EmployeeCode, Timestamp, Status, StatusCode, VerifyMode, Workcode, DeviceId, DeviceSerialNumber)
-                VALUES ($id, $employeeId, $code, $timestamp, $status, $statusCode, $verify, $workcode, $deviceId, $deviceSn)
+                (Id, EmployeeId, EmployeeCode, Timestamp, Status, StatusCode, VerifyMode, Workcode, DeviceId, DeviceSerialNumber, AreaId, DepartmentId)
+                VALUES ($id, $employeeId, $code, $timestamp, $status, $statusCode, $verify, $workcode, $deviceId, $deviceSn, $areaId, $deptId)
                 """;
 
-        var timestampText = record.Timestamp.ToString("O");
+        var timestampText = record.Timestamp.ToString("O"); // kept for idempotency WHERE clause
         var rows = Execute(sql, command =>
         {
-            command.Parameters.AddWithValue("$id", record.Id.ToString());
-            command.Parameters.AddWithValue("$employeeId", record.EmployeeId.ToString());
+            command.Parameters.AddWithValue("$id", GuidParam(record.Id));
+            command.Parameters.AddWithValue("$employeeId", GuidParam(record.EmployeeId));
             command.Parameters.AddWithValue("$code", record.EmployeeCode);
             command.Parameters.AddWithValue("$timestamp", timestampText);
             command.Parameters.AddWithValue("$status", (int)record.Status);
             command.Parameters.AddWithValue("$statusCode", record.StatusCode.HasValue ? record.StatusCode.Value : DBNull.Value);
             command.Parameters.AddWithValue("$verify", record.VerifyMode.HasValue ? record.VerifyMode.Value : DBNull.Value);
             command.Parameters.AddWithValue("$workcode", record.Workcode ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("$deviceId", record.DeviceId.HasValue ? record.DeviceId.Value.ToString() : DBNull.Value);
+            command.Parameters.AddWithValue("$deviceId", record.DeviceId.HasValue ? GuidParam(record.DeviceId.Value) : (object)DBNull.Value); // uuid handled by SqlUuid in SQL
             command.Parameters.AddWithValue("$deviceSn", record.DeviceSerialNumber ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("$areaId", record.AreaId > 0 ? record.AreaId : 1);
+            command.Parameters.AddWithValue("$deptId", record.DepartmentId > 0 ? record.DepartmentId : 1);
         });
 
         if (rows > 0)
@@ -1063,7 +1118,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         }
 
         const string lookupSql = """
-            SELECT Id, EmployeeId, EmployeeCode, Timestamp, Status, StatusCode, VerifyMode, Workcode, DeviceId, DeviceSerialNumber
+            SELECT Id, EmployeeId, EmployeeCode, Timestamp, Status, StatusCode, VerifyMode, Workcode, DeviceId, DeviceSerialNumber, AreaId, DepartmentId
             FROM AttendanceRecords
             WHERE COALESCE(DeviceSerialNumber,'') = $deviceSnKey
               AND EmployeeCode = $code
@@ -1082,50 +1137,38 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$statusCodeKey", record.StatusCode ?? -1);
             command.Parameters.AddWithValue("$verifyKey", record.VerifyMode ?? -1);
             command.Parameters.AddWithValue("$workcodeKey", record.Workcode?.Trim() ?? string.Empty);
-        }, reader => new AttendanceRecord
-        {
-            Id = ReadGuid(reader, 0),
-            EmployeeId = ReadGuid(reader, 1),
-            EmployeeCode = reader.GetString(2),
-            Timestamp = ReadDateTime(reader, 3),
-            Status = (AttendanceStatus)ReadInt32(reader, 4),
-            StatusCode = reader.IsDBNull(5) ? null : ReadInt32(reader, 5),
-            VerifyMode = reader.IsDBNull(6) ? null : ReadInt32(reader, 6),
-            Workcode = reader.IsDBNull(7) ? null : reader.GetString(7),
-            DeviceId = reader.IsDBNull(8) ? null : ReadGuid(reader, 8),
-            DeviceSerialNumber = reader.IsDBNull(9) ? null : reader.GetString(9)
-        });
+        }, reader => MapAttendanceRecord(reader));
 
         return existing ?? record;
     }
 
     public bool UpdateAttendance(AttendanceRecord record)
     {
-        const string sql = """
+        var sql = $"""
             UPDATE AttendanceRecords
-            SET EmployeeId = $employeeId,
+            SET EmployeeId = {SqlUuid("$employeeId")},
                 EmployeeCode = $code,
-                Timestamp = $timestamp,
+                Timestamp = {SqlTs("$timestamp")},
                 Status = $status,
                 StatusCode = $statusCode,
                 VerifyMode = $verify,
                 Workcode = $workcode,
-                DeviceId = $deviceId,
+                DeviceId = {SqlUuid("$deviceId")},
                 DeviceSerialNumber = $deviceSn
-            WHERE Id = $id
+            WHERE Id = {SqlUuid("$id")}
             """;
 
         var rows = Execute(sql, command =>
         {
-            command.Parameters.AddWithValue("$id", record.Id.ToString());
-            command.Parameters.AddWithValue("$employeeId", record.EmployeeId.ToString());
+            command.Parameters.AddWithValue("$id", GuidParam(record.Id));
+            command.Parameters.AddWithValue("$employeeId", GuidParam(record.EmployeeId));
             command.Parameters.AddWithValue("$code", record.EmployeeCode);
             command.Parameters.AddWithValue("$timestamp", record.Timestamp.ToString("O"));
             command.Parameters.AddWithValue("$status", (int)record.Status);
             command.Parameters.AddWithValue("$statusCode", record.StatusCode.HasValue ? record.StatusCode.Value : DBNull.Value);
             command.Parameters.AddWithValue("$verify", record.VerifyMode.HasValue ? record.VerifyMode.Value : DBNull.Value);
             command.Parameters.AddWithValue("$workcode", record.Workcode ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("$deviceId", record.DeviceId.HasValue ? record.DeviceId.Value.ToString() : DBNull.Value);
+            command.Parameters.AddWithValue("$deviceId", record.DeviceId.HasValue ? GuidParam(record.DeviceId.Value) : (object)DBNull.Value); // uuid handled by SqlUuid in SQL
             command.Parameters.AddWithValue("$deviceSn", record.DeviceSerialNumber ?? (object)DBNull.Value);
         });
 
@@ -1134,16 +1177,8 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
 
     public bool DeleteAttendance(Guid attendanceId)
     {
-        const string sql = """
-            DELETE FROM AttendanceRecords
-            WHERE Id = $id
-            """;
-
-        var rows = Execute(sql, command =>
-        {
-            command.Parameters.AddWithValue("$id", attendanceId.ToString());
-        });
-
+        var sql = $"DELETE FROM AttendanceRecords WHERE Id = {SqlUuid("$id")}";
+        var rows = Execute(sql, command => command.Parameters.AddWithValue("$id", GuidParam(attendanceId)));
         return rows > 0;
     }
 
@@ -1199,14 +1234,14 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
 
     public DeviceCommand EnqueueCommand(DeviceCommand command)
     {
-        const string sql = """
+        var sql = $"""
             INSERT INTO DeviceCommands (Id, DeviceSerialNumber, CommandText, CreatedUtc)
-            VALUES ($id, $sn, $cmd, $created)
+            VALUES ({SqlUuid("$id")}, $sn, $cmd, {SqlTs("$created")})
             """;
 
         Execute(sql, db =>
         {
-            db.Parameters.AddWithValue("$id", command.Id.ToString());
+            db.Parameters.AddWithValue("$id", GuidParam(command.Id));
             db.Parameters.AddWithValue("$sn", command.DeviceSerialNumber);
             db.Parameters.AddWithValue("$cmd", command.CommandText);
             db.Parameters.AddWithValue("$created", command.CreatedUtc.ToString("O"));
@@ -1217,33 +1252,35 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
 
     public void MarkCommandSent(Guid commandId)
     {
-        const string sql = """
-            UPDATE DeviceCommands
-            SET SentUtc = $sent
-            WHERE Id = $id
-            """;
-
+        var sql = $"UPDATE DeviceCommands SET SentUtc = {SqlTs("$sent")} WHERE Id = {SqlUuid("$id")}";
         Execute(sql, db =>
         {
-            db.Parameters.AddWithValue("$id", commandId.ToString());
+            db.Parameters.AddWithValue("$id", GuidParam(commandId));
             db.Parameters.AddWithValue("$sent", DateTime.UtcNow.ToString("O"));
         });
     }
 
     public void SaveCommandReply(Guid commandId, string replyText)
     {
-        const string sql = """
+        // Also set SentUtc when it is still NULL (fire-and-forget commands like CHECK / DATA QUERY
+        // are replied-on-delivery via RecordCommandReply before MarkCommandSent is called, so
+        // SentUtc is NULL at that point). Without this, GetPendingCommands (SentUtc IS NULL)
+        // keeps returning the same command on every getrequest poll → infinite re-send loop.
+        var sql = $"""
             UPDATE DeviceCommands
-            SET ReplyText = $reply
-            WHERE Id = $id
+            SET ReplyText = $reply,
+                SentUtc   = CASE WHEN SentUtc IS NULL THEN {SqlTs("$sent")} ELSE SentUtc END
+            WHERE Id = {SqlUuid("$id")}
             """;
 
         Execute(sql, db =>
         {
-            db.Parameters.AddWithValue("$id", commandId.ToString());
+            db.Parameters.AddWithValue("$id", GuidParam(commandId));
             db.Parameters.AddWithValue("$reply", replyText);
+            db.Parameters.AddWithValue("$sent", DateParam(DateTime.UtcNow));
         });
     }
+
 
     public int ClearPendingCommands(string deviceSerialNumber)
     {
@@ -1259,23 +1296,46 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         });
     }
 
+    public int ResetStaleSentCommands(string deviceSerialNumber, int olderThanMinutes)
+    {
+        // Commands delivered but never replied to stay stuck forever because GetPendingCommands
+        // filters SentUtc IS NULL. Reset them so they get re-delivered next connection.
+        // SentUtc is timestamptz on Postgres, so the threshold must be CAST via SqlTs — passing
+        // the raw ISO string makes Postgres throw "operator does not exist: timestamptz < text".
+        var sql = $"""
+            UPDATE DeviceCommands
+            SET SentUtc = NULL
+            WHERE LOWER(DeviceSerialNumber) = LOWER($sn)
+              AND SentUtc IS NOT NULL
+              AND ReplyText IS NULL
+              AND SentUtc < {SqlTs("$threshold")}
+            """;
+
+        var threshold = DateParam(DateTime.UtcNow.AddMinutes(-olderThanMinutes));
+        return Execute(sql, db =>
+        {
+            db.Parameters.AddWithValue("$sn", deviceSerialNumber);
+            db.Parameters.AddWithValue("$threshold", threshold);
+        });
+    }
+
     public SyncLog AddSyncLog(SyncLog log)
     {
-        const string sql = """
+        var sql = $"""
             INSERT INTO SyncLogs (Id, DeviceSerialNumber, Type, Status, CommandText, ResponseText, CreatedUtc, CompletedUtc)
-            VALUES ($id, $sn, $type, $status, $cmd, $response, $created, $completed)
+            VALUES ({SqlUuid("$id")}, $sn, $type, $status, $cmd, $response, {SqlTs("$created")}, {SqlTs("$completed")})
             """;
 
         Execute(sql, db =>
         {
-            db.Parameters.AddWithValue("$id", log.Id.ToString());
+            db.Parameters.AddWithValue("$id", GuidParam(log.Id));
             db.Parameters.AddWithValue("$sn", log.DeviceSerialNumber);
             db.Parameters.AddWithValue("$type", (int)log.Type);
             db.Parameters.AddWithValue("$status", (int)log.Status);
             db.Parameters.AddWithValue("$cmd", log.CommandText);
             db.Parameters.AddWithValue("$response", log.ResponseText ?? string.Empty);
             db.Parameters.AddWithValue("$created", log.CreatedUtc.ToString("O"));
-            db.Parameters.AddWithValue("$completed", log.CompletedUtc?.ToString("O") ?? (object)DBNull.Value);
+            db.Parameters.AddWithValue("$completed", log.CompletedUtc.HasValue ? log.CompletedUtc.Value.ToString("O") : (object)DBNull.Value);
         });
 
         return log;
@@ -1310,17 +1370,17 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
 
     public void UpdateSyncLogResult(Guid syncLogId, SyncStatus status, string responseText)
     {
-        const string sql = """
+        var sql = $"""
             UPDATE SyncLogs
             SET Status = $status,
                 ResponseText = $response,
-                CompletedUtc = $completed
-            WHERE Id = $id
+                CompletedUtc = {SqlTs("$completed")}
+            WHERE Id = {SqlUuid("$id")}
             """;
 
         Execute(sql, db =>
         {
-            db.Parameters.AddWithValue("$id", syncLogId.ToString());
+            db.Parameters.AddWithValue("$id", GuidParam(syncLogId));
             db.Parameters.AddWithValue("$status", (int)status);
             db.Parameters.AddWithValue("$response", responseText ?? string.Empty);
             db.Parameters.AddWithValue("$completed", DateTime.UtcNow.ToString("O"));
@@ -1369,9 +1429,9 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             return;
         }
 
-        const string sql = """
+        var sql = $"""
             INSERT INTO DeviceTableStamps (DeviceSerialNumber, TableName, StampValue, UpdatedUtc)
-            VALUES ($sn, $table, $stamp, $updated)
+            VALUES ($sn, $table, $stamp, {SqlTs("$updated")})
             ON CONFLICT (DeviceSerialNumber, TableName) DO UPDATE SET
                 StampValue = excluded.StampValue,
                 UpdatedUtc = excluded.UpdatedUtc
@@ -1382,7 +1442,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             db.Parameters.AddWithValue("$sn", deviceSerialNumber.Trim());
             db.Parameters.AddWithValue("$table", tableName.Trim().ToUpperInvariant());
             db.Parameters.AddWithValue("$stamp", stampValue);
-            db.Parameters.AddWithValue("$updated", DateTime.UtcNow.ToString("O"));
+            db.Parameters.AddWithValue("$updated", DateParam(DateTime.UtcNow));
         });
     }
 
@@ -1490,7 +1550,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                 template_data TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT '',
-                UNIQUE (user_pin, type, no, idx),
+                UNIQUE (user_pin, type, no, idx, major_ver),
                 FOREIGN KEY (user_pin) REFERENCES users(pin) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS biometric_photos (
@@ -1546,13 +1606,142 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                 UpdatedUtc TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY (DeviceSerialNumber, TableName)
             );
+            CREATE TABLE IF NOT EXISTS Areas (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL UNIQUE,
+                IsDefault INTEGER NOT NULL DEFAULT 0,
+                CreatedAt TEXT NOT NULL DEFAULT '',
+                UpdatedAt TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS Departments (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL,
+                AreaId INTEGER NOT NULL DEFAULT 1,
+                IsDefault INTEGER NOT NULL DEFAULT 0,
+                CreatedAt TEXT NOT NULL DEFAULT '',
+                UpdatedAt TEXT NOT NULL DEFAULT '',
+                UNIQUE(AreaId, Name)
+            );
+            CREATE TABLE IF NOT EXISTS EmployeeDepartments (
+                EmployeeId TEXT NOT NULL,
+                DepartmentId INTEGER NOT NULL,
+                AssignedAt TEXT NOT NULL DEFAULT '',
+                AssignedBy TEXT NULL,
+                PRIMARY KEY (EmployeeId, DepartmentId)
+            );
+            CREATE TABLE IF NOT EXISTS SyncQueue (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                EntityType TEXT NOT NULL,
+                EntityId TEXT NOT NULL,
+                Operation TEXT NOT NULL,
+                Status INTEGER NOT NULL DEFAULT 0,
+                RetryCount INTEGER NOT NULL DEFAULT 0,
+                MaxRetries INTEGER NOT NULL DEFAULT 3,
+                Payload TEXT NULL,
+                ErrorMessage TEXT NULL,
+                CreatedAt TEXT NOT NULL DEFAULT '',
+                ProcessedAt TEXT NULL,
+                NextRetryAt TEXT NULL
+            );
             """;
 
-        using var connection = CreateConnection();
-        OpenConnection(connection);
+        DbConnection? connection = null;
+        try
+        {
+            connection = CreateConnection();
+            OpenConnection(connection);
+        }
+        catch
+        {
+            // PostgreSQL may not be running yet — schema will be created on first successful connection.
+            connection?.Dispose();
+            return;
+        }
+
+        try
+        {
         using var command = connection.CreateCommand();
         command.CommandText = NormalizeSql(sql);
         command.ExecuteNonQuery();
+
+        // ── Migration: Update biometric_templates unique constraint to allow multi-version FP templates ──
+        if (_usePostgreSql)
+        {
+            try
+            {
+                using var pgCmd = connection.CreateCommand();
+                pgCmd.CommandText = "ALTER TABLE \"E_Attendace\".\"biometric_templates\" DROP CONSTRAINT IF EXISTS \"biometric_templates_user_pin_type_no_idx_key\";";
+                pgCmd.ExecuteNonQuery();
+            }
+            catch { }
+
+            try
+            {
+                using var pgCmd = connection.CreateCommand();
+                pgCmd.CommandText = "ALTER TABLE \"E_Attendace\".\"biometric_templates\" ADD CONSTRAINT \"biometric_templates_user_pin_type_no_idx_major_ver_key\" UNIQUE (user_pin, type, no, idx, major_ver);";
+                pgCmd.ExecuteNonQuery();
+            }
+            catch { }
+        }
+        else
+        {
+            try
+            {
+                string? tableSql = null;
+                using (var checkCmd = connection.CreateCommand())
+                {
+                    checkCmd.CommandText = "SELECT sql FROM sqlite_master WHERE type='table' AND name='biometric_templates';";
+                    using (var reader = checkCmd.ExecuteReader())
+                    {
+                        if (reader.Read())
+                        {
+                            tableSql = reader.GetString(0);
+                        }
+                    }
+                }
+
+                if (tableSql != null && tableSql.Contains("UNIQUE (user_pin, type, no, idx)", StringComparison.OrdinalIgnoreCase))
+                {
+                    using (var txCmd = connection.CreateCommand())
+                    {
+                        txCmd.CommandText = @"""
+                            PRAGMA foreign_keys = OFF;
+                            BEGIN TRANSACTION;
+                            
+                            CREATE TABLE biometric_templates_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                user_pin TEXT NOT NULL,
+                                type INTEGER NOT NULL,
+                                no INTEGER NOT NULL,
+                                idx INTEGER NOT NULL,
+                                valid INTEGER NOT NULL DEFAULT 1,
+                                duress INTEGER NOT NULL DEFAULT 0,
+                                major_ver INTEGER NULL,
+                                minor_ver INTEGER NULL,
+                                format INTEGER NULL,
+                                template_data TEXT NOT NULL DEFAULT '',
+                                created_at TEXT NOT NULL DEFAULT '',
+                                updated_at TEXT NOT NULL DEFAULT '',
+                                UNIQUE (user_pin, type, no, idx, major_ver),
+                                FOREIGN KEY (user_pin) REFERENCES users(pin) ON DELETE CASCADE
+                            );
+                            
+                            INSERT INTO biometric_templates_new (id, user_pin, type, no, idx, valid, duress, major_ver, minor_ver, format, template_data, created_at, updated_at)
+                            SELECT id, user_pin, type, no, idx, valid, duress, major_ver, minor_ver, format, template_data, created_at, updated_at FROM biometric_templates;
+                            
+                            DROP TABLE biometric_templates;
+                            
+                            ALTER TABLE biometric_templates_new RENAME TO biometric_templates;
+                            
+                            COMMIT;
+                            PRAGMA foreign_keys = ON;
+                            """;
+                        txCmd.ExecuteNonQuery();
+                    }
+                }
+            }
+            catch { }
+        }
 
         EnsureColumn(connection, "Devices", "Model", "ALTER TABLE Devices ADD COLUMN Model TEXT NOT NULL DEFAULT '';");
         EnsureColumn(connection, "Devices", "TimeZone", "ALTER TABLE Devices ADD COLUMN TimeZone TEXT NOT NULL DEFAULT '+5:45';");
@@ -1585,6 +1774,13 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
 
         EnsureColumn(connection, "Employees", "Area", "ALTER TABLE Employees ADD COLUMN Area TEXT NOT NULL DEFAULT '';");
         EnsureColumn(connection, "Employees", "DepartmentId", "ALTER TABLE Employees ADD COLUMN DepartmentId INTEGER NULL;");
+        EnsureColumn(connection, "Employees", "AreaId", "ALTER TABLE Employees ADD COLUMN AreaId INTEGER NOT NULL DEFAULT 1;");
+        EnsureColumn(connection, "Devices", "AreaId", "ALTER TABLE Devices ADD COLUMN AreaId INTEGER NOT NULL DEFAULT 1;");
+        EnsureColumn(connection, "Devices", "DepartmentId", "ALTER TABLE Devices ADD COLUMN DepartmentId INTEGER NOT NULL DEFAULT 1;");
+        EnsureColumn(connection, "Devices", "IsRegistered", "ALTER TABLE Devices ADD COLUMN IsRegistered INTEGER NOT NULL DEFAULT 0;");
+        EnsureColumn(connection, "AttendanceRecords", "AreaId", "ALTER TABLE AttendanceRecords ADD COLUMN AreaId INTEGER NOT NULL DEFAULT 1;");
+        EnsureColumn(connection, "AttendanceRecords", "DepartmentId", "ALTER TABLE AttendanceRecords ADD COLUMN DepartmentId INTEGER NOT NULL DEFAULT 1;");
+        SeedDefaultAreaAndDepartment(connection);
         EnsureColumn(connection, "Employees", "CardNumber", "ALTER TABLE Employees ADD COLUMN CardNumber TEXT NOT NULL DEFAULT '';");
         EnsureColumn(connection, "Employees", "DepartmentsJson", "ALTER TABLE Employees ADD COLUMN DepartmentsJson TEXT NOT NULL DEFAULT '[]';");
         EnsureColumn(connection, "Employees", "Position", "ALTER TABLE Employees ADD COLUMN Position TEXT NOT NULL DEFAULT '';");
@@ -1601,6 +1797,9 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         EnsureColumn(connection, "Employees", "SyncedAt", "ALTER TABLE Employees ADD COLUMN SyncedAt TEXT NULL;");
 
         EnsureAttendanceRecordIdempotency(connection);
+        } // end try
+        catch { /* best-effort — schema applied on next successful call */ }
+        finally { connection?.Dispose(); }
     }
 
     private void EnsureAttendanceRecordIdempotency(DbConnection connection)
@@ -1687,6 +1886,573 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         }
     }
 
+    // ── Timetable / Holiday stubs (handled by TimetableRepository via EF) ──
+
+    public TimetableEntity? GetTimetableById(int timetableId) => null;
+    public IReadOnlyList<TimetableEntity> GetAllTimetables() => [];
+    public IReadOnlyList<TimetableDayEntity> GetTimetableDays(int timetableId) => [];
+    public IReadOnlyList<EmployeeTimetableEntity> GetEmployeeTimetables(int timetableId) => [];
+    public IReadOnlyList<DepartmentTimetableEntity> GetDepartmentTimetables(int timetableId) => [];
+    public IReadOnlyList<DepartmentTimetableEntity> GetAllDepartmentTimetables() => [];
+    public IReadOnlyList<EmployeeTimetableEntity> GetEmployeeTimetablesByPersonnel(Guid personnelId) => [];
+    public IReadOnlyList<DepartmentTimetableEntity> GetDepartmentTimetablesByDepartment(int departmentId) => [];
+    public IReadOnlyList<HolidayEntity> GetAllHolidays() => [];
+    public IReadOnlyList<AccCombinationEntity> GetAllAccCombinations() => [];
+
+    // ── Seed ────────────────────────────────────────────────────────────────
+
+    private void SeedDefaultAreaAndDepartment(DbConnection connection)
+    {
+        var nowDt = DateTime.UtcNow; var now = nowDt.ToString("O");
+        // Use INSERT OR IGNORE (SQLite) / INSERT ... ON CONFLICT DO NOTHING (Postgres)
+        var areaInsert = _usePostgreSql
+            ? $"INSERT INTO \"E_Attendace\".\"Areas\" (\"Id\", \"Name\", \"IsDefault\", \"CreatedAt\", \"UpdatedAt\") VALUES (1, 'Default Area', 1, @now, @now) ON CONFLICT (\"Id\") DO NOTHING;"
+            : "INSERT OR IGNORE INTO Areas (Id, Name, IsDefault, CreatedAt, UpdatedAt) VALUES (1, 'Default Area', 1, $now, $now);";
+
+        var deptInsert = _usePostgreSql
+            ? $"INSERT INTO \"E_Attendace\".\"Departments\" (\"Id\", \"Name\", \"AreaId\", \"IsDefault\", \"CreatedAt\", \"UpdatedAt\") VALUES (1, 'Default Department', 1, 1, @now, @now) ON CONFLICT (\"Id\") DO NOTHING;"
+            : "INSERT OR IGNORE INTO Departments (Id, Name, AreaId, IsDefault, CreatedAt, UpdatedAt) VALUES (1, 'Default Department', 1, 1, $now, $now);";
+
+        using var cmd1 = connection.CreateCommand();
+        cmd1.CommandText = areaInsert;
+        var p1 = cmd1.CreateParameter();
+        p1.ParameterName = _usePostgreSql ? "@now" : "$now";
+        p1.Value = now;
+        cmd1.Parameters.Add(p1);
+        cmd1.ExecuteNonQuery();
+
+        using var cmd2 = connection.CreateCommand();
+        cmd2.CommandText = deptInsert;
+        var p2 = cmd2.CreateParameter();
+        p2.ParameterName = _usePostgreSql ? "@now" : "$now";
+        p2.Value = now;
+        cmd2.Parameters.Add(p2);
+        cmd2.ExecuteNonQuery();
+    }
+
+    // ── Area CRUD ────────────────────────────────────────────────────────────
+
+    public IReadOnlyList<Area> GetAreas()
+    {
+        const string sql = "SELECT Id, Name, IsDefault, CreatedAt, UpdatedAt FROM Areas ORDER BY Id;";
+        return Query(sql, reader => new Area
+        {
+            Id = ReadInt32(reader, 0),
+            Name = reader.GetString(1),
+            IsDefault = ReadInt32(reader, 2) == 1,
+            CreatedAt = reader.IsDBNull(3) ? DateTime.UtcNow : ReadDateTime(reader, 3),
+            UpdatedAt = reader.IsDBNull(4) ? DateTime.UtcNow : ReadDateTime(reader, 4)
+        });
+    }
+
+    public Area? GetAreaById(int areaId)
+    {
+        const string sql = "SELECT Id, Name, IsDefault, CreatedAt, UpdatedAt FROM Areas WHERE Id = $id LIMIT 1;";
+        return QuerySingle(sql,
+            cmd => cmd.Parameters.AddWithValue("$id", areaId),
+            reader => new Area
+            {
+                Id = ReadInt32(reader, 0),
+                Name = reader.GetString(1),
+                IsDefault = ReadInt32(reader, 2) == 1,
+                CreatedAt = reader.IsDBNull(3) ? DateTime.UtcNow : ReadDateTime(reader, 3),
+                UpdatedAt = reader.IsDBNull(4) ? DateTime.UtcNow : ReadDateTime(reader, 4)
+            });
+    }
+
+    public Area AddArea(Area area)
+    {
+        var nowDt = DateTime.UtcNow; var now = nowDt.ToString("O");
+        // Auto-generate ID via AUTOINCREMENT; return inserted row
+        var sql = _usePostgreSql
+            ? "INSERT INTO Areas (\"Name\", \"IsDefault\", \"CreatedAt\", \"UpdatedAt\") VALUES ($name, $isDefault, $createdAt, $updatedAt);"
+            : "INSERT INTO Areas (Name, IsDefault, CreatedAt, UpdatedAt) VALUES ($name, $isDefault, $createdAt, $updatedAt);";
+        Execute(sql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("$name", area.Name.Trim());
+            cmd.Parameters.AddWithValue("$isDefault", area.IsDefault ? 1 : 0);
+            cmd.Parameters.AddWithValue("$createdAt", DateParam(nowDt));
+            cmd.Parameters.AddWithValue("$updatedAt", DateParam(nowDt));
+        });
+
+        // Fetch back the inserted row
+        var inserted = QuerySingle("SELECT Id, Name, IsDefault, CreatedAt, UpdatedAt FROM Areas WHERE Name = $name LIMIT 1;",
+            cmd => cmd.Parameters.AddWithValue("$name", area.Name.Trim()),
+            reader => new Area
+            {
+                Id = ReadInt32(reader, 0),
+                Name = reader.GetString(1),
+                IsDefault = ReadInt32(reader, 2) == 1,
+                CreatedAt = reader.IsDBNull(3) ? DateTime.UtcNow : ReadDateTime(reader, 3),
+                UpdatedAt = reader.IsDBNull(4) ? DateTime.UtcNow : ReadDateTime(reader, 4)
+            }) ?? area;
+
+        // Auto-create default department for the new area
+        AddDepartment(new Department
+        {
+            Name = $"{inserted.Name} Department",
+            AreaId = inserted.Id,
+            IsDefault = false
+        });
+
+        return inserted;
+    }
+
+    public bool UpdateArea(Area area)
+    {
+        if (area.Id == 1 && area.IsDefault) { /* name can be changed, just not deleted */ }
+        var nowDt = DateTime.UtcNow; var now = nowDt.ToString("O");
+        const string sql = "UPDATE Areas SET Name = $name, UpdatedAt = $updatedAt WHERE Id = $id;";
+        var rows = Execute(sql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("$id", area.Id);
+            cmd.Parameters.AddWithValue("$name", area.Name.Trim());
+            cmd.Parameters.AddWithValue("$updatedAt", DateParam(nowDt));
+        });
+        return rows > 0;
+    }
+
+    public bool DeleteArea(int areaId)
+    {
+        if (areaId == 1) return false; // Default Area is protected
+        var rows = Execute("DELETE FROM Areas WHERE Id = $id;",
+            cmd => cmd.Parameters.AddWithValue("$id", areaId));
+        return rows > 0;
+    }
+
+    // ── Department CRUD ──────────────────────────────────────────────────────
+
+    public IReadOnlyList<Department> GetDepartments()
+    {
+        const string sql = "SELECT Id, Name, AreaId, IsDefault, CreatedAt, UpdatedAt FROM Departments ORDER BY AreaId, Id;";
+        return Query(sql, reader => new Department
+        {
+            Id = ReadInt32(reader, 0),
+            Name = reader.GetString(1),
+            AreaId = ReadInt32(reader, 2),
+            IsDefault = ReadInt32(reader, 3) == 1,
+            CreatedAt = reader.IsDBNull(4) ? DateTime.UtcNow : ReadDateTime(reader, 4),
+            UpdatedAt = reader.IsDBNull(5) ? DateTime.UtcNow : ReadDateTime(reader, 5)
+        });
+    }
+
+    public IReadOnlyList<Department> GetDepartmentsByArea(int areaId)
+    {
+        const string sql = "SELECT Id, Name, AreaId, IsDefault, CreatedAt, UpdatedAt FROM Departments WHERE AreaId = $areaId ORDER BY Id;";
+        return Query(sql,
+            cmd => cmd.Parameters.AddWithValue("$areaId", areaId),
+            reader => new Department
+            {
+                Id = ReadInt32(reader, 0),
+                Name = reader.GetString(1),
+                AreaId = ReadInt32(reader, 2),
+                IsDefault = ReadInt32(reader, 3) == 1,
+                CreatedAt = reader.IsDBNull(4) ? DateTime.UtcNow : ReadDateTime(reader, 4),
+                UpdatedAt = reader.IsDBNull(5) ? DateTime.UtcNow : ReadDateTime(reader, 5)
+            });
+    }
+
+    public Department? GetDepartmentById(int departmentId)
+    {
+        const string sql = "SELECT Id, Name, AreaId, IsDefault, CreatedAt, UpdatedAt FROM Departments WHERE Id = $id LIMIT 1;";
+        return QuerySingle(sql,
+            cmd => cmd.Parameters.AddWithValue("$id", departmentId),
+            reader => new Department
+            {
+                Id = ReadInt32(reader, 0),
+                Name = reader.GetString(1),
+                AreaId = ReadInt32(reader, 2),
+                IsDefault = ReadInt32(reader, 3) == 1,
+                CreatedAt = reader.IsDBNull(4) ? DateTime.UtcNow : ReadDateTime(reader, 4),
+                UpdatedAt = reader.IsDBNull(5) ? DateTime.UtcNow : ReadDateTime(reader, 5)
+            });
+    }
+
+    public Department AddDepartment(Department department)
+    {
+        var nowDt = DateTime.UtcNow; var now = nowDt.ToString("O");
+        const string sql = """
+            INSERT INTO Departments (Name, AreaId, IsDefault, CreatedAt, UpdatedAt)
+            VALUES ($name, $areaId, $isDefault, $createdAt, $updatedAt);
+            """;
+        Execute(sql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("$name", department.Name.Trim());
+            cmd.Parameters.AddWithValue("$areaId", department.AreaId);
+            cmd.Parameters.AddWithValue("$isDefault", department.IsDefault ? 1 : 0);
+            cmd.Parameters.AddWithValue("$createdAt", DateParam(nowDt));
+            cmd.Parameters.AddWithValue("$updatedAt", DateParam(nowDt));
+        });
+
+        return QuerySingle("SELECT Id, Name, AreaId, IsDefault, CreatedAt, UpdatedAt FROM Departments WHERE AreaId = $areaId AND Name = $name LIMIT 1;",
+            cmd =>
+            {
+                cmd.Parameters.AddWithValue("$areaId", department.AreaId);
+                cmd.Parameters.AddWithValue("$name", department.Name.Trim());
+            },
+            reader => new Department
+            {
+                Id = ReadInt32(reader, 0),
+                Name = reader.GetString(1),
+                AreaId = ReadInt32(reader, 2),
+                IsDefault = ReadInt32(reader, 3) == 1,
+                CreatedAt = reader.IsDBNull(4) ? DateTime.UtcNow : ReadDateTime(reader, 4),
+                UpdatedAt = reader.IsDBNull(5) ? DateTime.UtcNow : ReadDateTime(reader, 5)
+            }) ?? department;
+    }
+
+    public bool UpdateDepartment(Department department)
+    {
+        var nowDt = DateTime.UtcNow; var now = nowDt.ToString("O");
+        const string sql = "UPDATE Departments SET Name = $name, UpdatedAt = $updatedAt WHERE Id = $id;";
+        var rows = Execute(sql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("$id", department.Id);
+            cmd.Parameters.AddWithValue("$name", department.Name.Trim());
+            cmd.Parameters.AddWithValue("$updatedAt", DateParam(nowDt));
+        });
+        return rows > 0;
+    }
+
+    public bool DeleteDepartment(int departmentId)
+    {
+        if (departmentId == 1) return false; // Default Department is protected
+        var rows = Execute("DELETE FROM Departments WHERE Id = $id;",
+            cmd => cmd.Parameters.AddWithValue("$id", departmentId));
+        return rows > 0;
+    }
+
+    // ── EmployeeDepartments ──────────────────────────────────────────────────
+
+    public IReadOnlyList<EmployeeDepartment> GetEmployeeDepartments(Guid employeeId)
+    {
+        const string sql = "SELECT EmployeeId, DepartmentId, AssignedAt, AssignedBy FROM EmployeeDepartments WHERE EmployeeId = $empId;";
+        return Query(sql,
+            cmd => cmd.Parameters.AddWithValue("$empId", GuidParam(employeeId)),
+            reader => new EmployeeDepartment
+            {
+                EmployeeId = ReadGuid(reader, 0),
+                DepartmentId = ReadInt32(reader, 1),
+                AssignedAt = reader.IsDBNull(2) ? DateTime.UtcNow : ReadDateTime(reader, 2),
+                AssignedBy = reader.IsDBNull(3) ? null : ReadGuid(reader, 3)
+            });
+    }
+
+    public IReadOnlyList<EmployeeDepartment> GetDepartmentEmployees(int departmentId)
+    {
+        const string sql = "SELECT EmployeeId, DepartmentId, AssignedAt, AssignedBy FROM EmployeeDepartments WHERE DepartmentId = $deptId;";
+        return Query(sql,
+            cmd => cmd.Parameters.AddWithValue("$deptId", departmentId),
+            reader => new EmployeeDepartment
+            {
+                EmployeeId = ReadGuid(reader, 0),
+                DepartmentId = ReadInt32(reader, 1),
+                AssignedAt = reader.IsDBNull(2) ? DateTime.UtcNow : ReadDateTime(reader, 2),
+                AssignedBy = reader.IsDBNull(3) ? null : ReadGuid(reader, 3)
+            });
+    }
+
+    public bool AddEmployeeDepartment(EmployeeDepartment ed)
+    {
+        var sql = _usePostgreSql
+            ? """
+                INSERT INTO EmployeeDepartments (EmployeeId, DepartmentId, AssignedAt, AssignedBy)
+                VALUES ($empId, $deptId, $assignedAt, $assignedBy)
+                ON CONFLICT (EmployeeId, DepartmentId) DO NOTHING;
+                """
+            : """
+                INSERT OR IGNORE INTO EmployeeDepartments (EmployeeId, DepartmentId, AssignedAt, AssignedBy)
+                VALUES ($empId, $deptId, $assignedAt, $assignedBy);
+                """;
+        var rows = Execute(sql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("$empId", GuidParam(ed.EmployeeId));
+            cmd.Parameters.AddWithValue("$deptId", ed.DepartmentId);
+            cmd.Parameters.AddWithValue("$assignedAt", DateParam(ed.AssignedAt));
+            cmd.Parameters.AddWithValue("$assignedBy", ed.AssignedBy.HasValue ? GuidParam(ed.AssignedBy.Value) : (object)DBNull.Value);
+        });
+        return rows > 0;
+    }
+
+    public bool RemoveEmployeeDepartment(Guid employeeId, int departmentId)
+    {
+        const string sql = "DELETE FROM EmployeeDepartments WHERE EmployeeId = $empId AND DepartmentId = $deptId;";
+        var rows = Execute(sql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("$empId", GuidParam(employeeId));
+            cmd.Parameters.AddWithValue("$deptId", departmentId);
+        });
+        return rows > 0;
+    }
+
+    public bool RemoveAllEmployeeDepartments(Guid employeeId)
+    {
+        const string sql = "DELETE FROM EmployeeDepartments WHERE EmployeeId = $empId;";
+        var rows = Execute(sql, cmd => cmd.Parameters.AddWithValue("$empId", GuidParam(employeeId)));
+        return rows > 0;
+    }
+
+    public bool ValidateEmployeeSameArea(Guid employeeId, int newDepartmentId, int newAreaId)
+    {
+        // Check that all existing departments of the employee share the same AreaId as newAreaId
+        const string sql = """
+            SELECT COUNT(*) FROM EmployeeDepartments ed
+            JOIN Departments d ON ed.DepartmentId = d.Id
+            WHERE ed.EmployeeId = $empId AND d.AreaId != $areaId;
+            """;
+        var conflictCount = 0;
+        var connection = AcquireConnection(out var owns);
+        try
+        {
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = NormalizeSql(sql);
+            cmd.Parameters.AddWithValue("$empId", GuidParam(employeeId));
+            cmd.Parameters.AddWithValue("$areaId", newAreaId);
+            NormalizeParameters(cmd);
+            var result = cmd.ExecuteScalar();
+            conflictCount = Convert.ToInt32(result);
+        }
+        finally { if (owns) connection.Dispose(); }
+        return conflictCount == 0;
+    }
+
+    // ── Employee by Area / Department ────────────────────────────────────────
+
+    public IReadOnlyList<Employee> GetEmployeesByArea(int areaId)
+    {
+        const string sql = """
+            SELECT Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive, AreaId
+            FROM Employees WHERE AreaId = $areaId AND IsActive = 1 ORDER BY EmployeeCode;
+            """;
+        return Query(sql,
+            cmd => cmd.Parameters.AddWithValue("$areaId", areaId),
+            reader => MapEmployee(reader));
+    }
+
+    public IReadOnlyList<Employee> GetEmployeesByDepartment(int departmentId)
+    {
+        const string sql = """
+            SELECT e.Id, e.EmployeeCode, e.FullName, e.Area, e.Department, e.DepartmentId, e.DepartmentsJson, e.Position, e.CardNumber, e.Password, e.MobileNumber, e.Gender, e.Privilege, e.VerifyMode, e.FaceTemplateVisible, e.FaceTemplateInfrared, e.ProfilePhoto, e.FingerprintTemplates, e.CreatedAt, e.SyncedAt, e.IsActive, e.AreaId
+            FROM Employees e
+            JOIN EmployeeDepartments ed ON ed.EmployeeId = e.Id
+            WHERE ed.DepartmentId = $deptId AND e.IsActive = 1
+            ORDER BY e.EmployeeCode;
+            """;
+        return Query(sql,
+            cmd => cmd.Parameters.AddWithValue("$deptId", departmentId),
+            reader => MapEmployee(reader));
+    }
+
+    // ── Device by Area/Department ────────────────────────────────────────────
+
+    public IReadOnlyList<Device> GetDevicesByAreaDepartment(int areaId, int departmentId)
+    {
+        const string sql = """
+            SELECT Id, SerialNumber, Name, Model, IpAddress, Location, TimeZone, SupportsVisibleLightFace, SupportsInfraredFace, SupportsFingerprint, FaceAlgorithmVersion, FingerprintAlgorithmVersion,
+                   FirmwareVersion, DeviceType, PushVer, Language, MultiBioDataSupport, MultiBioPhotoSupport, MultiBioVersion, MaxMultiBioDataCount, MaxMultiBioPhotoCount,
+                   FingerFunOn, FaceFunOn, VisiLightFunOn, BioDataFun, BioPhotoFun, SupportsPalm, SupportsFingerVein, CapabilitiesJson, CreatedAtUtc, UpdatedAtUtc, Status, IsRegistrationDevice, IsOnline, LastSeenUtc, AreaId, DepartmentId, IsRegistered
+            FROM Devices WHERE AreaId = $areaId AND DepartmentId = $deptId ORDER BY SerialNumber;
+            """;
+        return Query(sql,
+            cmd =>
+            {
+                cmd.Parameters.AddWithValue("$areaId", areaId);
+                cmd.Parameters.AddWithValue("$deptId", departmentId);
+            },
+            reader => MapDevice(reader));
+    }
+
+    // ── Attendance by Area/Department ────────────────────────────────────────
+
+    public IReadOnlyList<AttendanceRecord> GetAttendanceByAreaDepartment(int areaId, int departmentId, DateOnly? from, DateOnly? to)
+    {
+        var sql = """
+            SELECT Id, EmployeeId, EmployeeCode, Timestamp, Status, StatusCode, VerifyMode, Workcode, DeviceId, DeviceSerialNumber, AreaId, DepartmentId
+            FROM AttendanceRecords
+            WHERE AreaId = $areaId AND DepartmentId = $deptId
+            """ +
+            (from.HasValue ? $" AND Timestamp >= {SqlTs("$from")}" : "") +
+            (to.HasValue ? $" AND Timestamp <= {SqlTs("$to")}" : "") +
+            " ORDER BY Timestamp DESC;";
+
+        return Query(sql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("$areaId", areaId);
+            cmd.Parameters.AddWithValue("$deptId", departmentId);
+            if (from.HasValue) cmd.Parameters.AddWithValue("$from", from.Value.ToString("yyyy-MM-dd"));
+            if (to.HasValue) cmd.Parameters.AddWithValue("$to", to.Value.ToString("yyyy-MM-dd") + " 23:59:59");
+        }, reader => MapAttendanceRecord(reader));
+    }
+
+    // ── SyncQueue ────────────────────────────────────────────────────────────
+
+    public SyncQueueEntry EnqueueSync(SyncQueueEntry entry)
+    {
+        var nowDt = DateTime.UtcNow; var now = nowDt.ToString("O");
+        const string sql = """
+            INSERT INTO SyncQueue (EntityType, EntityId, Operation, Status, RetryCount, MaxRetries, Payload, CreatedAt)
+            VALUES ($entityType, $entityId, $operation, $status, 0, $maxRetries, $payload, $createdAt);
+            """;
+        Execute(sql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("$entityType", entry.EntityType);
+            cmd.Parameters.AddWithValue("$entityId", entry.EntityId);
+            cmd.Parameters.AddWithValue("$operation", entry.Operation);
+            cmd.Parameters.AddWithValue("$status", (int)entry.Status);
+            cmd.Parameters.AddWithValue("$maxRetries", entry.MaxRetries);
+            cmd.Parameters.AddWithValue("$payload", entry.Payload ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("$createdAt", DateParam(nowDt));
+        });
+        return entry;
+    }
+
+    public IReadOnlyList<SyncQueueEntry> GetPendingSync(int maxCount = 100)
+    {
+        const string sql = "SELECT Id, EntityType, EntityId, Operation, Status, RetryCount, MaxRetries, Payload, ErrorMessage, CreatedAt, ProcessedAt, NextRetryAt FROM SyncQueue WHERE Status = 0 ORDER BY CreatedAt LIMIT $max;";
+        return Query(sql,
+            cmd => cmd.Parameters.AddWithValue("$max", maxCount),
+            reader => MapSyncQueueEntry(reader));
+    }
+
+    public IReadOnlyList<SyncQueueEntry> GetFailedSync(int maxCount = 100)
+    {
+        const string sql = "SELECT Id, EntityType, EntityId, Operation, Status, RetryCount, MaxRetries, Payload, ErrorMessage, CreatedAt, ProcessedAt, NextRetryAt FROM SyncQueue WHERE Status = 3 ORDER BY CreatedAt LIMIT $max;";
+        return Query(sql,
+            cmd => cmd.Parameters.AddWithValue("$max", maxCount),
+            reader => MapSyncQueueEntry(reader));
+    }
+
+    public bool UpdateSyncQueueStatus(long syncQueueId, SyncQueueStatus status, string? errorMessage = null)
+    {
+        var nowDt = DateTime.UtcNow; var now = nowDt.ToString("O");
+        const string sql = "UPDATE SyncQueue SET Status = $status, ErrorMessage = $err, ProcessedAt = $processedAt WHERE Id = $id;";
+        var rows = Execute(sql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("$id", syncQueueId);
+            cmd.Parameters.AddWithValue("$status", (int)status);
+            cmd.Parameters.AddWithValue("$err", errorMessage ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("$processedAt", DateParam(nowDt));
+        });
+        return rows > 0;
+    }
+
+    public bool IncrementSyncRetryCount(long syncQueueId)
+    {
+        const string sql = "UPDATE SyncQueue SET RetryCount = RetryCount + 1 WHERE Id = $id;";
+        var rows = Execute(sql, cmd => cmd.Parameters.AddWithValue("$id", syncQueueId));
+        return rows > 0;
+    }
+
+    public int ProcessSyncQueue(int batchSize = 50) => 0; // Hook for background processor
+
+    public int RetryFailedSync(int maxRetries = 3)
+    {
+        const string sql = "UPDATE SyncQueue SET Status = 0 WHERE Status = 3 AND RetryCount < $maxRetries;";
+        return Execute(sql, cmd => cmd.Parameters.AddWithValue("$maxRetries", maxRetries));
+    }
+
+    // ── Private mappers ──────────────────────────────────────────────────────
+
+    private static Employee MapEmployee(DbDataReader reader) => new Employee
+    {
+        Id = ReadGuid(reader, 0),
+        EmployeeCode = reader.GetString(1),
+        FullName = reader.GetString(2),
+        Area = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+        Department = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
+        DepartmentId = reader.IsDBNull(5) ? 1 : ReadInt32(reader, 5),
+        Departments = DeserializeDepartments(reader.IsDBNull(6) ? null : reader.GetString(6), reader.IsDBNull(4) ? string.Empty : reader.GetString(4)),
+        Position = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
+        CardNumber = reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
+        Password = reader.IsDBNull(9) ? string.Empty : reader.GetString(9),
+        MobileNumber = reader.IsDBNull(10) ? string.Empty : reader.GetString(10),
+        Gender = reader.IsDBNull(11) ? string.Empty : reader.GetString(11),
+        Privilege = reader.IsDBNull(12) ? UserPrivilege.User : (UserPrivilege)ReadInt32(reader, 12),
+        VerifyMode = reader.IsDBNull(13) ? 0 : ReadInt32(reader, 13),
+        FaceTemplateVisible = reader.IsDBNull(14) ? null : reader.GetString(14),
+        FaceTemplateInfrared = reader.IsDBNull(15) ? null : reader.GetString(15),
+        ProfilePhoto = reader.IsDBNull(16) ? null : reader.GetString(16),
+        FingerprintTemplates = reader.IsDBNull(17) ? null : reader.GetString(17),
+        CreatedAt = reader.IsDBNull(18) ? DateTime.UtcNow : ReadDateTime(reader, 18),
+        SyncedAt = reader.IsDBNull(19) ? null : ReadDateTime(reader, 19),
+        IsActive = ReadInt32(reader, 20) == 1,
+        AreaId = reader.IsDBNull(21) ? 1 : ReadInt32(reader, 21)
+    };
+
+    private static Device MapDevice(DbDataReader reader) => new Device
+    {
+        Id = ReadGuid(reader, 0),
+        SerialNumber = reader.GetString(1),
+        Name = reader.GetString(2),
+        Model = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+        IpAddress = reader.GetString(4),
+        Location = reader.GetString(5),
+        TimeZone = reader.IsDBNull(6) ? "+5:45" : reader.GetString(6),
+        SupportsVisibleLightFace = !reader.IsDBNull(7) && ReadInt32(reader, 7) == 1,
+        SupportsInfraredFace = !reader.IsDBNull(8) && ReadInt32(reader, 8) == 1,
+        SupportsFingerprint = !reader.IsDBNull(9) && ReadInt32(reader, 9) == 1,
+        FaceAlgorithmVersion = reader.IsDBNull(10) ? string.Empty : reader.GetString(10),
+        FingerprintAlgorithmVersion = reader.IsDBNull(11) ? string.Empty : reader.GetString(11),
+        FirmwareVersion = reader.IsDBNull(12) ? string.Empty : reader.GetString(12),
+        DeviceType = reader.IsDBNull(13) ? string.Empty : reader.GetString(13),
+        PushVer = reader.IsDBNull(14) ? string.Empty : reader.GetString(14),
+        Language = reader.IsDBNull(15) ? 0 : ReadInt32(reader, 15),
+        MultiBioDataSupport = reader.IsDBNull(16) ? string.Empty : reader.GetString(16),
+        MultiBioPhotoSupport = reader.IsDBNull(17) ? string.Empty : reader.GetString(17),
+        MultiBioVersion = reader.IsDBNull(18) ? string.Empty : reader.GetString(18),
+        MaxMultiBioDataCount = reader.IsDBNull(19) ? string.Empty : reader.GetString(19),
+        MaxMultiBioPhotoCount = reader.IsDBNull(20) ? string.Empty : reader.GetString(20),
+        FingerFunOn = !reader.IsDBNull(21) && ReadInt32(reader, 21) == 1,
+        FaceFunOn = !reader.IsDBNull(22) && ReadInt32(reader, 22) == 1,
+        VisiLightFunOn = !reader.IsDBNull(23) && ReadInt32(reader, 23) == 1,
+        BioDataFun = !reader.IsDBNull(24) && ReadInt32(reader, 24) == 1,
+        BioPhotoFun = !reader.IsDBNull(25) && ReadInt32(reader, 25) == 1,
+        SupportsPalm = !reader.IsDBNull(26) && ReadInt32(reader, 26) == 1,
+        SupportsFingerVein = !reader.IsDBNull(27) && ReadInt32(reader, 27) == 1,
+        CapabilitiesJson = reader.IsDBNull(28) ? "{}" : reader.GetString(28),
+        CreatedAtUtc = reader.IsDBNull(29) ? DateTime.UtcNow : ReadDateTime(reader, 29),
+        UpdatedAtUtc = reader.IsDBNull(30) ? DateTime.UtcNow : ReadDateTime(reader, 30),
+        Status = reader.IsDBNull(31) ? DeviceStatus.Offline : (DeviceStatus)ReadInt32(reader, 31),
+        IsRegistrationDevice = !reader.IsDBNull(32) && ReadInt32(reader, 32) == 1,
+        IsOnline = ReadInt32(reader, 33) == 1,
+        LastSeenUtc = reader.IsDBNull(34) ? null : ReadDateTime(reader, 34),
+        AreaId = reader.IsDBNull(35) ? 1 : ReadInt32(reader, 35),
+        DepartmentId = reader.IsDBNull(36) ? 1 : ReadInt32(reader, 36),
+        IsRegistered = !reader.IsDBNull(37) && ReadInt32(reader, 37) == 1
+    };
+
+    private static AttendanceRecord MapAttendanceRecord(DbDataReader reader) => new AttendanceRecord
+    {
+        Id = ReadGuid(reader, 0),
+        EmployeeId = ReadGuid(reader, 1),
+        EmployeeCode = reader.GetString(2),
+        Timestamp = reader.IsDBNull(3) ? DateTime.UtcNow : ReadDateTime(reader, 3),
+        Status = reader.IsDBNull(4) ? AttendanceStatus.Unknown : (AttendanceStatus)ReadInt32(reader, 4),
+        StatusCode = reader.IsDBNull(5) ? null : ReadInt32(reader, 5),
+        VerifyMode = reader.IsDBNull(6) ? null : ReadInt32(reader, 6),
+        Workcode = reader.IsDBNull(7) ? null : reader.GetString(7),
+        DeviceId = reader.IsDBNull(8) ? null : ReadGuid(reader, 8),
+        DeviceSerialNumber = reader.IsDBNull(9) ? null : reader.GetString(9),
+        AreaId = reader.IsDBNull(10) ? 1 : ReadInt32(reader, 10),
+        DepartmentId = reader.IsDBNull(11) ? 1 : ReadInt32(reader, 11)
+    };
+
+    private static SyncQueueEntry MapSyncQueueEntry(DbDataReader reader) => new SyncQueueEntry
+    {
+        Id = ReadInt32(reader, 0),
+        EntityType = reader.GetString(1),
+        EntityId = reader.GetString(2),
+        Operation = reader.GetString(3),
+        Status = (SyncQueueStatus)ReadInt32(reader, 4),
+        RetryCount = reader.IsDBNull(5) ? 0 : ReadInt32(reader, 5),
+        MaxRetries = reader.IsDBNull(6) ? 3 : ReadInt32(reader, 6),
+        Payload = reader.IsDBNull(7) ? null : reader.GetString(7),
+        ErrorMessage = reader.IsDBNull(8) ? null : reader.GetString(8),
+        CreatedAt = reader.IsDBNull(9) ? DateTime.UtcNow : ReadDateTime(reader, 9),
+        ProcessedAt = reader.IsDBNull(10) ? null : ReadDateTime(reader, 10),
+        NextRetryAt = reader.IsDBNull(11) ? null : ReadDateTime(reader, 11)
+    };
+
     private static string SerializeDepartments(IEnumerable<string> departments)
     {
         var normalized = departments
@@ -1734,7 +2500,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                value.Contains("Username=", StringComparison.OrdinalIgnoreCase);
     }
 
-    private DbConnection AcquireConnection(out bool ownsConnection)
+    public DbConnection AcquireConnection(out bool ownsConnection)
     {
         var ambient = AmbientConnection.Value;
         if (ambient is not null)
@@ -1785,7 +2551,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         schemaCmd.ExecuteNonQuery();
     }
 
-    private string NormalizeSql(string sql)
+    public string NormalizeSql(string sql)
     {
         if (!_usePostgreSql)
         {
@@ -1804,7 +2570,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                 RegexOptions.CultureInvariant);
         }
 
-        foreach (var table in new[] { "Employees", "Devices", "AttendanceRecords", "DeviceCommands", "SyncLogs", "DeviceTableStamps" })
+        foreach (var table in new[] { "Employees", "Devices", "AttendanceRecords", "DeviceCommands", "SyncLogs", "DeviceTableStamps", "Areas", "Departments", "EmployeeDepartments", "SyncQueue" })
         {
             normalized = Regex.Replace(
                 normalized,
@@ -1816,7 +2582,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         return normalized;
     }
 
-    private void NormalizeParameters(DbCommand command)
+    public void NormalizeParameters(DbCommand command)
     {
         if (!_usePostgreSql)
         {
@@ -1875,7 +2641,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         alterCmd.ExecuteNonQuery();
     }
 
-    private List<T> Query<T>(string sql, Func<DbDataReader, T> map)
+    public List<T> Query<T>(string sql, Func<DbDataReader, T> map)
     {
         var connection = AcquireConnection(out var ownsConnection);
         try
@@ -1907,7 +2673,24 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         }
     }
 
-    private List<T> Query<T>(string sql, Action<DbCommand> configure, Func<DbDataReader, T> map)
+    public void Query(string sql, Action<DbCommand> configure, Action<DbDataReader> process)
+    {
+        var connection = AcquireConnection(out var ownsConnection);
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = NormalizeSql(sql);
+            configure(command);
+            var tx = AcquireTransaction(connection);
+            if (tx is not null) command.Transaction = tx;
+            NormalizeParameters(command);
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) process(reader);
+        }
+        finally { if (ownsConnection) connection.Dispose(); }
+    }
+
+    public List<T> Query<T>(string sql, Action<DbCommand> configure, Func<DbDataReader, T> map)
     {
         var connection = AcquireConnection(out var ownsConnection);
         try
@@ -1940,7 +2723,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         }
     }
 
-    private T? QuerySingle<T>(string sql, Action<DbCommand> configure, Func<DbDataReader, T> map)
+    public T? QuerySingle<T>(string sql, Action<DbCommand> configure, Func<DbDataReader, T> map)
         where T : class
     {
         var connection = AcquireConnection(out var ownsConnection);
@@ -1973,7 +2756,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         }
     }
 
-    private int Execute(string sql, Action<DbCommand> configure)
+    public int Execute(string sql, Action<DbCommand> configure)
     {
         var connection = AcquireConnection(out var ownsConnection);
         try
@@ -1998,7 +2781,44 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         }
     }
 
-    private static Guid ReadGuid(DbDataReader reader, int ordinal)
+    // Guid → text. ID columns are TEXT in both SQLite and PostgreSQL, so no cast needed.
+    private static string GuidParam(Guid value) => value.ToString();
+
+    // SQL-level cast helpers.
+    //  - SqlUuid: NO-OP. All ID columns are TEXT (matching the repository's own schema),
+    //    so a plain text parameter is correct. (EnsurePostgresSchema converts any legacy
+    //    uuid columns to TEXT on startup.)
+    //  - SqlTs: cast text ISO string to timestamptz for PostgreSQL timestamp columns.
+    //  - SqlBool: NO-OP. All boolean columns are INTEGER, integer params go in directly.
+    private string SqlUuid(string param) => param;
+    private string SqlTs(string param)   => _usePostgreSql ? $"CAST({param} AS timestamptz)" : param;
+    private string SqlBool(string param) => param;
+
+    // DateTime parameters.
+    //  - PostgreSQL: bind a real UTC DateTime so Npgsql sends it as `timestamp with time zone`.
+    //    This works whether or not the surrounding SQL wraps the param in SqlTs (CAST of an
+    //    already-timestamptz value is a harmless no-op), so statements that forgot SqlTs still
+    //    succeed instead of throwing "operator does not exist: timestamptz = text". Npgsql 6+
+    //    requires Kind=Utc for timestamptz, so normalize first (all stored times are UTC).
+    //  - SQLite: keep the ISO string form (dynamic typing; preserves the existing on-disk format).
+    private object DateParam(DateTime value)
+    {
+        if (!_usePostgreSql)
+        {
+            return value.ToString("O");
+        }
+
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+        };
+    }
+
+    private object DateParam(DateTime? value) => value.HasValue ? DateParam(value.Value) : (object)DBNull.Value;
+
+    public static Guid ReadGuid(DbDataReader reader, int ordinal)
     {
         var value = reader.GetValue(ordinal);
         if (value is Guid guid)
@@ -2014,7 +2834,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         return Guid.Parse(Convert.ToString(value) ?? string.Empty);
     }
 
-    private static DateTime ReadDateTime(DbDataReader reader, int ordinal)
+    public static DateTime ReadDateTime(DbDataReader reader, int ordinal)
     {
         var value = reader.GetValue(ordinal);
         if (value is DateTime dt)
@@ -2035,7 +2855,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         return Convert.ToDateTime(value);
     }
 
-    private static int ReadInt32(DbDataReader reader, int ordinal)
+    public static int ReadInt32(DbDataReader reader, int ordinal)
     {
         var value = reader.GetValue(ordinal);
         return value switch
@@ -2052,20 +2872,65 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
     }
 }
 
-internal static class DbParameterCollectionExtensions
+public static class DbParameterCollectionExtensions
 {
     public static void AddWithValue(this DbParameterCollection parameters, string parameterName, object? value)
     {
         var v = value ?? DBNull.Value;
+
         if (parameters is SqliteParameterCollection sqlite)
         {
+            // SQLite stores everything as text/blob — pass as-is
             sqlite.AddWithValue(parameterName, v);
             return;
         }
 
         if (parameters is NpgsqlParameterCollection npgsql)
         {
-            npgsql.AddWithValue(parameterName, v);
+            // For PostgreSQL: use EXPLICIT typed NpgsqlParameter so Npgsql does NOT
+            // fall back to 'text' inference for Guid/DateTime values boxed as object.
+            // Without this, 'column "Id" is of type uuid but expression is of type text'
+            // and 'column "CreatedAt" is of type timestamptz but expression is of type text'.
+
+            // Normalise the parameter name ($foo → @foo already done by NormalizeSql,
+            // but AddWithValue is sometimes called before normalisation — support both.)
+            var pgName = parameterName.StartsWith("$", StringComparison.Ordinal)
+                ? "@" + parameterName[1..]
+                : parameterName;
+
+            NpgsqlParameter param;
+
+            switch (v)
+            {
+                case Guid g:
+                    param = new NpgsqlParameter(pgName, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = g };
+                    break;
+
+                case DateTime dt:
+                    param = new NpgsqlParameter(pgName, NpgsqlTypes.NpgsqlDbType.TimestampTz)
+                    {
+                        Value = DateTime.SpecifyKind(dt, DateTimeKind.Utc)
+                    };
+                    break;
+
+                case DateTimeOffset dto:
+                    param = new NpgsqlParameter(pgName, NpgsqlTypes.NpgsqlDbType.TimestampTz)
+                    {
+                        Value = dto.ToUniversalTime()
+                    };
+                    break;
+
+                case DBNull _:
+                    param = new NpgsqlParameter(pgName, DBNull.Value);
+                    break;
+
+                default:
+                    // bool, int, long, string, decimal, etc. — safe to infer
+                    param = new NpgsqlParameter(pgName, v);
+                    break;
+            }
+
+            npgsql.Add(param);
             return;
         }
 

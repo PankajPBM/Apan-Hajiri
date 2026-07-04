@@ -12,4 +12,14 @@ public sealed class AttendanceRecord
     public string? Workcode { get; init; }
     public Guid? DeviceId { get; init; }
     public string? DeviceSerialNumber { get; init; }
+    
+    // Hierarchy - inherited from Device/Employee at punch time
+    public int AreaId { get; init; } = 1;
+    public int DepartmentId { get; init; } = 1;
+    
+    // Navigation properties
+    public Area? Area { get; set; }
+    public Department? Department { get; set; }
+    public Employee? Employee { get; set; }
+    public Device? Device { get; set; }
 }

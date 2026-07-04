@@ -236,8 +236,8 @@ public static class NepaliCalendarConverter
         {
             Path.Combine(AppContext.BaseDirectory, "bs-calendar-map.json"),
             Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "PBAttendance",
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "E_Attendance",
                 "bs-calendar-map.json")
         };
 

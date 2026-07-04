@@ -1,0 +1,44 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+FINAL_BUILD/
+artifacts/
+
+# .NET / Visual Studio
+.vs/
+*.user
+*.suo
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+e-attendance-next/out/
+
+# Generated frontend bundled into the backend (rebuilt automatically on every dotnet build)
+E.Attendance.Web/wwwroot/
+
+# Large third-party installer binaries (bundled locally for the installer, not source)
+installer/*.exe
+installer/exe/
+installer/exe_tmp/
+
+# Sensitive: license signing keys / license database — never commit these
+installer/PB_License_Generator/
+
+# Editor/OS cruft
+.vscode/
+*.log
+Thumbs.db
+
+# Stray backup copies from past editing sessions (git history is the real backup)
+*.bak
+*.bak*
+
+# Local tool caches / other AI assistants' metadata — not part of the app
+.dotnet_cli_home/
+.kimchi/
+.kiro/
+
+# Old pre-rename frontend folder name, in case it ever reappears
+pb-attendance-next/

@@ -84,11 +84,27 @@ internal sealed class ServiceControllerContext : ApplicationContext
 
     private void StartService()
     {
+        var apiInstalled = _manager.GetWindowsServiceInstalled();
+        if (apiInstalled)
+        {
+            _manager.EnsureDefaults();
+            try { _manager.EnsurePostgreSqlReadyWithReport(); } catch { }
+            _manager.StartWindowsService(WebServiceManager.ApiWindowsServiceName);
+            return;
+        }
+
         _manager.StartService();
     }
 
     private void StopService()
     {
+        var apiInstalled = _manager.GetWindowsServiceInstalled();
+        if (apiInstalled)
+        {
+            try { _manager.StopWindowsService(WebServiceManager.ApiWindowsServiceName); } catch { }
+            return;
+        }
+
         _manager.StopService();
     }
 
@@ -175,7 +191,7 @@ internal sealed class ServiceControllerContext : ApplicationContext
         _timer.Stop();
         try
         {
-            _manager.StopService();
+            StopService();
         }
         catch
         {

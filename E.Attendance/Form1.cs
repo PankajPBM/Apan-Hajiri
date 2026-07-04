@@ -50,8 +50,8 @@ public partial class Form1 : Form
         Height = 700;
 
         var databasePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "PBAttendance",
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "E_Attendance",
             "pb-attendance.db");
         var repository = new SqliteAttendanceRepository(databasePath);
         var protocolService = new DeviceProtocolService();
@@ -312,7 +312,7 @@ public partial class Form1 : Form
         _serverStatusLabel.Text = "Server: stopped";
 
         _serverPortBox.Width = 80;
-        _serverPortBox.Text = "8081";
+        _serverPortBox.Text = WebServiceManager.ApiDefaultPort.ToString();
 
         _startServerButton.Text = "Start Server";
         _startServerButton.AutoSize = true;
@@ -439,7 +439,7 @@ public partial class Form1 : Form
             employeeCode: employee.EmployeeCode,
             fullName: employee.FullName,
             area: employee.Area,
-            selectedDepartments: employee.GetDepartments(),
+            selectedDepartments: employee.Departments.Count > 0 ? employee.Departments : employee.GetDepartments().Select(d => d.Name).ToList(),
             primaryDepartment: employee.Department);
 
         if (editor.ShowDialog(this) != DialogResult.OK)
@@ -479,7 +479,7 @@ public partial class Form1 : Form
             .Take(2)
             .ToList();
         var initialDepartments = selectedEmployees
-            .SelectMany(x => x.GetDepartments())
+            .SelectMany(x => x.Departments.Count > 0 ? x.Departments : x.GetDepartments().Select(d => d.Name))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -551,14 +551,14 @@ public partial class Form1 : Form
                 map[area] = departments;
             }
 
-            foreach (var department in employee.GetDepartments())
+            foreach (var deptName in employee.Departments.Count > 0 ? employee.Departments : employee.GetDepartments().Select(d => d.Name).ToList())
             {
-                if (departments.Any(existing => string.Equals(existing, department, StringComparison.OrdinalIgnoreCase)))
+                if (departments.Any(existing => string.Equals(existing, deptName, StringComparison.OrdinalIgnoreCase)))
                 {
                     continue;
                 }
 
-                departments.Add(department);
+                departments.Add(deptName);
             }
         }
 
@@ -799,7 +799,9 @@ public partial class Form1 : Form
         public bool IsOnline { get; }
         public DateTime? LastSeenUtc { get; }
 
-        public string Display => $"{SerialNumber} - {Name} ({IpAddress}) - {(IsOnline ? "Online" : "Offline")}";
+        public string Display => string.IsNullOrWhiteSpace(Name)
+            ? $"{SerialNumber} ({IpAddress}) - {(IsOnline ? "Online" : "Offline")}"
+            : $"{Name} ({IpAddress}) - {(IsOnline ? "Online" : "Offline")}";
     }
 
     private sealed class AttendanceRow

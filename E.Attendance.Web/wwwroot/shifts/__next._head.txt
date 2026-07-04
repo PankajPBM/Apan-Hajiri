@@ -1,6 +1,0 @@
-1:"$Sreact.fragment"
-2:I[97367,["/_next/static/chunks/ff1a16fafef87110.js","/_next/static/chunks/4cdb1479783849d3.js"],"ViewportBoundary"]
-3:I[97367,["/_next/static/chunks/ff1a16fafef87110.js","/_next/static/chunks/4cdb1479783849d3.js"],"MetadataBoundary"]
-4:"$Sreact.suspense"
-5:I[27201,["/_next/static/chunks/ff1a16fafef87110.js","/_next/static/chunks/4cdb1479783849d3.js"],"IconMark"]
-0:{"buildId":"88PxhcoRf93WdD1GOskdo","rsc":["$","$1","h",{"children":[null,["$","$L2",null,{"children":[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]}],["$","div",null,{"hidden":true,"children":["$","$L3",null,{"children":["$","$4",null,{"name":"Next.Metadata","children":[["$","title","0",{"children":"E-Attendance"}],["$","meta","1",{"name":"description","content":"Enterprise attendance management platform for ZKTeco devices."}],["$","link","2",{"rel":"shortcut icon","href":"/favicon.ico"}],["$","link","3",{"rel":"icon","href":"/favicon-16x16.png","sizes":"16x16","type":"image/png"}],["$","link","4",{"rel":"icon","href":"/favicon-32x32.png","sizes":"32x32","type":"image/png"}],["$","link","5",{"rel":"icon","href":"/favicon.ico","type":"image/x-icon"}],["$","link","6",{"rel":"apple-touch-icon","href":"/apple-touch-icon.png"}],["$","$L5","7",{}]]}]}]}],null]}],"loading":null,"isPartial":false}

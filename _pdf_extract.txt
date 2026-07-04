@@ -1,0 +1,897 @@
+==== PAGE 9 ====
+PUSH SDK Attendance PUSH Communication Protocol 
+Page  | 10 Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+12.1.2 DELETE Subcommand ........................................................................................................................................ 109 
+12.1.3 QUERY Subcommand ......................................................................................................................................... 117 
+ CLEAR Command .................................................................................................................................... 121 12.2
+12.2.1 Clearing Attendance Record ............................................................................................................................ 121 
+12.2.2 Clearing Attendance Photo .............................................................................................................................. 122 
+12.2.3 Clearing All Data ................................................................................................................................................... 122 
+12.2.4 Clearing Unified Template ................................................................................................................................ 123 
+ Check Command ..................................................................................................................................... 124 12.3
+12.
+3.1 Checking Data Update ....................................................................................................................................... 124 
+12.3.2 Checking and Transmitting New Data .......................................................................................................... 124 
+12.3.3 Automatically Verifying Attendance Data ................................................................................................... 125 
+ Configuring Option Command ............................................................................................................. 126 12.4
+12.
+4.1 Option for Setting the Client ............................................................................................................................ 126 
+12.4.2 Option for Refreshing the Client ..................................................................................................................... 126 
+12.4.3 Sending Client Information to the Server .................................................................................................... 127 
+ File Command .......................................................................................................................................... 128 12.5
+12.
+5.1 Getting File in the Client .................................................................................................................................... 128 
+12.5.2 Sending File to the Client .................................................................................................................................. 128 
+ Remote Enrollment Command ............................................................................................................. 131 12.6
+12.
+6.1 Enrolling User Fingerprint ................................................................................................................................. 131 
+12.6.2 Enrolling Card Number ....................................................................................................................................... 132 
+12.6.3 Enrolling Face, Palm Print (Unified Templates) ......................................................................................... 133 
+ Control Command .................................................................................................................................. 134 12.7
+12.
+7.1 Rebooting the Client ........................................................................................................................................... 134 
+12.7.2 Outputting the Door Unlocking Signal ........................................................................................................ 135 
+12.7.3 Canceling the Alarm Signal Output ............................................................................................................... 135 
+ Other Commands .................................................................................................................................... 136 12.8
+12.
+8.1 Executing the System Command ................................................................................................................... 136 
+12.8.2 Online Update ....................................................................................................................................................... 137 
+12.8.3 Background Verification .................................................................................................................................... 141 
+13 COMMAND REPLY ....................................................................................................................... 143 
+14 REMOTE ATTENDANCE ................................................................................................................ 146 
+APPENDIX 1 ............................................................................................................................................. 148 
+APPENDIX 2 ............................................................................................................................................. 149 
+APPENDIX 3 ............................................................................................................................................. 150 
+APPENDIX 4 ............................................................................................................................................. 154 
+APPENDIX 5 ............................................................................................................................................. 154 
+APPENDIX 6 ............................................................................................................................................. 155 
+APPENDIX 7 ............................................................................................................................................. 156 
+APPENDIX 8 ............................................................................................................................................. 157 
+
+==== PAGE 13 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 14  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+2 Definitions 
+In this document, the format of definition reference is ${ServerIP} 
+ServerIP The IP address of the server 
+ServerPort A port of the server 
+XXX An unknown value 
+Value 1\Value 2\Value 3\……\Value n Value 1\Value 2\Value 3\……\ Value n 
+Required Mandatory 
+Optional Selectable 
+SerialNumber 
+Serial number. 
+It can be formed by characters, numbers, or 
+combination of characters + numbers. 
+NUL Null (\0) 
+SP A space 
+LF A line break (\n) 
+HT A tab character (\t) 
+DataRecord A data record 
+CmdRecord A command record 
+CmdID The ID of a command 
+CmdDesc Command description 
+Pin ID 
+Time Attendance time 
+Status Attendance status 
+Verify Verification mode 
+Workcode A workcode 
+Reserved A reserved field 
+OpType Operation type 
+OpWho Operator 
+OpTime Operation time 
+BinaryData A binary data flow 
+TableName The name of a data table 
+SystemCmd A system command 
+Key A key 
+Value A value 
+FilePath A file path 
+URL A resource location 
+ 
+
+==== PAGE 36 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 37  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+Client Configuration Information 
+ 
+Parameter Required/ Optional Description 
+SN ${Required} Serial number of the client 
+table=ATTLOG ${Required} Indicating that the uploaded data is attendance 
+records 
+Stamp ${Optional} 
+Latest timestamp at which the attendance record is 
+uploaded to the server. (For details, see the "Stamp" or 
+"ATTLOGStamp" parameter in "Initializing Information 
+Exchange".) 
+Host header 
+field ${Required}  
+Content-Length 
+header field ${Required}  
+Other header 
+fields ${Optional}  
+Request entity ${DataRecord} 
+Attendance record data in the following format: 
+ 
+${Pin}${HT}${Time}${HT}${Status}${HT}$
+{Verify}${HT}${Workcode}${HT}${Reserve
+d1}${HT}${Reserved2}${HT}MaskFlag${HT}
+Temperature${HT}ConvTemperature${HT}${
+TimeOffset} 
+ 
+${Time} 
+Verification time 
+In the format of XXXX-XX-XX XX: 
+XX: XX. For example, 2015-07-29 11: 
+11: 11 
+MaskFlag Value 0 or 1; 
+1 means wearing a mask<br/> 
+Temperat
+ure 
+The value is the temperature data 
+with a decimal point, for example: 
+36.2<br/> 
+ConvTemp
+erature 
+The value is the temperature data 
+with a decimal point. If the server 
+does not send the 
+IRTempUnitTrans parameter, then 
+the unit of the temperature upload 
+is subject to the IRTempUnit 
+parameter 
+TimeOffs
+et 
+The offset between the current 
+device time and UTC time 
+(including any daylight saving time 
+offset) is expressed in seconds and 
+may be positive or negative. 
+The format is +SS, where the + sign 
+(which can be omitted) indicates 
+that the current time is faster than 
+of UTC, and the – sign indicates 
+that it is slower than UTC. 
+For example: 
++28800 or 28800 means the current 
+time is 28,800 seconds (8 hours) 
+faster than of UTC. 
+–28800 means the current time is 
+
+==== PAGE 44 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 45  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+Client Request 
+ 
+Post http POST/iclock/cdata?SN=${SerialNumber}&table=OPERLOG&St
+amp=${XXX} HTTP/1.1 
+Host ${ServerIP}: ${ServerPort} 
+Content-Length ${XXX} 
+${DataRecord} 
+  
+Annotation 
+ 
+HTTP request method POST method 
+URI /iclock/cdata 
+HTTP protocol version 1.1 
+  
+Client Configuration Information 
+ 
+Parameter Required/ 
+Optional Description 
+SN ${Required} Serial number of the client 
+table=OPERLOG ${Required}  
+Stamp ${Optional} 
+Latest timestamp at which user information is 
+uploaded to the server. (For details, see the 
+"OPERLOGStamp" parameter in "Initializing 
+Information Exchange".) 
+Host header 
+field ${Required}  
+Content-Length 
+header field ${Required}  
+Other header 
+fields ${Optional}  
+Request entity ${DataRecord} 
+Fingerprint template data, in the following format; 
+ 
+USER${SP}PIN=${XXX}${HT}Name=${XXX}${H
+T}Pri=${XXX}${HT}Passwd=${XXX}${HT}Car
+d=${XXX}${HT}Grp=${XXX}${HT}TZ=${XXX}$
+{HT}Verify=${XXX}${HT}ViceCard=${XXX} 
+ 
+Name=${XXX} 
+User name. 
+When the equipment is in 
+Chinese, the GB2312 code is 
+used. 
+When the equipment is in 
+another language, the UTF-8 
+code is used. 
+Card=${XXX} 
+User card number (main card), 
+supporting only two formats. 
+ 
+
+==== PAGE 45 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 46  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+a. hexadecimal data, in the 
+format of 
+[%02x%02x%02x%02x], 
+representing the first, second, 
+third and fourth digit from left 
+to right. For example, if the 
+card number is 123456789, 
+this is Card=[15CD5B07]. 
+ 
+b. string data. If the card number 
+is 123456789, this is: 
+Card=123456789 
+ 
+TZ=${XXX} 
+Information on number of the 
+time period used by the user, in 
+the format of 
+XXXXXXXXXXXXXXXX. 
+Digits 1-4 describe whether the 
+group time period is used, 
+Digits 5-8 description use 
+personal time period 1, 
+Digits 9-12 description use 
+personal time period 2, 
+Digits 13-16 description use 
+personal time period 3. 
+ 
+For example: 
+0000000000000000 represents 
+use of the group time period. 
+0001000200000000 represents 
+using personal time period, with 
+personal time period 1 using the 
+time information of time period 
+numbered 2. 
+0001000200010000 represents 
+using personal time period, with 
+personal time period 1 using the 
+time information of time period 
+numbered 2 and personal time 
+period 2 using the time 
+information of time period 
+numbered 1. 
+ 
+Verify=${XX
+X} 
+User verification mode, does not 
+contain the field, is null, or is set 
+to -1(use group verification 
+mode, if there is no access group, 
+group verification mode is 0), 
+otherwise see (appendix 7). 
+ViceCard=${
+XXX}: 
+User card number (secondary 
+card), string data. If the card 
+number is 123456789, 
+ViceCard=123456789. 
+  
+
+==== PAGE 53 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 54  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+Client Configuration Information 
+ 
+Parameter Required/ Optional Description 
+SN ${Required} Serial number of the client 
+table= ATTLOG ${Required} The uploaded data is the attendance record of identity 
+card. 
+Stamp ${Optional} 
+Latest timestamp at which the identity card 
+attendance record is uploaded to the server. 
+(For details, see the “Stamp” or "ATTLOGStamp" 
+parameter in "Initializing Information Exchange".) 
+Host header 
+field ${Required}  
+Content-Length 
+header field ${Required}  
+Other header 
+fields ${Optional}  
+Request entity ${DataRecord} 
+Upload identity card attendance record, in the 
+following format; 
+ 
+${Pin}${HT}${Time}${HT}${Status}${HT}$
+{Verify}${HT}${Workcode}${HT}${Reserve
+d1}${HT}${Reserved2}${HT}${IDNum}${HT}
+${Type} 
+ 
+IDNum Id number 
+Type 
+Record Type 
+ 
+0 Attendance 
+1 Verification 
+ 
+• The Type value is 0; 
+And the content of the attendance 
+record is defined in accordance 
+with the attendance agreement. 
+• The Type value is 1; 
+STATUS: 0 - success, 1 - failure, 2 – 
+blacklist 
+• VERIFY :1- face, 2- face + 
+fingerprint, 3- fingerprint + face 
+ 
+  
+Other content is defined in accordance with standard protocols 
+  
+ 
+ 
+ 
+ 
+ 
+
+==== PAGE 74 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 75  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+ Uploading Data Packets 11.14
+The PushProtVer is greater than or equal to 2.2.14 in configurations distributed by the server. 
+Client Request 
+ 
+Post http POST/iclock/cdata?SN=${SerialNumber}&table=OPERLOG&Co
+ntentType=${Value} HTTP/1.1 
+Host ${ServerIP}:${ServerPort} 
+Content-Length ${XXX} 
+${DataPack} 
+  
+Annotation 
+ 
+HTTP request method POST method 
+URI /iclock/cdata 
+HTTP protocol version 1.1 
+  
+Client Configuration Information 
+ 
+Parameter Required/ Optional Description 
+SN ${Required} represents the series number of the client 
+table=OPERLOG ${Required}  
+ContentType  
+Entity data format, which currently supports the 
+following; 
+ 
+Value Description 
+tgz tgz as the compressed 
+format of data packets 
+  
+Host Header 
+Field ${Required}  
+Content-Length 
+Header Field ${Required}  
+Other Header 
+Field ${Optional}  
+Request Entity ${DataPack} For the data format of data packets, refer to the format 
+of other data types. 
+Multiple entries are connected with {LF} and then, packaged. For example,  
+ 
+Package the following data to transmit as entity data; 
+ 
+USER PIN=1 Name= Pri=0 Passwd=0 Card=89776433 Grp=1 
+TZ=0001000100000000 Verify=-1 ViceCard=123456789 
+
+==== PAGE 75 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 76  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+ 
+FP PIN=1    FID=1   Size=1336   Valid=1 
+TMP=SqFTUzIxAAAD4uUECAUHCc7QAAAb42kBAAAAgw8hXuIvAPwP0ADwAI7tjwBKAH4Pl
+gBU4vcPfABhAMcPKOJiAOsPPACmAGbtZABlAHEPdgBq4hEPzwB0AFUPiuJ/AAwPOABAAO
+vtTACYAF0PkQCi4uwPmgCiANgP1+KzACgPdwAMAFLtiADJADIPlgDP4kwPtADTAPQPdeL
+bADsPZQAhAELt6QD0AC4PQAD64rsP0wAFAfgPyeIiAb8PvgDhAUHssQAxAUgOXwBH48EO
+NwBFAYkOaeJLAa0OVgCOASrsYgBOAZcOCwvAbJqCS383/64TXp0icG8MpYY8kwHt+JJZh
+674UIjJ54v3nXwJc6d9rpwIcpIOgoAaBAx2g4Ava7MH4wylEA+fuY9ehY/9S5HAd2MROJ
+PzBtVBExK278PNfvjk7RabcRgxIU8Q0gOw+iIXWgz3/UX02wMzCP8WzOyyHygKKQnm9N/
+wuhGqcuv/doGbeohqKBOSgJ79+X8tmo+EPIeh/d8FGuuciyaIpXtigDz2PyQ+tzuh+RpS
+Z9LsYJdVfSfc1wx1c3JPtXyRTgPCNgECMx1NwwBp6nx1wAMAmckGw+sBhg6AdIsECQOCK
+/dAVMARxd8vccHBhcLAcATCwrgHAFkwd8SXCwODMf1FQMBW1ADd1JL/w2fAeEbAUOoBik
+eAwJacCQNwSgAv/j0FxYpOn3kKAIBdAPjA/RxtFADyXZ4HwMAdwX/AhH/CQwcDz1/pwf3
+CJ84Ag90C/8E2O8HNAGKBdpbAQQsARWQDHTTAwP9EBcU6ZYnDwMIEAGGscYf2AfF7l//B
+QIlpn1v/CwCNfMb9RSJBwAwAhX1FkMIjkXYNAIyCzDVXHUrBEQA8hSI4LSMuwP3BQhLFU
+ZYL/v79/f/B7i9WIwkASZhiwU58BOJMnFzAhMHVAFd/5ST+wP/+O8E1ogcAlqCXngEMA3
+ygFjY1/8AFwAviUaVed8FcygCfRB3//8A4/4r/wh8HANW0JEwFGAPzw9dU//7AO8H+oz/
+/PsD+/8oAVSrd/v36I/06/8Mdwf8HAE/NloNp6AFzzVOdwKPACeKNzS0pc8A6BwO20UzB
+cf8DxX/X1v8HALXWLTo+w+gBdN5Aa3Q6xArie943VMB7zQBmCEJpcRgQMMLDPaL//v3+/
+P84/0Yc/EcGENQI/0DA9RE5G70+NTvA/xz9/f3///06wfwd/gQQyic9oAMTWClA/wMQwO
+06/eERPDc9/xfVaUZSwf4+wP3AOPv1GzRzwWwaEKNLpNPBPv7A/P4/+v0f/MD+wMDAOv/
+95hFRVwmHA9XPW5/BAAUAwe/xwA== 
+    USER PIN=2      Name=   Pri=0   Passwd=0    Card=89776433   Grp=1   
+TZ=0001000100000000 Verify=-1    ViceCard=123456789 
+    USER PIN=3      Name=   Pri=0   Passw d=0    Card=89776433   Grp=1   
+TZ=0001000100000000 Verify=-1    ViceCard=223456789 
+    USER PIN=4      Name=   Pri=0   Passwd=0    Card=89776433   Grp=1   
+TZ=0001000100000000 Verify=-1    ViceCard=323456789 
+    USER PIN=5      Name=   Pri=0   Passwd=0    Card=89776433   Grp=1   
+TZ=0001000100000000 Verify=-1    ViceCard=423456789 
+ 
+  
+Server Response 
+HTTP/1.1 200 OK 
+Content-Length: ${XXX} 
+…… 
+ 
+OK:${XXX} 
+Annotation 
+ 
+HTTP Status Line The standard HTTP definition is used 
+HTTP Response Header Field  
+Content-Length Header field 
+According to HTTP 1.1, the data length of the 
+specified response entity in the header field 
+is usually used. 
+If the length of the response entity is 
+uncertain; 
+Transfer-Encoding: chunked, Content- Length 
+and Transfer- Encoding are also supported, 
+whose header fields are all in compliance 
+with the standard HTTP definition and require 
+
+==== PAGE 85 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 86  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+ DATA Command  12.1
+When ${CmdDesc} in a command issued by the server is “DATA”, this command is deemed as a data 
+command. The client data can be added, deleted, modified, or queried, but different service data 
+supports different operations. For details, see the following. 
+ 
+12.1.1 UPDATE Subcommand  
+Adding or modifying data: Whether adding or modifying depends on whether corresponding data 
+exists on the client, and this operation has nothing to do with the server 
+The following shows the command format:  
+Function 
+C: ${CmdID}: DATA${SP}UPDATE${SP}${TableName}${SP}${DataRecord} 
+Parameter Description 
+Parameter Description 
+UPDATE This description is used to represent the operation of adding or modifying 
+data. 
+${TableName} 
+Different names of service data tables, for example, the user information 
+USERINFO. 
+The following describes specific supported data. 
+${DataRecord} 
+Service data records in the form of key=value. 
+Different service data has different key descriptions. 
+The following describes the specifics. 
+  
+ 
+12.1.1.1 User Information  
+The command format is: 
+Function 
+C:${CmdID}:DATA${SP}UPDATE${SP}USERINFO${SP}PIN=${XXX}${HT}Name=${XXX}${HT
+}Pri=${XXX}${HT}Passwd=${XXX}${HT}Card=${XXX}${HT}Grp=${XXX}${HT}TZ=${XXX}
+${HT}Verify=${XXX}${HT}ViceCard=${XXX}${HT}Phone=${XXX}${HT}Gender=${XXX}$
+{HT}Nation=${XXX}${HT}IDNum=${XXX} 
+Parameter Description 
+Parameter Description 
+PIN=${XXX} User ID 
+Name=${XXX} User name. When the equipment is in Chinese, the GB2312 code 
+is used. When the equipment is in another language, the UTF -8 
+
+==== PAGE 86 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 87  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+code is used 
+Pri=${XXX} 
+User privilege value, with the meaning described as below; 
+ 
+Value Description 
+0 Normal user 
+2 Registrar 
+6 Administrator 
+10 User-defined 
+14 Super administrator 
+  
+Passwd=${XXX} Password 
+Card=${XXX} 
+Card number, supporting two formats; 
+a. hexadecimal data, in the format of [%02x%02x%02x%02x], 
+representing the first, second, third or fourth digit from left to 
+right. For example, if the card number is 123456789, this is: 
+Card=[15CD5B07]. 
+b. string data. If the card number is 123456789, this is: 
+Card=123456789. 
+Grp=${XXX} Group to which the user belongs, group 1 by default 
+TZ=${XXX} 
+Information on number of the time period used by the user, in 
+the format of XXXXXXXXXXXXXXXX. 
+Digit 1-4 describe whether the group time period is used, digit 5-
+8 describe using personal time period 1, digit 9- 12 describe using 
+personal time period 2, and digit 13- 16 describe using personal 
+time period 3. 
+ 
+For example, 0000000000000000 represents use of the group 
+time period. 
+ 
+• 0001000200000000 represents  use of personal time period, 
+with personal time period 1 using the time information of 
+number 2 time period. 
+• 0001000200010000 represents using personal time period, 
+with personal time period 1 using the time information of 
+number 2 time period and personal time period 2 using the 
+time information of number 1 time period. 
+Verify=${XXX} 
+User verification mode, does not contain the field, is null, or is set 
+to -1(use group verification, if there is no access group, group 
+verification is 0), otherwise see (appendix 7) 
+ViceCard=${XXX} User card number (secondary card), string data. If the card 
+number is 123456789,ViceCard=123456789 
+StartDatetime=${XXX} Validity start date, the format is YYYY-MM-DDTHH:MM:SS 
+EndDatetime=${XXX} Validity end date, the format is YYYY-MM-DDTHH:MM:SS. 
+Expires=${XXX} 
+Whether to enable the user validity period feature: 
+When set to 1, the StartDatetime and EndDatetime fields will take 
+effect. 
+If set to 0, the StartDatetim e and EndDatetime fields will be 
+ignored, even if they are provided. 
+Note: The main switch parameter UserValidTimeFun must be set 
+to 1 for the device to support the user expiration function. 
+${LF} is used to connect multiple records 
+ 
+
+==== PAGE 99 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 100  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+KeyFun 
+Shortcut key function 
+ 
+Value Corresponding Function 
+0 Undefined 
+1 State key 
+2 Work code 
+3 Short message 
+4 Key for help 
+5 Check the attendance record 
+6 Check the final attendance record 
+  
+StatusCode Attendance status 
+ShowName Status name 
+AutoState Auto switch 
+AutoTime Automatic switching time from Monday to Sunday, 08:00; 09:00; 
+10:00; 11:00; 12:00; 13:00; 14:00 
+Sun Whether to switch on Sunday 
+Mon Whether to switch on Monday 
+Tue Whether to switch on Tuesday 
+Wed Whether to switch on Wednesday 
+Thu Whether to switch on Thursday 
+Fri Whether to switch on Friday 
+Sat Whether to switch on Saturday 
+  
+For how the result of command execution is replied, see the Reply Command function. For the Return 
+value, see Appendix 1. 
+The format of returned content is: 
+Returned Content 
+ID=${XXX}&Return=${XXX}&CMD=DATA 
+ 
+12.1.1.14 Access Group 
+The command format is: 
+Function 
+C:${CmdID}:DATA${SP}UPDATE${SP}AccGroup${SP}ID=${XXX}${HT}Verify=${XXX}${H
+T}ValidHoliday=${XXX}${HT}TZ=${XXX} 
+
+==== PAGE 100 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 101  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+Parameter Description 
+Parameter Description 
+ID Number of access group 
+Verify Group verification mode, with the default value of 0, as shown in (appendix 7) 
+Validholiday Valid for holidays: value range 0-1 
+TZ format 
+For example: TZ=1; 0; 0: the first number represents time period 1, the second 
+parameter represents time period 2, and the third parameter represents time 
+period 3 
+  
+For how the result of command execution is replied, see the Reply Command function. For the Return 
+value, see Appendix 1. 
+The format of returned content is: 
+Returned Content 
+ID=${XXX}&Return=${XXX}&CMD=DATA 
+ 
+12.1.1.15 Access Time Periods 
+The command format is: 
+Function 
+C:${CmdID}:DATA${SP}UPDATE${SP}AccTimeZone${SP}UID=${XXX}${HT}SunStart=${X
+XX}${HT}SunEnd=${XXX}${HT}MonStart=${XXX}${HT}MonEnd=${XXX}${HT}TuesStart=
+${XXX}${HT}TuesEnd=${XXX}${HT}WedStart=${XXX}${HT}WedEnd=${XXX}${HT}ThursS
+tart=${XXX}${HT}ThursEnd=${XXX}${HT}FriStart=${XXX}${HT}FriEnd=${XXX}${HT}
+SatStart=${XXX}${HT}SatEnd=${XXX} 
+Parameter Description 
+Parameter Description 
+UID Time period number 
+SunStart Sunday start time, 1159 means 11:59 
+SunEnd Sunday end time, 2359 means 23:59 
+MonStart Monday start time 
+MonEnd Monday end time 
+TueStart Tuesday start time 
+TuesEnd Tuesday end time 
+WedStart Wednesday start time 
+WedEnd Wednesday end time 
+
+==== PAGE 108 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 109  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+specified, the wallpaper saved to the device will be named wallpaper1.xxx, 
+where xxx is the image extension (e.g., jpg). 
+Size=${XXX} The original image size (in bytes) , is used by the device to verify whether the 
+Base64 decoded original image is consistent. 
+Extension=${XX
+X} Image extension, optional extensions include jpg, jpeg, png, gif, bmp.  
+Content=${XXX} Image Base64 encoding. 
+${LF} is used to connect multiple records 
+  
+For how the result of command execution is replied, see the Reply Command function. For the Return 
+value, see Appendix 1. 
+The format of returned content is: 
+Returned Content 
+ID=${XXX}&Return=${XXX}&CMD=DATA 
+ 
+12.1.2 DELETE Subcommand  
+The command format to delete data: 
+Function 
+C: ${CmdID}: DATA${SP}DELETE${SP}${TableName}${SP}${DataRecord} 
+Parameter Description 
+Parameter Description 
+DELETE This description is used to represent the operation of deleting data  
+${TableName} 
+Different service data table names. 
+For example, the user information is USERINFO, and the following describes 
+specific supported data. 
+${DataRecord} Condition for deleting data. Different service data supports different conditions.  
+The following describes the specifics 
+  
+ 
+12.1.2.1 User Information  
+The command format is: 
+Function 
+C: ${CmdID}: DATA${SP}DELETE${SP}USERINFO${SP}PIN=${XXX} 
+
+==== PAGE 116 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 117  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+For how the result of command execution is returned , refer to the Reply Command function. For the 
+return value, see Appendix 1. 
+The format of returned content is: 
+Returned Content 
+ID=${XXX}&Return=${XXX}&CMD=DATA 
+ 
+12.1.3 QUERY Subcommand  
+The command format to query data: 
+Function 
+C: ${CmdID}: DATA${SP}QUERY${SP}${TableName}${SP}${DataRecord} 
+Parameter Description 
+Parameter Description 
+QUERY This description is used to represent the operation of querying data. 
+${TableName} 
+Different service data table names. 
+For example, the user information is USERINFO, and the following describes 
+specific supported data. 
+${DataRecord} Condition for querying data. Different service data supports different conditions.  
+The following describes the specifics. 
+  
+ Attendance Record  
+The command format is: 
+Function 
+C:${CmdID}:DATA${SP}QUERY${SP}ATTLOG${SP}StartTime=${XXX}${HT}EndTime=${XX
+X} 
+Parameter Description 
+Parameter Description 
+StartTime=${XXX} Query starting time, in the format of XXXX-XX-XX XX: XX: XX. 
+For example, 2015-07-29 00: 00: 00 
+EndTime=${XXX} Query ending time, in the format of XXXX-XX-XX XX: XX: XX. 
+For example, 2015-07-29 23: 59: 59 
+  
+For how the result of command execution is replied, see the Reply Command function. For the Return 
+value, see Appendix 1. 
+
+==== PAGE 117 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 118  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+The format of returned content is: 
+Returned Content 
+ID=${XXX}&Return=${XXX}&CMD=DATA 
+To query the attendance record within specified time period. For how to upload, see "Uploading 
+Attendance Record". 
+ Attendance Photo  
+The command format is: 
+Function 
+C:${CmdID}:DATA${SP}QUERY${SP}ATTPHOTO${SP}StartTime=${XXX}${HT}EndTime=${
+XXX} 
+Parameter Description 
+Parameter Description 
+StartTime=${XXX} Query starting time, in the format of XXXX-XX-XX XX: XX: XX. For example, 
+2015-07-29 00: 00: 00 
+EndTime=${XXX} Query ending time, in the format of XXXX-XX-XX XX: XX: XX. For example, 
+2015-07-29 23: 59: 59 
+  
+For how the result of command execution is replied, see the Reply Command function. For the Return 
+value, see Appendix 1. 
+The format of returned content is: 
+Returned Content 
+ID=${XXX}&Return=${XXX}&CMD=DATA 
+To query the attendance photo within specified time period. For how to upload, see “Uploading 
+Attendance Photo”. 
+ User Information  
+The command format is: 
+Function 
+C: ${CmdID}: DATA${SP}QUERY${SP}USERINFO${SP}PIN=${XXX} 
+ 
+
+==== PAGE 124 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 125  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+Parameter Description 
+Parameter Description 
+LOG used to describe this command 
+  
+For how the result of command execution is replied, see the Reply Command function. For the Return 
+value, see Appendix 1. 
+The format of returned content is: 
+Returned Content 
+ID=${XXX}&Return=${XXX}&CMD=LOG 
+ 
+12.3.3 Automatically Verifying Attendance Data  
+The server issues the verification for attendance records within a time period, start and end time of 
+uploading by the attendance equipment, as well as total number of records. 
+The verification is achieved by the server, and the command format is: 
+Function 
+C:${CmdID}:VERIFY${SP}SUM${SP}ATTLOG${SP}StartTime=${XXX}${HT}EndTime=${XX
+X} 
+Parameter Description 
+Parameter Description 
+VERIFY${SP}SUM used to describe this command 
+StartTime=${XXX} Starting time of issuing by the server, in the format of XXXX-XX-XX XX: 
+XX: XX. For example, 2015-07-29 00: 00: 00 
+EndTime=${XXX} Ending time of issuing by the server, in the format of XXXX-XX-XX XX: 
+XX: XX. For example, 2015-07-29 00: 00: 00 
+  
+For how the result of command execution is replied, see the Reply Command function(#replycmd). For 
+the Return value, see Appendix 1(#appendix1). 
+The format of returned content is: 
+Returned Content 
+ID=${XXX}&Return=${XXX}&CMD=VERIFY${SP}SUM&StartTime=${XXX}&EndTime=${XXX}
+&AttlogSum=${XXX} 
+
+==== PAGE 129 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 130  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+Function 2 
+The command format is:  
+Function 
+C:${CmdID}:PutFile${SP}${URL}${HT}${FilePath}${HT}Action=${Value} 
+Parameter Description 
+Parameter Description 
+PutFile used to describe this command 
+${URL} Address of the files to be downloaded from the server 
+${FilePath} Destination path where the files are stored in the client 
+Action 
+Describes what action to take after the file downloading is complete, supporting the 
+following at present. 
+Action=SyncData:  
+• Represents that the device is required to synchronize the data of the same 
+data type with those in the downloaded files, that is, overwriting the old 
+data in the device. 
+• The action requires two additional parameters, TableName and 
+RecordCount. 
+The complete command is as follows: 
+C:${CmdID}:PutFile${SP}${URL}${HT}${FilePath}${HT}Action=$
+{Value}${HT}TableName=${Value}${HT}RecordCount=${Value} 
+ 
+TableName 
+Represents the data type, supporting the following; 
+ 
+${Value} Data type 
+USERINFO User data 
+FINGERTMP Fingerprint data 
+FACE Face data 
+  
+RecordCount Number of records in the data packet 
+Action= AppendData:  
+• Represents that the data in the downloaded files should be appended to 
+the device. 
+The complete command is as follows. 
+C:${CmdID}:PutFile${SP}${URL}${HT}${FilePath}${HT}Action=A
+ppendData 
+The format of the content in the compressed package is the same as that of 
+distributed data commands, such as 
+C:123:DATA UPDATE USERINFO PIN=1    Name=1  Pri=0   Passwd
+=1    Grp=1 
+        C:124:DATA UPDATE FINGERTMP  PIN=1   FID=11  SIZE=
+
+==== PAGE 140 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 141  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+Example 
+Function 
+// The server issues the firmware upgrade command 
+C:123:UPGRADE 
+checksum=oqoier9883kjankdefi894eu,size=6558,url=http://192.168.0.13:89/dat
+a/emfw.cfg 
+// The client requests to download the upgrade package 
+The client requests to download the upgrade package: 
+GET http://192.168.0.13:89/data/emfw.cfg HTTP/1.1 
+Cookie: token=af65a75608cf5b80fbb3b48f0b4df95a 
+Host: 192.168.0.13:89 
+…… 
+// The client uploads successful execution results 
+ID=384&Return=0&CMD=UPGRADE 
+ 
+12.8.3 Background Verification 
+Application scenario: A fter the fingerprint/face verification on the attendance device is successful, the 
+personnel number will be uploaded to the back -end system by push, and the back -end system will 
+return a result (whether the verification is allowed or not) to the attendance device after receiving the 
+personnel number for logical judgment. 
+The command format is: 
+Function 
+// Client data sending 
+POST /iclock/cdata?SN=${SerialNumber}&type=PostVerifyData HTTP/1.1 
+Host: ${ServerIP}:${ServerPort} 
+ …… 
+${PostData}     
+// Uploaded data 
+
+==== PAGE 141 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 142  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+Annotation 
+HTTP request method GET method 
+URI /iclock/cdata 
+HTTP protocol version 1.1 
+ 
+Client configuration information 
+ 
+Parameter Description 
+SN ${Required} Serial number of the client 
+Type =PostRecordData means to upload recorded data 
+Host header field ${Required} 
+Other header fields ${Optional} 
+ 
+Server Response 
+HTTP/1.1 200 OK 
+Date: ${XXX} 
+Content-Length: ${XXX} 
+ …… 
+ 
+  OK 
+Annotation 
+HTTP status line Defined with standard HTTP protocol 
+HTTP response header field  
+Date header field 
+${Required} uses this header field to synchronize server 
+time, and the time format uses GMT format, such as Date: 
+Fri, 03 Jul 2015 06:53:01 GMT 
+Content-Length header field 
+According to the HTTP 1.1, this header field is generally used 
+to specify the data length of the response entity. If the 
+response entity size is uncertain, head fields of Transfer-
+Encoding: chunked, Content-Length and Transfer-Encoding 
+are supported, all of which are standard definitions of HTTP 
+and are not described in details here 
+Response entity 
+When the server normally receives data and successfully 
+processes data, OK is replied. When an error occurs, the error 
+description is replied 
+Parameter configuration PostSelfDefineDataType=PostVerifyData 
+ 
+
+==== PAGE 146 ====
+PUSH SDK  Attendance PUSH Communication Protocol 
+Page  | 147  Copyright©2025 ZKTECO CO., LTD.  All rights reserved. 
+Content-Length: ${XXX} 
+…… 
+ 
+DATA${SP}UPDATE${SP}USERINFO${SP}PIN=${XXX}${HT}Name=${XXX}${HT}Passwd=${XX
+X}${HT}Card=${XXX}${HT}Grp=${XXX}${HT}TZ=${XXX}${HT}Pri=${XXX} 
+DATA${SP}UPDATE${SP}FINGERTMP${SP}PIN=${XXX}${HT}FID=${XXX}${HT}Size=${XXX}
+${HT}Valid=${XXX}${HT}TMP=${XXX} 
+OK 
+  
+Annotation: ${LF} is used to connect multiple data records of the response entity. For specific data 
+format, see Issuing User Information and Issuing Fingerprint Template. 
+  

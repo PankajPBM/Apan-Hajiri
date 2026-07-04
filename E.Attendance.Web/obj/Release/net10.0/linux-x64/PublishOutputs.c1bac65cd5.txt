@@ -1,6 +1,0 @@
-D:\Pankaj\Project\P\Linux\PB.Attendance.Web\appsettings.json
-D:\Pankaj\Project\P\Linux\PB.Attendance.Web\PB.Attendance.Web.pdb
-D:\Pankaj\Project\P\Linux\PB.Attendance.Web\PB.Attendance.Core.pdb
-D:\Pankaj\Project\P\Linux\PB.Attendance.Web\PB.Attendance.Data.pdb
-D:\Pankaj\Project\P\Linux\PB.Attendance.Web\PB.Attendance.Services.pdb
-D:\Pankaj\Project\P\Linux\PB.Attendance.Web\PB.Attendance.Web
