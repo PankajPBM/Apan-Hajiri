@@ -39,6 +39,7 @@ Thumbs.db
 .dotnet_cli_home/
 .kimchi/
 .kiro/
+graphify-out/
 
 # Old pre-rename frontend folder name, in case it ever reappears
 pb-attendance-next/

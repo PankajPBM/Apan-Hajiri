@@ -115,39 +115,71 @@ export function normalizeFeatureAccess(raw: unknown): FeatureAccess {
   return fallback;
 }
 
+function mapRawUser(item: unknown, index: number): UserAccessRecord | null {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const source = item as Record<string, unknown>;
+  const username = typeof source.username === "string" ? source.username.trim() : "";
+  if (!username) {
+    return null;
+  }
+
+  const role: UserRole =
+    source.role === "Admin" || source.role === "Manager" || source.role === "Operator"
+      ? source.role
+      : "Operator";
+  const nowIso = new Date().toISOString();
+
+  return {
+    id: typeof source.id === "string" && source.id.trim().length > 0 ? source.id : `user-${index + 1}`,
+    username,
+    fullName: typeof source.fullName === "string" && source.fullName.trim().length > 0
+      ? source.fullName.trim()
+      : username,
+    password: typeof source.password === "string" ? source.password : "",
+    role,
+    isActive: typeof source.isActive === "boolean" ? source.isActive : true,
+    featureAccess: normalizeFeatureAccess(source.featureAccess),
+    createdAt: typeof source.createdAt === "string" ? source.createdAt : nowIso,
+    updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : nowIso,
+  };
+}
+
+// Applies the same admin-identity fixups normalizeUsers() applies to an admin row within a list.
+function applyAdminFixup(existing: UserAccessRecord): UserAccessRecord {
+  return {
+    ...existing,
+    id: existing.id && existing.id !== DEFAULT_ADMIN_USER_ID ? existing.id : DEFAULT_ADMIN_USER_ID,
+    username: DEFAULT_ADMIN_USERNAME,
+    fullName: DEFAULT_ADMIN_FULL_NAME,
+    password: existing.password,
+    role: "Admin",
+    isActive: true,
+    featureAccess: createFullFeatureAccess(),
+    updatedAt: existing.updatedAt || new Date().toISOString(),
+  };
+}
+
+// Normalizes a single already-identified user (e.g. the logged-in user's own record from
+// /api/auth/login or /api/auth/session) without normalizeUsers()'s list-level behavior of
+// injecting a synthetic fallback admin when the input doesn't contain an "admin" row. Using
+// normalizeUsers([user]) here was a real bug: for any non-admin user, the 1-item array has no
+// admin entry, so it pushed a fake full-access admin and then sorted admin-first, causing [0] to
+// silently return the fake admin instead of the real logged-in user — every non-admin login (and
+// every periodic session refresh) ended up rendering with full admin access.
+export function normalizeSingleUser(raw: unknown): UserAccessRecord | null {
+  const mapped = mapRawUser(raw, 0);
+  if (!mapped) {
+    return null;
+  }
+  return isDefaultAdminUsername(mapped.username) ? applyAdminFixup(mapped) : mapped;
+}
+
 export function normalizeUsers(raw: unknown): UserAccessRecord[] {
   const normalized = (Array.isArray(raw) ? raw : [])
-    .map((item, index): UserAccessRecord | null => {
-      if (!item || typeof item !== "object") {
-        return null;
-      }
-
-      const source = item as Record<string, unknown>;
-      const username = typeof source.username === "string" ? source.username.trim() : "";
-      if (!username) {
-        return null;
-      }
-
-      const role: UserRole =
-        source.role === "Admin" || source.role === "Manager" || source.role === "Operator"
-          ? source.role
-          : "Operator";
-      const nowIso = new Date().toISOString();
-
-      return {
-        id: typeof source.id === "string" && source.id.trim().length > 0 ? source.id : `user-${index + 1}`,
-        username,
-        fullName: typeof source.fullName === "string" && source.fullName.trim().length > 0
-          ? source.fullName.trim()
-          : username,
-        password: typeof source.password === "string" ? source.password : "",
-        role,
-        isActive: typeof source.isActive === "boolean" ? source.isActive : true,
-        featureAccess: normalizeFeatureAccess(source.featureAccess),
-        createdAt: typeof source.createdAt === "string" ? source.createdAt : nowIso,
-        updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : nowIso,
-      };
-    })
+    .map(mapRawUser)
     .filter((item): item is UserAccessRecord => item !== null);
 
   const deduped = new Map<string, UserAccessRecord>();
@@ -161,18 +193,13 @@ export function normalizeUsers(raw: unknown): UserAccessRecord[] {
   const users = Array.from(deduped.values());
   const adminIndex = users.findIndex((item) => isDefaultAdminUsername(item.username));
   if (adminIndex >= 0) {
-    const existing = users[adminIndex];
-    users[adminIndex] = {
-      ...existing,
-      id: DEFAULT_ADMIN_USER_ID,
-      username: DEFAULT_ADMIN_USERNAME,
-      fullName: DEFAULT_ADMIN_FULL_NAME,
-      password: existing.password.trim().length > 0 ? existing.password : DEFAULT_ADMIN_PASSWORD,
-      role: "Admin",
-      isActive: true,
-      featureAccess: createFullFeatureAccess(),
-      updatedAt: existing.updatedAt || new Date().toISOString(),
-    };
+    // Keep the real backend id (a numeric BIGSERIAL string) if we have one — overwriting it with
+    // the placeholder "default-admin" broke the save round-trip: the backend couldn't match it
+    // back to admin's actual row by id, fell back to an upsert-by-username, and any other user
+    // being saved in the same request could end up conflated with admin's row. Also leaves the
+    // (always-blank-from-backend) password untouched rather than defaulting it to
+    // DEFAULT_ADMIN_PASSWORD, which used to silently overwrite the real admin password on every save.
+    users[adminIndex] = applyAdminFixup(users[adminIndex]);
   } else {
     users.push(fallbackAdminUser());
   }
@@ -372,7 +399,7 @@ export async function loginUser(username: string, password: string): Promise<Use
       password,
     }),
   });
-  return { ...(normalizeUsers([user])[0] ?? fallbackAdminUser()), token: user.token };
+  return { ...(normalizeSingleUser(user) ?? fallbackAdminUser()), token: user.token };
 }
 
 export async function hydrateAuthSession(session: AuthSession): Promise<AuthSession | null> {
@@ -389,7 +416,7 @@ export async function hydrateAuthSession(session: AuthSession): Promise<AuthSess
     if (!user.isActive) {
       return null;
     }
-    return toAuthSession(normalizeUsers([user])[0] ?? user, session.loginAt);
+    return toAuthSession(normalizeSingleUser(user) ?? user, session.loginAt);
   } catch (error) {
     const apiError = error as AuthApiError;
     if (apiError.status === 404 || apiError.status === 401 || apiError.status === 403) {

@@ -2,7 +2,7 @@
 
 A self-hosted biometric attendance management system for ZKTeco devices (fingerprint, face, and card), with a web dashboard for employee/device management, shift scheduling, leave management, and reporting.
 
-See **[ARCHITECTURE.md](ARCHITECTURE.md)** for a full breakdown of how the system is built and how its pieces fit together, and **[DEVICE_COMMAND_FIXES.md](DEVICE_COMMAND_FIXES.md)** for the running log of device-protocol quirks discovered in the field.
+See **[ARCHITECTURE.md](ARCHITECTURE.md)** for a full breakdown of how the system is built and how its pieces fit together, **[CHANGELOG.md](CHANGELOG.md)** for release history and the versioning scheme, **[DEVICE_COMMAND_FIXES.md](DEVICE_COMMAND_FIXES.md)** for the running log of device-protocol quirks discovered in the field, and **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** for known install/runtime issues with exact diagnosis steps and fixes.
 
 ## Tech stack
 

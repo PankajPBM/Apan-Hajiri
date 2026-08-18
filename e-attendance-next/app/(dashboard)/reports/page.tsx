@@ -9,7 +9,6 @@ import {
   Filter,
   Printer,
   RefreshCcw,
-  Search,
   SlidersHorizontal,
 } from "lucide-react";
 import {
@@ -2016,19 +2015,6 @@ export default function ReportsPage() {
               ))}
             </select>
             <span className="text-[10px] text-[#5f7f9f]">Calculated from Schedule Shift assignments and effective dates.</span>
-          </label>
-
-          <label className="grid gap-1 text-xs text-[#2d5d86]">
-            <span className="font-semibold uppercase tracking-wide text-[#1e4f78]">Search</span>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[#6f8ba4]" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Employee / code / department"
-                className="w-full rounded-lg border border-[#c8dbf0] bg-white py-2 pl-9 pr-3 text-sm"
-              />
-            </div>
           </label>
 
           <div className="grid grid-cols-2 gap-2">

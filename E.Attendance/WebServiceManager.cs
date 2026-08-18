@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Globalization;
 using Npgsql;
+using E.Attendance.Services;
 
 namespace E.Attendance;
 
@@ -28,11 +29,11 @@ internal sealed class WebServiceManager
     private const string ExpectedPostgreSqlUser = "E_Attendace";
     private static readonly string ExpectedPostgreSqlPassword = ResolveExpectedPostgreSqlPassword();
     private const int ExpectedPostgreSqlPort = 1277;
+    private const string LegacyPostgreSqlServiceName = "E-Attendance-PostgreSQL";
     private const string PostgreSqlWindowsDownloadUrl = "https://www.postgresql.org/download/windows/";
     private const string DefaultPostgreSqlInstallPath = @"C:\Program Files\PostgreSQL\18";
     private const string DefaultPostgreSqlBinPath = DefaultPostgreSqlInstallPath + @"\bin";
     private const string DefaultPostgreSqlDataPath = DefaultPostgreSqlInstallPath + @"\data";
-
     // Avoid hardcoded dev-machine paths. Allow override + sensible repo-relative defaults.
     private static readonly string DefaultOfflineInstallerPath = ResolveDefaultOfflineInstallerPath();
 
@@ -1353,6 +1354,122 @@ internal sealed class WebServiceManager
     }
 
     /// <summary>
+    /// Restores a full-database backup (produced by the web app's Settings &gt; Backup page) onto
+    /// the live database. Deliberately kept out of the web UI — this is a destructive operation
+    /// only reachable from this locally-run tray app, which also has the OS-level service control
+    /// needed to safely stop the backend before replaying the dump and restart it afterward.
+    ///
+    /// Safety net beyond a plain psql replay: takes its own dump of the CURRENT database
+    /// immediately before restoring, saved into the same backup folder as
+    /// "safety_before_restore_&lt;timestamp&gt;.psql" — so a bad restore has an undo path, which a
+    /// bare "stop service, run psql -f, restart" flow would not.
+    /// </summary>
+    public string RestoreDatabaseFromBackup(string adminPassword, string backupFilePath)
+    {
+        if (string.IsNullOrWhiteSpace(adminPassword))
+        {
+            throw new InvalidOperationException("PostgreSQL admin password is required.");
+        }
+        if (string.IsNullOrWhiteSpace(backupFilePath) || !File.Exists(backupFilePath))
+        {
+            throw new InvalidOperationException($"Backup file not found: {backupFilePath}");
+        }
+        if (!BackupService.LooksLikePostgresDump(backupFilePath))
+        {
+            throw new InvalidOperationException(
+                $"'{Path.GetFileName(backupFilePath)}' doesn't look like a PostgreSQL dump file (no pg_dump header found in the first 20 lines). " +
+                "Nothing was touched — pick a genuine backup .psql file.");
+        }
+
+        // IMPORTANT: same rule as InitializePostgreSqlDatabase — don't stop the service or touch
+        // anything until the admin password is confirmed valid.
+        _ = EnsurePostgreSqlControllerSettings();
+        EnsurePostgreSqlServiceRunning();
+
+        var expectedConnection = GetPostgreSqlConnectionString();
+        if (string.IsNullOrWhiteSpace(expectedConnection))
+        {
+            throw new InvalidOperationException("PostgreSQLConnection not found in appsettings.");
+        }
+
+        var expectedBuilder = new NpgsqlConnectionStringBuilder(expectedConnection);
+        var host = string.IsNullOrWhiteSpace(expectedBuilder.Host) ? "127.0.0.1" : expectedBuilder.Host;
+        var configuredPort = expectedBuilder.Port <= 0 ? ExpectedPostgreSqlPort : expectedBuilder.Port;
+
+        var candidates = BuildPostgreSqlPortCandidates(configuredPort);
+        var passwordConfirmed = false;
+        Exception? lastError = null;
+
+        foreach (var candidatePort in candidates)
+        {
+            var candidateBuilder = new NpgsqlConnectionStringBuilder
+            {
+                Host = host,
+                Port = candidatePort,
+                Database = "postgres",
+                Username = "postgres",
+                Password = adminPassword,
+                Timeout = 8,
+                CommandTimeout = 60,
+                IncludeErrorDetail = true
+            };
+
+            try
+            {
+                using var probe = new NpgsqlConnection(candidateBuilder.ConnectionString);
+                probe.Open();
+                passwordConfirmed = true;
+                break;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+        }
+
+        if (!passwordConfirmed)
+        {
+            var portsLabel = string.Join(", ", candidates);
+            var message = lastError is null ? "Unknown error." : RedactSecrets(lastError.Message);
+            throw new InvalidOperationException(
+                $"Incorrect PostgreSQL admin password (or server unreachable) on {host} (ports tried: {portsLabel}). " +
+                "No changes were made — the running service and existing data were left untouched. " + message,
+                lastError);
+        }
+
+        // Password confirmed. Safety-dump the CURRENT database before touching anything, using the
+        // same connection the app itself uses for backups (not the postgres superuser).
+        var backupLocation = Path.GetDirectoryName(backupFilePath) is { Length: > 0 } dir ? dir : BackupService.ResolveDefaultBackupLocation();
+        var safetyResult = BackupService.RunBackupAsync(expectedConnection, backupLocation, "pre-restore-safety").GetAwaiter().GetResult();
+        if (!safetyResult.Success)
+        {
+            throw new InvalidOperationException(
+                $"Aborted: could not take a safety backup of the current database before restoring ({safetyResult.ErrorMessage}). " +
+                "No changes were made.");
+        }
+
+        StopServiceForDatabaseMaintenance();
+        try
+        {
+            var restoreResult = BackupService.RestoreBackupAsync(expectedConnection, backupFilePath).GetAwaiter().GetResult();
+            if (!restoreResult.Success)
+            {
+                throw new InvalidOperationException(
+                    $"Restore failed: {restoreResult.ErrorMessage}\n\nA safety backup of the pre-restore database was saved to:\n{safetyResult.FilePath}");
+            }
+            return $"Database restored from '{Path.GetFileName(backupFilePath)}'.\n\nA safety backup of the previous database was saved to:\n{safetyResult.FilePath}";
+        }
+        finally
+        {
+            // Always try to bring the service back up, whether restore succeeded or failed —
+            // leaving the backend silently stopped after a failed restore is worse than restarting
+            // it against a possibly-half-restored database, since at least the operator can see it's
+            // broken instead of assuming everything is fine.
+            try { StartService(); } catch { /* surfaced to the operator via the dashboard's own status, not here */ }
+        }
+    }
+
+    /// <summary>
     /// Initialize the database using the saved admin password, falling back to the known
     /// default (PB@14891277). No user prompt required. Errors are surfaced as exceptions.
     /// </summary>
@@ -1758,30 +1875,32 @@ internal sealed class WebServiceManager
     {
         state ??= GetState();
         var pgServiceName = ResolveOrProvisionPostgreSqlServiceName();
+        var apiServiceInstalled = ServiceExists(ApiWindowsServiceName);
+        var webServiceInstalled = ServiceExists(WebWindowsServiceName);
         var items = new List<RelatedServiceStatus>
         {
             new(
-                Name: "E.Attendance.Web API",
-                Category: "HTTP",
-                Status: state.IsWebReachable ? "Running" : "Stopped",
+                Name: ApiWindowsServiceName,
+                Category: "Windows Service",
+                Status: apiServiceInstalled ? GetWindowsServiceStatus(ApiWindowsServiceName) : (state.IsWebReachable ? "Running" : "Stopped"),
                 Details: $"http://127.0.0.1:{state.Port}/api/server/stats"),
             new(
-                Name: "E-Attendance Web UI",
-                Category: "HTTP",
-                Status: state.IsFrontendReachable ? "Running" : "Stopped",
+                Name: WebWindowsServiceName,
+                Category: "Windows Service",
+                Status: webServiceInstalled ? GetWindowsServiceStatus(WebWindowsServiceName) : (state.IsFrontendReachable ? "Running" : "Stopped"),
                 Details: $"http://127.0.0.1:{(state.ActiveFrontendPort > 0 ? state.ActiveFrontendPort : state.FrontendPort)}/"),
             new(
-                Name: "E_Attendance_PostgreSQL",
+                Name: pgServiceName,
                 Category: "Windows Service",
                 Status: GetWindowsServiceStatus(pgServiceName),
-                Details: $"PostgreSQL service ({pgServiceName}) for E_Attendace"),
+                Details: $"PostgreSQL database service ({pgServiceName}) for E-Attendance"),
             new(
-                Name: "Push Command Queue",
+                Name: "E-Attendance-Device-Command-Worker",
                 Category: "App",
                 Status: state.IsWebReachable ? "Active" : "Inactive",
                 Details: "Served by E.Attendance.Web /iclock/getrequest"),
             new(
-                Name: "Device Callback Endpoint",
+                Name: "E-Attendance-Device-Callback",
                 Category: "App",
                 Status: state.IsWebReachable ? "Active" : "Inactive",
                 Details: "Served by E.Attendance.Web /iclock/devicecmd")
@@ -2222,7 +2341,7 @@ internal sealed class WebServiceManager
         {
             return; // Service management not available in this .NET runtime
         }
-        
+
         var candidates = GetPostgreSqlServiceCandidates();
         foreach (var serviceName in candidates)
         {
@@ -2258,7 +2377,7 @@ internal sealed class WebServiceManager
                 "Service management is not available in this .NET runtime. " +
                 "Ensure .NET Desktop Runtime 10.0 is installed with System.ServiceProcess support.");
         }
-        
+
         var candidates = GetPostgreSqlServiceCandidates();
         foreach (var serviceName in candidates)
         {
@@ -2763,14 +2882,23 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
     public const string WebWindowsServiceName = "E-Attendance-Web";
 
     public bool GetWindowsServiceInstalled()
-        => ServiceExists(ApiWindowsServiceName);
+        => ServiceExists(ApiWindowsServiceName) && ServiceExists(WebWindowsServiceName);
+
+    public bool GetWindowsServiceInstalled(string serviceName)
+        => ServiceExists(serviceName);
 
     public string GetWindowsServiceStatus()
+        => GetWindowsServiceStatus(ApiWindowsServiceName);
+
+    public string GetWindowsServiceStatus(string serviceName)
+        => QueryWindowsServiceStatus(serviceName);
+
+    private static string QueryWindowsServiceStatus(string serviceName)
     {
         if (!ServiceControllerAvailable) return "N/A";
         try
         {
-            using var svc = new ServiceController(ApiWindowsServiceName);
+            using var svc = new ServiceController(serviceName);
             return svc.Status.ToString();
         }
         catch { return "Not Installed"; }
@@ -2803,30 +2931,52 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
         Thread.Sleep(800);
 
         // Install API service:
-        //   delayed-auto = starts after boot is complete (gives PostgreSQL time to start first)
+        //   auto = starts immediately at boot and on demand
         //   depend = ensures Windows starts the PostgreSQL service before this service
-        var apiArgs = "--service-mode";
-        var pgServiceName = ExpectedPostgreSqlServiceName; // "E_Attendance_PostgreSQL"
+        var apiArgs = "--service-mode --service-role=api";
+        var webArgs = "--service-mode --service-role=web";
+        var pgServiceName = ResolveOrProvisionPostgreSqlServiceName();
 
         // Try to install with PostgreSQL dependency first; fall back without it if PG service doesn't exist
         var dependArg = ServiceExists(pgServiceName) ? $" depend= \"{pgServiceName}\"" : string.Empty;
         var apiResult = ScExec(
             $"create \"{ApiWindowsServiceName}\" binPath= \"\\\"{exePath}\\\" {apiArgs}\"" +
-            $" start= delayed-auto DisplayName= \"E-Attendance Service\"{dependArg}");
+            $" start= auto DisplayName= \"E-Attendance API Service\"{dependArg}");
 
         if (!ServiceExists(ApiWindowsServiceName))
             return (false, $"Failed to create {ApiWindowsServiceName}. Run as Administrator.\n{apiResult}");
 
-        ScExec($"description \"{ApiWindowsServiceName}\" \"E-Attendance API and Web UI — auto-starts after Windows boot\"");
+        ScExec($"description \"{ApiWindowsServiceName}\" \"E-Attendance API, device communication, background workers, backup scheduler, and health monitoring service.\"");
         // Restart on failure: 5 s, 15 s, 30 s; reset counter after 1 day
         ScExec($"failure \"{ApiWindowsServiceName}\" reset= 86400 actions= restart/5000/restart/15000/restart/30000");
         ScExec($"failureflag \"{ApiWindowsServiceName}\" 1");
+
+        var webResult = ScExec(
+            $"create \"{WebWindowsServiceName}\" binPath= \"\\\"{exePath}\\\" {webArgs}\"" +
+            $" start= auto DisplayName= \"E-Attendance Web UI Service\"");
+
+        if (!ServiceExists(WebWindowsServiceName))
+        {
+            ScExec($"stop \"{WebWindowsServiceName}\"");
+            ScExec($"delete \"{WebWindowsServiceName}\"");
+            Thread.Sleep(800);
+            webResult += "\nRetry:\n" + ScExec(
+                $"create \"{WebWindowsServiceName}\" binPath= \"\\\"{exePath}\\\" {webArgs}\"" +
+                $" start= auto DisplayName= \"E-Attendance Web UI Service\"");
+        }
+
+        if (!ServiceExists(WebWindowsServiceName))
+            return (false, $"Created {ApiWindowsServiceName}, but failed to create {WebWindowsServiceName}. Run as Administrator.\n{webResult}");
+
+        ScExec($"description \"{WebWindowsServiceName}\" \"E-Attendance Web UI static frontend service.\"");
+        ScExec($"failure \"{WebWindowsServiceName}\" reset= 86400 actions= restart/5000/restart/15000/restart/30000");
+        ScExec($"failureflag \"{WebWindowsServiceName}\" 1");
 
         // Also ensure PostgreSQL service is set to auto-start
         if (!string.IsNullOrEmpty(pgServiceName) && ServiceExists(pgServiceName))
             ScExec($"config \"{pgServiceName}\" start= auto");
 
-        return (true, $"Installed: E-Attendance-API (DELAYED-AUTO-START, auto-restart on failure{(dependArg.Length > 0 ? ", depends on PostgreSQL" : "")}).");
+        return (true, $"Installed: {ApiWindowsServiceName} and {WebWindowsServiceName} (auto-start, auto-restart on failure).");
     }
 
     public (bool ok, string message) UninstallWindowsServices()
@@ -2843,7 +2993,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
         var r2 = ScExec($"delete \"{ApiWindowsServiceName}\"");
 
         var ok = !ServiceExists(ApiWindowsServiceName) && !ServiceExists(WebWindowsServiceName);
-        return (ok, ok ? "Service uninstalled successfully." : $"Partial uninstall.\nAPI: {r2}");
+        return (ok, ok ? "Services uninstalled successfully." : $"Partial uninstall.\nWeb: {r1}\nAPI: {r2}");
     }
 
     public void StartWindowsService(string serviceName)
@@ -4694,32 +4844,26 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
     private string ResolveOrProvisionPostgreSqlServiceName()
     {
         var configured = GetPostgreSqlServiceName();
+        var detected = FindInstalledPostgreSqlServiceName();
+
+        if (ServiceExists(configured) && IsWindowsServiceRunning(configured))
+        {
+            return configured;
+        }
+
+        if (!string.IsNullOrWhiteSpace(detected) && IsWindowsServiceRunning(detected))
+        {
+            SetPostgreSqlServiceName(detected);
+            return detected;
+        }
+
         if (ServiceExists(configured))
         {
             return configured;
         }
 
-        if (!string.Equals(configured, ExpectedPostgreSqlServiceName, StringComparison.OrdinalIgnoreCase) &&
-            ServiceExists(ExpectedPostgreSqlServiceName))
-        {
-            SetPostgreSqlServiceName(ExpectedPostgreSqlServiceName);
-            return ExpectedPostgreSqlServiceName;
-        }
-
-        var detected = FindInstalledPostgreSqlServiceName();
         if (!string.IsNullOrWhiteSpace(detected))
         {
-            if (!ServiceExists(ExpectedPostgreSqlServiceName) &&
-                !string.Equals(detected, ExpectedPostgreSqlServiceName, StringComparison.OrdinalIgnoreCase))
-            {
-                if (TryCreateServiceAlias(ExpectedPostgreSqlServiceName, detected) &&
-                    ServiceExists(ExpectedPostgreSqlServiceName))
-                {
-                    SetPostgreSqlServiceName(ExpectedPostgreSqlServiceName);
-                    return ExpectedPostgreSqlServiceName;
-                }
-            }
-
             SetPostgreSqlServiceName(detected);
             return detected;
         }
@@ -4739,6 +4883,24 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
             using var svc = new ServiceController(serviceName);
             _ = svc.Status;
             return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsWindowsServiceRunning(string serviceName)
+    {
+        if (string.IsNullOrWhiteSpace(serviceName) || !ServiceControllerAvailable)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var svc = new ServiceController(serviceName);
+            return svc.Status == ServiceControllerStatus.Running;
         }
         catch
         {
@@ -4797,7 +4959,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
             var createInfo = new ProcessStartInfo
             {
                 FileName = "sc.exe",
-                Arguments = $"create \"{aliasServiceName}\" binPath= \"{sourcePath}\" start= auto DisplayName= \"{aliasServiceName}\"",
+                Arguments = $"create \"{aliasServiceName}\" binPath= \"{sourcePath}\" start= auto DisplayName= \"E-Attendance PostgreSQL Database\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -4811,6 +4973,18 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
             }
 
             create.WaitForExit(10000);
+            if (create.ExitCode == 0 || ServiceExists(aliasServiceName))
+            {
+                var descriptionInfo = new ProcessStartInfo
+                {
+                    FileName = "sc.exe",
+                    Arguments = $"description \"{aliasServiceName}\" \"E-Attendance PostgreSQL database service used by the E-Attendance API and reporting system.\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var description = Process.Start(descriptionInfo);
+                description?.WaitForExit(5000);
+            }
             return create.ExitCode == 0 || ServiceExists(aliasServiceName);
         }
         catch
@@ -5384,7 +5558,7 @@ $do$;",
         return path.Trim().TrimEnd('\\');
     }
 
-    private static string GetWindowsServiceStatus(string serviceName)
+    private static string GetWindowsServiceStatusSummary(string serviceName)
     {
         try
         {

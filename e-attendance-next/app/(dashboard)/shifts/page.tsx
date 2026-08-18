@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CalendarClock, CalendarDays, Clock3 } from "lucide-react";
+import { CalendarClock, CalendarDays, ChevronDown, ChevronRight, Clock3 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBases } from "@/lib/api-bases";
 import {
@@ -466,6 +466,17 @@ export default function ShiftsPage() {
     shiftPlanBlank(defaultShiftRange, "", new Set([6])),
   );
   const [ttForm, setTtForm] = useState<TimetableForm>(timetableBlank());
+  // Each day card collapses to a one-line summary by default (Daily Configuration list can get
+  // long — 7 full cards x 6 time fields each); expand only the day being edited.
+  const [expandedDays, setExpandedDays] = useState<Set<number>>(new Set());
+  const toggleDayExpanded = (dayOfWeek: number) => {
+    setExpandedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(dayOfWeek)) next.delete(dayOfWeek);
+      else next.add(dayOfWeek);
+      return next;
+    });
+  };
   const [breakForm, setBreakForm] = useState<BreakForm>(breakBlank());
   const [shiftGroupForm, setShiftGroupForm] = useState<ShiftGroupForm>(shiftGroupBlank());
   const [shiftAssignmentForm, setShiftAssignmentForm] = useState<ShiftAssignmentForm>(shiftAssignmentBlank(today));
@@ -532,6 +543,17 @@ export default function ShiftsPage() {
     if (Number.isNaN(s.getTime())) return [] as string[];
     return Array.from({ length: 7 }, (_, i) => toDate(new Date(s.getFullYear(), s.getMonth(), s.getDate() + i)));
   }, [weekStart]);
+
+  const summarizeTimetableDay = (d: TimetableDayInput): string => {
+    if (d.isWeeklyOff) return "Weekly Off";
+    const breakLabels = d.breakTimeIds
+      .map((id) => breakById.get(id) ?? id)
+      .filter(Boolean)
+      .join(", ");
+    return `In ${d.checkInTime} (${d.checkInStart}-${d.checkInEnd}) | Out ${d.checkOutTime} (${d.checkOutStart}-${d.checkOutEnd})` +
+      (d.crossDay ? " | Cross Day" : "") +
+      (d.useBreakTime && breakLabels ? ` | Break: ${breakLabels}` : "");
+  };
 
   const summarizeShiftPlan = (plan: ShiftPlanDefinition) => {
     if (plan.cycleType === "daily") {
@@ -744,9 +766,9 @@ export default function ShiftsPage() {
                 setTab("setup");
                 router.replace("/shifts?tab=setup");
               }}
-              className={`inline-flex min-w-[150px] items-center justify-center rounded-lg border px-4 py-2 text-sm ${tab === "setup" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
+              className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "setup" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
             >
-              Shift
+              <Clock3 className="h-4 w-4" />Shift
             </button>
           ) : null}
         </div>
@@ -793,9 +815,6 @@ export default function ShiftsPage() {
             <div className="rounded-lg border border-[--border] p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-sm font-semibold">{shiftPlanForm.id ? "Edit Shift" : "Add Shift"}</div>
-                {shiftPlanForm.id ? (
-                  <button type="button" onClick={() => setShiftPlanForm(shiftPlanBlank(defaultShiftRange, defaultTimetableId, weeklyOffDays))} className="rounded border border-[#e0e0e0] bg-white px-2 py-1 text-xs text-[#666]">Cancel</button>
-                ) : null}
               </div>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 <label className="grid gap-1 text-xs text-[--muted-foreground]">
@@ -872,7 +891,16 @@ export default function ShiftsPage() {
                 </div>
               ) : null}
 
-              <div className="mt-3 flex justify-end">
+              <div className="mt-3 flex justify-end gap-3">
+                {shiftPlanForm.id ? (
+                  <button
+                    type="button"
+                    onClick={() => setShiftPlanForm(shiftPlanBlank(defaultShiftRange, defaultTimetableId, weeklyOffDays))}
+                    className="rounded-lg border border-[#d3e2f3] px-6 py-2 text-sm font-semibold text-[#5f7f9f] hover:bg-[#f8fbff]"
+                  >
+                    Cancel
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={async () => {
@@ -943,7 +971,7 @@ export default function ShiftsPage() {
                       setShiftPlanForm(shiftPlanBlank(defaultShiftRange, defaultTimetableId, weeklyOffDays));
                     }
                   }}
-                  className="rounded-lg bg-[--primary] px-4 py-2 text-sm font-medium text-[--primary-foreground]"
+                  className="rounded-lg bg-[#1f5c8f] px-6 py-2 text-sm font-bold text-white hover:bg-[#164a75]"
                 >
                   {shiftPlanForm.id ? "Update Shift" : "Save Shift"}
                 </button>
@@ -970,14 +998,36 @@ export default function ShiftsPage() {
               </div>
 
               <div className="space-y-3">
-                <div className="text-sm font-semibold text-[#1f4f79]">Daily Configuration</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-[#1f4f79]">Daily Configuration</div>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedDays((prev) => (prev.size > 0 ? new Set() : new Set(ttForm.days.map((d) => d.dayOfWeek))))}
+                    className="rounded-lg border border-[#d3e2f3] bg-white px-3 py-1.5 text-xs font-semibold text-[#1f5c8f] hover:bg-[#f8fbff]"
+                  >
+                    {expandedDays.size > 0 ? "Collapse All" : "Expand All"}
+                  </button>
+                </div>
                 <div className="grid gap-3">
-                  {ttForm.days.map((d) => (
+                  {ttForm.days.map((d) => {
+                    const isExpanded = expandedDays.has(d.dayOfWeek);
+                    return (
                     <div key={d.dayOfWeek} className="rounded-lg border border-[--border] bg-white p-3">
-                      <div className="mb-3 flex items-center justify-between border-b border-[#f0f4f8] pb-2">
-                        <span className="text-base font-bold text-[#1f4f79]">{WEEKDAY_LABELS[d.dayOfWeek]}</span>
+                      <div className={`flex items-center justify-between ${isExpanded ? "mb-3 border-b border-[#f0f4f8] pb-2" : ""}`}>
+                        <button
+                          type="button"
+                          onClick={() => toggleDayExpanded(d.dayOfWeek)}
+                          className="flex items-center gap-2 text-left"
+                          aria-expanded={isExpanded}
+                        >
+                          {isExpanded ? <ChevronDown className="h-4 w-4 text-[#5f7f9f]" /> : <ChevronRight className="h-4 w-4 text-[#5f7f9f]" />}
+                          <span className="text-base font-bold text-[#1f4f79]">{WEEKDAY_LABELS[d.dayOfWeek]}</span>
+                          {!isExpanded ? (
+                            <span className="text-xs font-normal text-[--muted-foreground]">{summarizeTimetableDay(d)}</span>
+                          ) : null}
+                        </button>
                         <div className="flex items-center gap-2">
-                          {!d.isWeeklyOff ? (
+                          {!d.isWeeklyOff && isExpanded ? (
                             <button
                               type="button"
                               onClick={() =>
@@ -1009,14 +1059,17 @@ export default function ShiftsPage() {
                           ) : null}
                           <button
                             type="button"
-                            onClick={() =>
+                            onClick={() => {
+                              const turningOn = d.isWeeklyOff;
                               setTtForm((p) => ({
                                 ...p,
                                 days: p.days.map((x) =>
                                   x.dayOfWeek !== d.dayOfWeek ? x : { ...x, isWeeklyOff: !x.isWeeklyOff },
                                 ),
-                              }))
-                            }
+                              }));
+                              // Auto-expand so the newly-working day's times are immediately visible to fill in.
+                              if (turningOn) setExpandedDays((prev) => new Set(prev).add(d.dayOfWeek));
+                            }}
                             className={`rounded-lg border px-4 py-1.5 text-sm font-semibold transition-colors ${
                               d.isWeeklyOff ? "border-[#d3e2f3] bg-white text-[#5f7f9f]" : "border-[#1f5c8f] bg-[#1f5c8f] text-white"
                             }`}
@@ -1026,7 +1079,7 @@ export default function ShiftsPage() {
                         </div>
                       </div>
 
-                      {!d.isWeeklyOff && (
+                      {!d.isWeeklyOff && isExpanded && (
                         <div className="grid gap-4">
                           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
                             <TimeField label="Check-In Time" value={d.checkInTime} onChange={(v) => setTtForm((p) => ({ ...p, days: p.days.map((x) => x.dayOfWeek === d.dayOfWeek ? { ...x, checkInTime: v } : x) }))} />
@@ -1073,11 +1126,12 @@ export default function ShiftsPage() {
                         </div>
                       )}
 
-                      {d.isWeeklyOff && (
+                      {d.isWeeklyOff && isExpanded && (
                         <div className="py-1 text-[11px] italic text-[#9db2c7]">This day is marked as a weekly holiday. No attendance records will be required.</div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 

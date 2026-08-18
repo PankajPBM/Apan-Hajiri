@@ -115,6 +115,7 @@ This split exists because EF Core's automatic schema creation (`Database.EnsureC
 
 - **Engine:** PostgreSQL, schema name **`E_Attendace`** (note: intentionally *not* "Attendance" — a long-standing naming quirk baked throughout the codebase; always use this exact spelling in SQL).
 - **Schema management:** no formal migration tool. `Program.cs` runs a large set of idempotent `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` / conditional constraint-fix blocks (`TryExec(...)`, `DO $$ ... END $$` blocks) on every startup — a self-healing bootstrap rather than versioned migrations.
+- **Connection string:** `Host=127.0.0.1;Port=1277;Database=E_Attendace;Username=E_Attendace;Password=PB@14891277;Search Path=E_Attendace`. The password is **embedded directly** in `appsettings.json` — do not remove it. The `ResolveExpectedPostgreSqlPassword()` runtime-resolver path is a fallback only; when running as a Windows Service under `LocalSystem`/`NetworkService`, the `PB_ATTENDANCE_DB_PASSWORD` environment variable is not visible and the runtime resolver silently returns the wrong value, causing `28P01` auth failures on every API call including login.
 - **The TEXT-id convention:** `Employees.Id`, `Devices.Id`, `TransactionDetails.Id`, etc. are `TEXT` columns holding GUID-*formatted* strings (not native `uuid`). This was a deliberate fix after EF's `uuid` auto-creation conflicted with the raw-repository layer's expectations. Any new EF entity referencing one of these must use a `GuidToStringConverter`, and any EF query must avoid `.Include()`-ing across that boundary.
 - **Key tables:**
   - `Employees`, `Devices`, `DeviceCommands`, `SyncLogs`, `DeviceSyncLogs` — core device/employee/command-queue state.
@@ -206,7 +207,8 @@ Roughly, in registration order:
 
 ### 10.2 Employee ↔ device biometric sync
 - On employee create/update, or on "Sync Data," the employee's stored biometric templates/photos (from `biometric_templates`/`biometric_photos`) are hydrated onto the in-memory `Employee` object (`HydrateEmployeeBiometricsForDeviceSync`), picking the template version that matches the *target device's* reported fingerprint algorithm version.
-- `CreateEmployeeBiometricSyncCommands` then builds the actual push commands: `USERINFO`, fingerprint `DATA UPDATE FINGERTMP`, face `DATA UPDATE BIODATA` (Type=9 visible-light / Type=2 infrared, based on device capability), and — reusing the *same* profile photo — both `USERPIC` (display photo) and `BIOPHOTO` (the actual face-verification comparison photo, for devices that support photo-based matching).
+- `CreateEmployeeBiometricSyncCommands` then builds the actual push commands: `USERINFO`, fingerprint `DATA UPDATE FINGERTMP`, face template (**visible-light Type=9 uses the newer unified `DATA UPDATE BIODATA`**; **infrared Type=2 uses the older legacy `DATA UPDATE FACE`** command instead — low-end/older infrared-only devices (e.g. ZKTeco MB-series) are documented against the legacy syntax, not `BIODATA`, and reject/ignore the unified command for that type), and — reusing the *same* profile photo — both `USERPIC` (display photo) and `BIOPHOTO` (the actual face-verification comparison photo, for devices that support photo-based matching).
+- **A face template can only ever come from physically enrolling the person's face at a device.** A plain uploaded/captured photo can be pushed as a display or comparison photo (`USERPIC`/`BIOPHOTO`) but never becomes a matchable biometric template — that conversion requires a proprietary face-recognition algorithm (the kind ZKTeco's own official software bundles as a separate, licensed SDK) that this codebase does not have. Once a device uploads a real template via legacy `FACE`/unified `BIODATA`, `HandleFaceTemplatePayload` self-heals that device's `SupportsInfraredFace`/`SupportsVisibleLightFace` capability flag to `true` — this is more reliable than the `CMD=INFO` capability flag for some low-end devices that never report it correctly.
 
 ### 10.3 Attendance capture
 - **Device-sourced:** `POST /iclock/cdata?table=ATTLOG|OPERLOG` → parsed → inserted into `TransactionDetails` with `ParsedOk=1` (auto-accepted, no approval needed).
@@ -219,16 +221,31 @@ Roughly, in registration order:
 - Both flows land in the same `LeaveRequests` table and appear together in the dashboard's Leave Requests list (filterable by area/department/employee/status), with Approve/Reject actions calling `PUT /api/leave/{id}/approve|reject`.
 - Once **approved**, the leave automatically feeds into **Reports**: `GET /api/leave?status=approved` is fetched by the Reports page and used to mark an employee "On Leave" for any date falling within the approved range — no separate wiring needed, since both leave sources share the same underlying table and status.
 
-### 10.5 Logs / observability
+### 10.5 Reports
+- The Reports page fetches approved punch rows from `GET /api/transactions` with `approvedOnly=true`, then calculates daily/weekly/monthly/late/absent/overtime views in the browser using the current shift, holiday, and leave settings.
+- Report transaction loading is capped at 12,000 punch rows and date expansion is capped at 740 days. When either cap is reached, the UI shows a warning so large reports are not mistaken for complete totals; users should narrow date, department, employee, or search filters for exact long-range totals.
+- Legacy `/api/reports/*` list/export endpoints also apply defensive row caps for direct API usage: 5,000 rows for leave history/holiday-work lists and 20,000 rows for CSV attendance export.
+
+### 10.6 Logs / observability
 - `AppLogs` is a flat `(timestamp, level, source, message, detail)` log table, written via `AddLog(...)` calls scattered through the backend — it has no structured device/area/department columns. The dashboard's Logs page filters by Area/Department/Device by matching the selected device's serial number against the free-text message/detail, using the device list (which *does* carry area/department) to resolve which serials belong to a given area/department — an approximation, not a structural join, since the underlying log rows aren't tied to a device by foreign key.
 
 ---
 
 ## 11. Deployment
 
-- Packaged via **Inno Setup** (`installer/E_Attendace.Setup.iss`): installs the `E.Attendance.Web` binary as a Windows Service, bundles and installs PostgreSQL as its own service, and installs the small `E.Attendance` WinForms tray utility for service control/DB bootstrap/port configuration.
+- Packaged via **Inno Setup** (`installer/E_Attendace.Setup.iss`): installs the `E.Attendance.Web` binary as two Windows Services (`E-Attendance-API` and `E-Attendance-Web`), bundles and installs PostgreSQL as its own Windows Service (`E_Attendance_PostgreSQL`, underscore — match this name exactly in `appsettings.json` and `WebServiceManager.cs`), and installs the small `E.Attendance` WinForms tray utility for service control/DB bootstrap/port configuration.
 - The Next.js frontend is built (`npm run build`, static export to `out/`) and copied into `E.Attendance.Web/wwwroot` as part of the .NET build (`SyncBundledFrontend`/`BuildBundledFrontend` MSBuild targets in the `.csproj`) — a Release build of the backend also rebuilds and re-bundles the frontend automatically.
 - The user (not this assistant) performs Release builds and installer runs in Visual Studio; verification during development is done via `dotnet build` (Debug) plus direct `psql` inspection of the live database, not by running deploy scripts.
+
+---
+
+## 11.5 Backup & restore
+
+- **Backup** is a full `pg_dump` of the whole database (`--format=plain --clean --if-exists --no-owner`) — since every piece of app state (settings, employees, devices, photos, license state) already lives in Postgres, one dump is a complete backup. Triggered manually or on a schedule (daily/weekly/monthly) from the web dashboard's **Settings → Backup** tab (admin-only), tracked in `BackupHistory`/`BackupSchedule` tables, with automatic pruning to the configured retention count. A background poll loop (`Program.cs`, 10-minute interval) runs due scheduled backups.
+- **Restore is deliberately not exposed over the web API at all** — it's a destructive operation only reachable from the `E.Attendance` WinForms tray app's "Restore Backup" button, which is the one component with the OS-level ability to stop the backend service before replaying the dump and restart it afterward. The tray requires the `postgres` admin password as a confirmation gate (validated via a real login probe, not just a string compare) before touching anything.
+- **Safety net beyond a plain replay**: immediately before restoring, the tray takes its own dump of the *current* database into the same backup folder (`safety_before_restore_<timestamp>.psql`) — so a bad restore has an undo path. The backup file is also sanity-checked (`BackupService.LooksLikePostgresDump`) for a real `pg_dump` header before ever being run against production data.
+- Both the web backend and the tray app share one implementation (`E.Attendance.Services/BackupService.cs`) for the actual `pg_dump`/`psql` process execution, instead of two independently-maintained copies of the same logic.
+- Not yet implemented: offsite/cloud backup replication (local disk only, so a disk failure can take out both live data and backups if they're on the same volume — the configurable backup location lets an admin point it at a network share to mitigate this, but nothing does that automatically), and a bounded restore timeout (10 minutes) that just fails outright on an unusually large database rather than extending or resuming.
 
 ---
 
@@ -240,3 +257,5 @@ Roughly, in registration order:
 - Server binds `0.0.0.0` — reachable from any interface the host machine has, not just localhost.
 - No functioning multi-language support — the Settings "Language" option is intentionally locked to English pending a real i18n implementation.
 - Two parallel data-access styles (raw ADO.NET vs. EF Core) for historical reasons — new work touching Leave/Holiday/Timetable should stay in the EF module; everything else should stay in the raw-repository style to avoid the `uuid`/`TEXT` mismatch class of bugs.
+- No face-recognition/feature-extraction SDK is bundled — this app can only receive/redistribute face templates that a device itself already generated via physical enrollment; it cannot turn an uploaded photo into a matchable template the way ZKTeco's own commercial software can (that requires a separately-licensed proprietary algorithm SDK this project doesn't have).
+- A device's `SupportsInfraredFace`/`SupportsVisibleLightFace` capability flags rely on its own `CMD=INFO` reply being accurate; some low-end/older devices never report this correctly. The flags self-heal once that device actually uploads a real template, but a device that has *never* had anyone enrolled on it will show as incapable until either its `INFO` reply improves or someone enrolls there first.

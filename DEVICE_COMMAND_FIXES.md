@@ -4,6 +4,47 @@ Detailed record of changes so the reasoning is recoverable later. Newest first.
 
 ---
 
+## 2026-07-04 — Device add put in wrong area + infrared face template distribution (2 fixes)
+
+**#1 New area/device add failed with `42804: column "IsDefault" is of type boolean but expression is
+of type integer`, silently falling back to Default Area.** `Areas`/`Departments` tables were bootstrapped
+with `IsDefault BOOLEAN`, but `SqliteAttendanceRepository.AddArea`/`AddDepartment` (shared by SQLite and
+Postgres) always binds that value as a plain C# `int` (1/0), matching how every other flag column in
+this schema works. That's fine for a pre-existing row, but `SyncSqlAreaAndDepartment` auto-creates a
+matching SQL row via `AddArea`/`AddDepartment` the first time a **brand-new** area gets a device —
+hitting the boolean column and throwing. The device-add call failed outright, leaving the device on
+whatever fallback area applied earlier. Fix (both `E.Attendance.Web/Program.cs` `EnsurePostgresSchema`
+and `installer/E_Attendace.Setup.iss`): `IsDefault` declared `INTEGER`, plus a `DO $$`/`DO $do$`
+migration that `ALTER COLUMN ... TYPE INTEGER` for any database that already has it as boolean (runs on
+every startup / every install, so no manual DB fix is needed for already-deployed installs).
+
+**#2 Infrared (Type=2) face template push used the wrong command for low-end devices.**
+`CreateEmployeeBiometricSyncCommands` sent `DATA UPDATE BIODATA ... Type=2` for infrared templates —
+the newer *unified* template command. Confirmed via live command log on a real device (ZKTeco MB2000)
+that `DATA QUERY BIODATA` returns `Return=-3` (unsupported) while `DATA QUERY FACE` returns `Return=0`
+(understood) — this class of device only speaks the older *legacy* `DATA UPDATE FACE PIN=...\tFID=...
+\tValid=1\tSize=...\tTMP=...` syntax (protocol §12.1.1.4), confirmed byte-for-byte against ZKTeco's own
+official C# PUSH SDK reference demo (`Commands.cs`: `Command_UpdateFaceTmp`). Added
+`DeviceProtocolService.CreateLegacyFaceTemplateCommand` and switched the infrared branch to use it —
+the visible-light (Type=9, `BIODATA`) branch is untouched, since that path was already confirmed working.
+
+Also: `HandleFaceTemplatePayload` now self-heals a device's `SupportsInfraredFace`/
+`SupportsVisibleLightFace` capability flag to `true` the moment that device uploads a real template —
+direct proof of working hardware, more reliable than that device's own `CMD=INFO` reply for low-end
+units that never report `FaceFunOn` correctly. Never downgrades an already-`true` flag.
+
+**Confirmed not fixable in software:** a plain uploaded/captured photo can never become a real face
+template — it can only ever be pushed as a display/comparison photo (`USERPIC`/`BIOPHOTO`). Turning a
+photo into a matchable template requires ZKTeco's own proprietary face-recognition SDK (what their
+official apps like CV Security/BioTime bundle internally), which isn't part of this codebase or its
+public PUSH SDK distribution — verified by inspecting the full `ZKTeco Push SDK Dis` distribution
+(protocol docs 2019–2025, C#/Java reference demos, `ZKTeco_Photo_Crop_Service`) and finding no
+feature-extraction code anywhere in it, only the same push-protocol commands this app already implements.
+
+Build: `dotnet build -c Release` → 0 errors, 0 warnings.
+
+---
+
 ## 2026-07-01 — Transactions/reports + registration Yes/No fetch (3 fixes)
 
 **#1 Transactions showed wrong user ID.** `TryParseAttendanceLine` (`Program.cs`) treated `OPLOG`

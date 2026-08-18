@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -14,6 +14,7 @@ import {
   RotateCcw,
   Search,
   Send,
+  Settings2,
   Trash2,
   Wifi,
   WifiOff,
@@ -53,6 +54,28 @@ type DeviceItem = {
   cmdQty: number;
   isRegistrationDevice?: boolean;
 };
+
+// Columns the user can show/hide from the device table via the preferences (gear) menu.
+// (The selection checkbox, Serial Number, Device Name and Action columns are always shown.)
+const DEVICE_COLUMN_PREFS_KEY = "e_attendance_device_columns";
+const DEVICE_TOGGLEABLE_COLUMNS: { key: string; label: string }[] = [
+  { key: "area", label: "Area" },
+  { key: "department", label: "Department" },
+  { key: "ipAddress", label: "Device IP" },
+  { key: "model", label: "Device Model" },
+  { key: "state", label: "State" },
+  { key: "syncMode", label: "Realtime Sync" },
+  { key: "lastActivity", label: "Last Activity" },
+  { key: "userQty", label: "User Qty" },
+  { key: "fpQty", label: "FP Qty" },
+  { key: "faceQty", label: "Face Qty" },
+  { key: "palmQty", label: "Palm Qty" },
+  { key: "transactionQty", label: "Transaction Qty" },
+  { key: "cmdQty", label: "Cmd" },
+];
+const DEFAULT_DEVICE_COLUMN_PREFS: Record<string, boolean> = Object.fromEntries(
+  DEVICE_TOGGLEABLE_COLUMNS.map((column) => [column.key, true]),
+);
 
 type CommandItem = {
   id: string;
@@ -340,6 +363,44 @@ export default function DevicesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [controlAction, setControlAction] = useState<DeviceControlAction>("");
   const [fetchAction, setFetchAction] = useState<DeviceFetchAction>("");
+
+  // Column visibility preferences (persisted in localStorage; gear menu top-right).
+  const [colPrefs, setColPrefs] = useState<Record<string, boolean>>(DEFAULT_DEVICE_COLUMN_PREFS);
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+  const [colMenuPos, setColMenuPos] = useState<{ right: number; top: number } | null>(null);
+  const colMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(DEVICE_COLUMN_PREFS_KEY);
+      if (raw) {
+        setColPrefs({ ...DEFAULT_DEVICE_COLUMN_PREFS, ...(JSON.parse(raw) as Record<string, boolean>) });
+      }
+    } catch {
+      // ignore — fall back to defaults
+    }
+  }, []);
+
+  function updateColPref(key: string, value: boolean) {
+    setColPrefs((prev) => {
+      const next = { ...prev, [key]: value };
+      try {
+        window.localStorage.setItem(DEVICE_COLUMN_PREFS_KEY, JSON.stringify(next));
+      } catch {
+        // ignore persistence errors
+      }
+      return next;
+    });
+  }
+
+  function resetColPrefs() {
+    setColPrefs(DEFAULT_DEVICE_COLUMN_PREFS);
+    try {
+      window.localStorage.removeItem(DEVICE_COLUMN_PREFS_KEY);
+    } catch {
+      // ignore
+    }
+  }
 
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [sortField, setSortField] = useState<string>("serialNumber");
@@ -1839,6 +1900,77 @@ export default function DevicesPage() {
                   <RotateCcw className="h-3.5 w-3.5 text-[#2b6392]" />
                   <span>Refresh</span>
                 </button>
+                <div className="relative">
+                  <button
+                    ref={colMenuButtonRef}
+                    type="button"
+                    onClick={() => {
+                      setColMenuOpen((prev) => {
+                        const next = !prev;
+                        if (next) {
+                          const rect = colMenuButtonRef.current?.getBoundingClientRect();
+                          if (rect) {
+                            setColMenuPos({ right: window.innerWidth - rect.right, top: rect.bottom + 6 });
+                          }
+                        } else {
+                          setColMenuPos(null);
+                        }
+                        return next;
+                      });
+                    }}
+                    title="Column preferences"
+                    aria-label="Column preferences"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#bcd3f0] bg-white text-[#1a4a73] transition-colors hover:border-[#8eb9e3] hover:bg-[#e1efff]"
+                  >
+                    <Settings2 className="h-4 w-4" />
+                  </button>
+                  {colMenuOpen && colMenuPos && typeof document !== "undefined"
+                    ? createPortal(
+                        <>
+                          <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => {
+                              setColMenuOpen(false);
+                              setColMenuPos(null);
+                            }}
+                          />
+                          <div
+                            className="w-56 rounded-xl border border-[#d2e3f5] bg-white p-2 shadow-[0_20px_30px_-12px_rgba(10,40,70,0.45)]"
+                            style={{ position: "fixed", right: colMenuPos.right, top: colMenuPos.top, zIndex: 9999 }}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <div className="flex items-center justify-between px-2 py-1">
+                              <span className="text-xs font-semibold uppercase text-[#5a7892]">Columns</span>
+                              <button
+                                type="button"
+                                onClick={resetColPrefs}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-[#1a4a73] hover:bg-[#eef6ff]"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                Reset
+                              </button>
+                            </div>
+                            <div className="max-h-64 overflow-auto">
+                              {DEVICE_TOGGLEABLE_COLUMNS.map((column) => (
+                                <label
+                                  key={column.key}
+                                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[#1e4162] hover:bg-[#f6fbff]"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(colPrefs[column.key])}
+                                    onChange={(event) => updateColPref(column.key, event.target.checked)}
+                                  />
+                                  {column.label}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        </>,
+                        document.body,
+                      )
+                    : null}
+                </div>
               </div>
             </div>
 
@@ -1899,6 +2031,7 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    {colPrefs.area ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -1911,6 +2044,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.department ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -1923,6 +2058,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.ipAddress ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -1935,6 +2072,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.model ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -1947,6 +2086,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.state ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -1959,6 +2100,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.syncMode ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -1971,6 +2114,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.lastActivity ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -1983,6 +2128,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.userQty ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -1995,6 +2142,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.fpQty ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -2007,6 +2156,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.faceQty ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -2019,6 +2170,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.palmQty ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -2031,6 +2184,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.transactionQty ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -2043,6 +2198,8 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
+                    {colPrefs.cmdQty ? (
                     <th className="px-3 py-4 font-semibold">
                       <button
                         type="button"
@@ -2055,6 +2212,7 @@ export default function DevicesPage() {
                         )}
                       </button>
                     </th>
+                    ) : null}
                     <th className="px-3 py-4 text-right font-semibold">Action</th>
                   </tr>
                 </thead>
@@ -2081,13 +2239,16 @@ export default function DevicesPage() {
                         </button>
                       </td>
                       <td className="px-3 py-3">{device.name || device.serialNumber}</td>
-                      <td className="px-3 py-3">{device.area || device.location || "None"}</td>
-                      <td className="px-3 py-3">{device.department || "None"}</td>
-                      <td className="px-3 py-3">{device.ipAddress || "None"}</td>
-                      <td className="px-3 py-3">{device.model || "None"}</td>
+                      {colPrefs.area ? <td className="px-3 py-3">{device.area || device.location || "None"}</td> : null}
+                      {colPrefs.department ? <td className="px-3 py-3">{device.department || "None"}</td> : null}
+                      {colPrefs.ipAddress ? <td className="px-3 py-3">{device.ipAddress || "None"}</td> : null}
+                      {colPrefs.model ? <td className="px-3 py-3">{device.model || "None"}</td> : null}
+                      {colPrefs.state ? (
                       <td className="px-3 py-3">
                         <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${statusClass(device.state)}`}>{device.state}</span>
                       </td>
+                      ) : null}
+                      {colPrefs.syncMode ? (
                       <td className="px-3 py-3">
                         <span
                           className={`rounded-full px-3 py-1 text-[11px] font-semibold ${
@@ -2099,13 +2260,14 @@ export default function DevicesPage() {
                           {syncModeLabel(device.isRegistrationDevice)}
                         </span>
                       </td>
-                      <td className="px-3 py-3">{formatCalendarDateTime(device.lastSeenUtc, calendarType, "None")}</td>
-                      <td className="px-3 py-3">{device.userQty}</td>
-                      <td className="px-3 py-3">{device.fpQty}</td>
-                      <td className="px-3 py-3">{device.faceQty}</td>
-                      <td className="px-3 py-3">{device.palmQty}</td>
-                      <td className="px-3 py-3">{device.transactionQty}</td>
-                      <td className="px-3 py-3">{device.cmdQty > 0 ? device.cmdQty : "None"}</td>
+                      ) : null}
+                      {colPrefs.lastActivity ? <td className="px-3 py-3">{formatCalendarDateTime(device.lastSeenUtc, calendarType, "None")}</td> : null}
+                      {colPrefs.userQty ? <td className="px-3 py-3">{device.userQty}</td> : null}
+                      {colPrefs.fpQty ? <td className="px-3 py-3">{device.fpQty}</td> : null}
+                      {colPrefs.faceQty ? <td className="px-3 py-3">{device.faceQty}</td> : null}
+                      {colPrefs.palmQty ? <td className="px-3 py-3">{device.palmQty}</td> : null}
+                      {colPrefs.transactionQty ? <td className="px-3 py-3">{device.transactionQty}</td> : null}
+                      {colPrefs.cmdQty ? <td className="px-3 py-3">{device.cmdQty > 0 ? device.cmdQty : "None"}</td> : null}
                       <td className="px-3 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button

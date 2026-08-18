@@ -186,6 +186,19 @@ public sealed class DeviceProtocolService : IDeviceProtocolService
                $"Type={type}\tMajorVer={majorVer}\tMinorVer=0\tFormat=0\tTmp={tmp}";
     }
 
+    // Legacy face-template command (protocol §12.1.1.4) — distinct from the newer unified BIODATA
+    // command above. Low-end/older infrared-face devices (e.g. ZKTeco MB-series) are documented
+    // against this older "DATA UPDATE FACE" syntax, not BIODATA, so a real captured infrared
+    // template needs this format to actually be understood/applied by that class of device.
+    public string CreateLegacyFaceTemplateCommand(Employee employee, string templateBase64, int faceId = 0)
+    {
+        if (IsLikelyPhotoPayload(templateBase64)) return string.Empty;
+        var normalizedTemplate = NormalizeTemplatePayload(templateBase64);
+        if (string.IsNullOrWhiteSpace(normalizedTemplate)) return string.Empty;
+        var tmp = PrependRandomPrefix(normalizedTemplate);
+        return $"DATA UPDATE FACE PIN={employee.EmployeeCode}\tFID={faceId}\tValid=1\tSize={tmp.Length}\tTMP={tmp}";
+    }
+
     public string CreateComparisonPhotoCommand(Employee employee, string photoBase64, int biometricType = 9)
     {
         var normalizedPhoto = NormalizePhotoPayload(photoBase64);
@@ -326,7 +339,7 @@ public sealed class DeviceProtocolService : IDeviceProtocolService
         }
         if (!string.IsNullOrWhiteSpace(employee.FaceTemplateInfrared) && device.SupportsInfraredFace)
         {
-            var infraredTemplateCommand = CreateUnifiedTemplateCommand(employee, employee.FaceTemplateInfrared, isVisibleLight: false);
+            var infraredTemplateCommand = CreateLegacyFaceTemplateCommand(employee, employee.FaceTemplateInfrared);
             if (!string.IsNullOrWhiteSpace(infraredTemplateCommand)) commands.Add((SyncType.FaceTemplate, infraredTemplateCommand));
         }
         if (!string.IsNullOrWhiteSpace(employee.ProfilePhoto))

@@ -690,7 +690,7 @@ export default function DashboardPage() {
             ))}
           </div>
           <div className="mt-3 space-y-1.5">
-            <p className="flex items-center gap-1.5 text-[9px] font-bold uppercase text-[#64748b]"><CalendarDays className="h-2.5 w-2.5" />Birthdays</p>
+            <h2 className="inline-flex items-center gap-2 text-xs font-bold text-[#1b4b73] uppercase tracking-wider"><CalendarDays className="h-3.5 w-3.5 text-[#3a74a6]" />Birthdays</h2>
             <div className="space-y-1 max-h-[80px] overflow-y-auto pr-1 text-[10px]">
               {upcomingBirthdays.map((row) => (
                 <div key={row.id} className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1 ${row.daysAway === 0 ? "bg-orange-50 text-orange-900 font-bold border border-orange-100" : "text-slate-500"}`}>

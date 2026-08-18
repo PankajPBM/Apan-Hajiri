@@ -37,6 +37,37 @@ function shorten(value: string, maxLen: number): string {
   return `${value.slice(0, maxLen).trimEnd()}...`;
 }
 
+function removeNoisyLogs(items: AppLogItem[]): AppLogItem[] {
+  return items.filter((item) => {
+    const source = (item.source || "").toLowerCase();
+    const message = (item.message || "").toLowerCase();
+    const noisyPushLog =
+      source === "devicepush" ||
+      (source === "server" && message.startsWith("push server ")) ||
+      message.includes("get /iclock/getrequest") ||
+      message.includes("get /iclock/cdata") ||
+      message.includes("post /iclock/cdata");
+    if (noisyPushLog) return false;
+    const allowedSources = new Set(["deviceevent", "deviceaction", "command", "enrollment", "device", "attendance", "sync", "server"]);
+    return !source || allowedSources.has(source);
+  });
+}
+
+function csvCell(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function downloadCsv(filename: string, header: string[], rows: string[][]) {
+  const lines = [header, ...rows].map((row) => row.map(csvCell).join(","));
+  const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   let lastError: string | null = null;
   const candidates = resolveApiBases();
@@ -100,6 +131,7 @@ export default function LogsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const [exporting, setExporting] = useState(false);
 
   // Log rows have no structured device/area/department columns (AppLogEntry is just
   // timestamp/level/source/message/detail) — device serials just show up embedded in the free-text
@@ -107,6 +139,12 @@ export default function LogsPage() {
   // serial number against that free text, using the device list (which does carry area/department)
   // to resolve which serials belong to a given area/department.
   const [devices, setDevices] = useState<Array<{ serialNumber: string; name: string; area: string; department: string }>>([]);
+  // Area/Department dropdown options come from the actual Setup list (same source every other
+  // page's Area/Department filter uses), not just areas/departments that happen to have a device
+  // assigned yet — otherwise a newly-created area with no device in it never shows up as a filter
+  // option here even though it's a real, selectable area everywhere else in the app.
+  const [areaOptions, setAreaOptions] = useState<string[]>([]);
+  const [deptOptions, setDeptOptions] = useState<string[]>([]);
   const [areaFilter, setAreaFilter] = useState("");
   const [deptFilter, setDeptFilter] = useState("");
   const [deviceFilter, setDeviceFilter] = useState("");
@@ -138,10 +176,20 @@ export default function LogsPage() {
         setDevices([]);
       }
     })();
+    void (async () => {
+      try {
+        const data = await requestJson<{ areas?: Array<{ name?: string }>; departments?: Array<{ name?: string }> }>("/api/personnel/setup");
+        const areaNames = Array.isArray(data?.areas) ? data.areas.map((a) => String(a?.name || "").trim()).filter(Boolean) : [];
+        const deptNames = Array.isArray(data?.departments) ? data.departments.map((d) => String(d?.name || "").trim()).filter(Boolean) : [];
+        setAreaOptions(Array.from(new Set(areaNames)).sort());
+        setDeptOptions(Array.from(new Set(deptNames)).sort());
+      } catch {
+        setAreaOptions([]);
+        setDeptOptions([]);
+      }
+    })();
   }, []);
 
-  const areaOptions = useMemo(() => Array.from(new Set(devices.map((d) => d.area))).sort(), [devices]);
-  const deptOptions = useMemo(() => Array.from(new Set(devices.map((d) => d.department))).sort(), [devices]);
   const deviceOptions = useMemo(() => {
     return devices.filter((d) => (!areaFilter || d.area === areaFilter) && (!deptFilter || d.department === deptFilter));
   }, [devices, areaFilter, deptFilter]);
@@ -185,20 +233,7 @@ export default function LogsPage() {
       qs.set("pageSize", String(PAGE_SIZE));
       const data = await requestJson<{ data: AppLogItem[]; total: number }>(`/api/logs?${qs.toString()}`);
       const items = Array.isArray(data?.data) ? data.data : [];
-      const filtered = items.filter((item) => {
-        const source = (item.source || "").toLowerCase();
-        const message = (item.message || "").toLowerCase();
-        const noisyPushLog =
-          source === "devicepush" ||
-          (source === "server" && message.startsWith("push server ")) ||
-          message.includes("get /iclock/getrequest") ||
-          message.includes("get /iclock/cdata") ||
-          message.includes("post /iclock/cdata");
-        if (noisyPushLog) return false;
-        const allowedSources = new Set(["deviceevent","deviceaction","command","enrollment","device","attendance","sync","server"]);
-        return !source || allowedSources.has(source);
-      });
-      setLogs(filtered);
+      setLogs(removeNoisyLogs(items));
       setTotal(typeof data?.total === "number" ? data.total : 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load logs.");
@@ -233,6 +268,58 @@ export default function LogsPage() {
   useEffect(() => {
     void loadAlerts();
   }, []);
+
+  const exportLogs = async () => {
+    setExporting(true);
+    try {
+      const exportPageSize = 500;
+      const maxPages = 40; // caps export at 20,000 rows for the selected range
+      let allItems: AppLogItem[] = [];
+      let totalCount = Number.POSITIVE_INFINITY;
+      for (let pageNum = 1; pageNum <= maxPages && allItems.length < totalCount; pageNum++) {
+        const qs = new URLSearchParams();
+        qs.set("from", fromDate);
+        qs.set("to", toDate);
+        qs.set("page", String(pageNum));
+        qs.set("pageSize", String(exportPageSize));
+        const data = await requestJson<{ data: AppLogItem[]; total: number }>(`/api/logs?${qs.toString()}`);
+        const items = Array.isArray(data?.data) ? data.data : [];
+        if (items.length === 0) break;
+        allItems = allItems.concat(items);
+        totalCount = typeof data?.total === "number" ? data.total : allItems.length;
+      }
+
+      const cleaned = removeNoisyLogs(allItems);
+      const matchingSerials = deviceFilter
+        ? [deviceFilter]
+        : devices
+            .filter((d) => (!areaFilter || d.area === areaFilter) && (!deptFilter || d.department === deptFilter))
+            .map((d) => d.serialNumber);
+      const finalRows = (!areaFilter && !deptFilter && !deviceFilter)
+        ? cleaned
+        : cleaned.filter((item) => {
+            const haystack = `${item.message ?? ""} ${item.detail ?? ""}`;
+            return matchingSerials.some((serial) => haystack.includes(serial));
+          });
+
+      const csvRows = finalRows.map((item) => [
+        formatCalendarDateTime(item.timestampUtc, calendarType),
+        item.level || "",
+        item.source || "",
+        compactText(item.message || ""),
+        compactText(item.detail || ""),
+      ]);
+      downloadCsv(
+        `logs_${fromDate}_to_${toDate}.csv`,
+        ["Time", "Level", "Source", "Message", "Detail"],
+        csvRows,
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to export logs.");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const toggleRow = (key: string) => {
     setExpandedRows((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -368,6 +455,14 @@ export default function LogsPage() {
             className="rounded-lg border border-[#bfd4ea] bg-white px-3 py-2 text-sm text-[#1e4f78]"
           >
             Today
+          </button>
+          <button
+            type="button"
+            onClick={() => void exportLogs()}
+            disabled={exporting}
+            className="rounded-lg border border-[#1e4f78] bg-white px-3 py-2 text-sm text-[#1e4f78] disabled:opacity-50"
+          >
+            {exporting ? "Exporting..." : "Export CSV"}
           </button>
           <button
             type="button"

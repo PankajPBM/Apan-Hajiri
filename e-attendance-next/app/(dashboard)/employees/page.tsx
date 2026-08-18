@@ -448,8 +448,10 @@ export default function EmployeesPage() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const importMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const exportMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const colMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const [importMenuPos, setImportMenuPos] = useState<{ left: number; top: number } | null>(null);
   const [exportMenuPos, setExportMenuPos] = useState<{ left: number; top: number } | null>(null);
+  const [colMenuPos, setColMenuPos] = useState<{ right: number; top: number } | null>(null);
   const [sendUserModalOpen, setSendUserModalOpen] = useState(false);
   const [sendUserBusy, setSendUserBusy] = useState(false);
   const [selectedSendDeviceSerials, setSelectedSendDeviceSerials] = useState<string[]>([]);
@@ -3515,7 +3517,7 @@ export default function EmployeesPage() {
                           }}
                           className="block w-full rounded-md px-3 py-2 text-left text-xs text-[#1a4a73] transition hover:bg-[#eef6ff]"
                         >
-                          Export Employee Template (Updated)
+                          Export Employee Template
                         </button>
                         <button
                           type="button"
@@ -3606,47 +3608,74 @@ export default function EmployeesPage() {
               </button>
               <div className="relative">
                 <button
+                  ref={colMenuButtonRef}
                   type="button"
-                  onClick={() => setColMenuOpen((value) => !value)}
+                  onClick={() => {
+                    setColMenuOpen((prev) => {
+                      const next = !prev;
+                      if (next) {
+                        const rect = colMenuButtonRef.current?.getBoundingClientRect();
+                        if (rect) {
+                          setColMenuPos({ right: window.innerWidth - rect.right, top: rect.bottom + 6 });
+                        }
+                      } else {
+                        setColMenuPos(null);
+                      }
+                      return next;
+                    });
+                  }}
                   title="Column preferences"
                   aria-label="Column preferences"
                   className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#bcd3f0] bg-white text-[#1a4a73] transition-colors hover:border-[#8eb9e3] hover:bg-[#e1efff]"
                 >
                   <Settings2 className="h-4 w-4" />
                 </button>
-                {colMenuOpen ? (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setColMenuOpen(false)} />
-                    <div className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[#d2e3f5] bg-white p-2 shadow-lg">
-                      <div className="flex items-center justify-between px-2 py-1">
-                        <span className="text-xs font-semibold uppercase text-[#5a7892]">Columns</span>
-                        <button
-                          type="button"
-                          onClick={resetColPrefs}
-                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-[#1a4a73] hover:bg-[#eef6ff]"
+                {colMenuOpen && colMenuPos && typeof document !== "undefined"
+                  ? createPortal(
+                      <>
+                        <div
+                          className="fixed inset-0 z-40"
+                          onClick={() => {
+                            setColMenuOpen(false);
+                            setColMenuPos(null);
+                          }}
+                        />
+                        <div
+                          className="w-56 rounded-xl border border-[#d2e3f5] bg-white p-2 shadow-[0_20px_30px_-12px_rgba(10,40,70,0.45)]"
+                          style={{ position: "fixed", right: colMenuPos.right, top: colMenuPos.top, zIndex: 9999 }}
+                          onClick={(event) => event.stopPropagation()}
                         >
-                          <RotateCcw className="h-3 w-3" />
-                          Reset
-                        </button>
-                      </div>
-                      <div className="max-h-64 overflow-auto">
-                        {TOGGLEABLE_COLUMNS.map((column) => (
-                          <label
-                            key={column.key}
-                            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[#1e4162] hover:bg-[#f6fbff]"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={Boolean(colPrefs[column.key])}
-                              onChange={(event) => updateColPref(column.key, event.target.checked)}
-                            />
-                            {column.label}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                ) : null}
+                          <div className="flex items-center justify-between px-2 py-1">
+                            <span className="text-xs font-semibold uppercase text-[#5a7892]">Columns</span>
+                            <button
+                              type="button"
+                              onClick={resetColPrefs}
+                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-[#1a4a73] hover:bg-[#eef6ff]"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                              Reset
+                            </button>
+                          </div>
+                          <div className="max-h-64 overflow-auto">
+                            {TOGGLEABLE_COLUMNS.map((column) => (
+                              <label
+                                key={column.key}
+                                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[#1e4162] hover:bg-[#f6fbff]"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(colPrefs[column.key])}
+                                  onChange={(event) => updateColPref(column.key, event.target.checked)}
+                                />
+                                {column.label}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </>,
+                      document.body,
+                    )
+                  : null}
               </div>
             </div>
           </div>

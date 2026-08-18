@@ -68,10 +68,11 @@ const shiftSubItems: NavItem[] = [
     feature: "timetable",
   },
   {
-    href: "/timetable" as Route,
+    href: { pathname: "/shifts" as Route, query: { tab: "timetable" } },
     label: "Time Table",
     icon: CalendarDays,
-    matchPath: "/timetable" as Route,
+    matchPath: "/shifts" as Route,
+    matchQuery: { key: "tab", value: "timetable" },
     feature: "timetable",
   },
   {

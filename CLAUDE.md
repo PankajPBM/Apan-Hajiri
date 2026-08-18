@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 (Source: github.com/multica-ai/andrej-karpathy-skills)
@@ -76,3 +76,8 @@ Merge the above with these project facts:
 - `2083-xx-xx` log dates are normal **Nepali Bikram Sambat** display, not a clock bug.
 - The user builds **Release in Visual Studio** themselves; verify with `dotnet build` but don't run deploy scripts.
 - Detailed change history: `DEVICE_COMMAND_FIXES.md`. Task personas: `.ai_skills/`.
+- **Password MUST be in connection string.** `appsettings.json` must contain `Password=PB@14891277` explicitly in the `PostgreSQLConnection` string. The `ResolveExpectedPostgreSqlPassword()` runtime resolver is unreliable inside Windows Services (`LocalSystem`/`NetworkService` don't inherit user env vars) — removing the password field causes `28P01` on every login and API call. See `TROUBLESHOOTING.md` T-001.
+- **PostgreSQL service name is `E_Attendance_PostgreSQL`** (underscore). The Inno Setup installer (`installer/E_Attendace.Setup.iss`) registers it with underscores. `appsettings.json` `ServiceName` and `WebServiceManager.cs` `ExpectedPostgreSqlServiceName` must both match this. The hyphenated `E-Attendance-PostgreSQL` is the **legacy** name (in `LegacyPostgreSqlServiceName`) and is only used as a fallback probe.
+- **Schema bootstrap depends on DB connection.** All tables (`TransactionDetails`, `Employees`, etc.) are created by `EnsurePostgresSchema` running in a background task after startup. If the DB connection fails at startup (e.g. due to wrong password), the schema is never created and the Transactions page stays empty. Fix the connection first, then restart the services — tables auto-create on the next clean startup.
+- **Database name/user/schema all use the same `E_Attendace` spelling** (missing 'n' in Attendance). Never "fix" this typo — it's baked throughout code, installer SQL, and the live PostgreSQL instance.
+- See `TROUBLESHOOTING.md` for a runnable quick-health-check script and full diagnosis steps for all known failure modes.

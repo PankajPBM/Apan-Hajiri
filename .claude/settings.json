@@ -12,7 +12,13 @@
       "Bash(curl -s -i \"http://localhost:8081/api/personnel/holidays\")",
       "Bash(curl -s -i -X POST \"http://localhost:8081/api/personnel/holidays\" -H \"Content-Type: application/json\" -d '{\"holidayDate\":\"2026-08-15\",\"holidayName\":\"Test Holiday\",\"description\":\"\",\"isRecurring\":false,\"isActive\":true}')",
       "Bash(curl -s -i -X PUT \"http://localhost:8081/api/personnel/holidays/1\" -H \"Content-Type: application/json\" -d '{\"holidayDate\":\"2026-08-15\",\"holidayName\":\"Test Holiday Updated\",\"description\":\"desc\",\"isRecurring\":true,\"isActive\":true}')",
-      "Bash(curl -s -i -X DELETE \"http://localhost:8081/api/personnel/holidays/1\")"
+      "Bash(curl -s -i -X DELETE \"http://localhost:8081/api/personnel/holidays/1\")",
+      "Bash(curl -s \"http://localhost:8081/api/logs*)",
+      "Bash(curl -s \"http://localhost:8081/api/devices*)",
+      "Bash(curl -s \"http://localhost:8081/api/server/stats*)",
+      "Bash(curl -s \"http://localhost:8081/api/attendance*)",
+      "Bash(tasklist *)",
+      "Bash(where *)"
     ]
   }
 }

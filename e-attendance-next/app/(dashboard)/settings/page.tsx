@@ -23,7 +23,7 @@ import {
 import { LicensePanel } from "@/components/license-panel";
 import { useCalendarPreference } from "@/components/date/calendar-context";
 import { formatCalendarDateTime } from "@/components/date/date-display";
-import { loadUsersFromApi, notifyAuthUpdated, saveUsersToApi } from "@/components/data/auth-store";
+import { loadUsersFromApi, notifyAuthUpdated, readAuthSession, saveUsersToApi } from "@/components/data/auth-store";
 import { resolveApiBases } from "@/lib/api-bases";
 
 type SettingsTab = "general" | "attendance" | "device" | "branding" | "license" | "user";
@@ -399,10 +399,17 @@ function normalizeLoadedUsers(raw: unknown): UserAccessRecord[] {
     const current = users[adminIndex];
     users[adminIndex] = {
       ...current,
-      id: DEFAULT_ADMIN_USER_ID,
+      // Keep the real backend id if we have one — overwriting it with the placeholder
+      // "default-admin" breaks the save round-trip's ability to match admin back to its real row.
+      id: current.id && current.id !== DEFAULT_ADMIN_USER_ID ? current.id : DEFAULT_ADMIN_USER_ID,
       username: DEFAULT_ADMIN_USERNAME,
       fullName: DEFAULT_ADMIN_FULL_NAME,
-      password: current.password.trim().length > 0 ? current.password : DEFAULT_ADMIN_PASSWORD,
+      // The backend never returns a real password hash (always blank after a load), so defaulting
+      // a blank password to DEFAULT_ADMIN_PASSWORD meant every save — even one just creating an
+      // unrelated user — silently re-sent and re-saved that fixed password for admin, permanently
+      // overwriting whatever the real admin password had been changed to. Leave it blank; the
+      // backend already treats a blank password on save as "keep the existing hash unchanged".
+      password: current.password,
       role: "Admin",
       isActive: true,
       featureAccess: createFullFeatureAccess(),
@@ -595,6 +602,10 @@ function validateSettingsForTab(tab: SettingsTab, settings: SettingsState): stri
 
 export default function SettingsPage() {
   const { calendarType } = useCalendarPreference();
+  // Creating/editing/deleting software users is Admin-only — the backend enforces this too
+  // (403 for non-Admin callers), this just hides the controls so a Manager/Operator with
+  // "settings" feature access doesn't see buttons that would just fail.
+  const isAdmin = readAuthSession()?.role === "Admin";
   const [tab, setTab] = useState<SettingsTab>("general");
   const [settings, setSettings] = useState<SettingsState>(defaultSettings);
   const [savedSettings, setSavedSettings] = useState<SettingsState>(defaultSettings);
@@ -1067,7 +1078,7 @@ export default function SettingsPage() {
       <div className="grid gap-4 xl:grid-cols-[280px_1fr]">
         <aside className="surface p-3 shadow-sm">
           <div className="space-y-2">
-            {tabs.map((item) => {
+            {tabs.filter((item) => item.id !== "user" || isAdmin).map((item) => {
               const Icon = item.icon;
               return (
                 <button
@@ -1297,16 +1308,23 @@ export default function SettingsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-[--muted-foreground]">{users.length} user(s)</span>
-                    <button
-                      type="button"
-                      onClick={openCreateUserForm}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[--primary] px-3 py-1.5 text-xs font-semibold text-[--primary-foreground]"
-                    >
-                      <UserPlus className="h-3.5 w-3.5" />
-                      Create User
-                    </button>
+                    {isAdmin ? (
+                      <button
+                        type="button"
+                        onClick={openCreateUserForm}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[--primary] px-3 py-1.5 text-xs font-semibold text-[--primary-foreground]"
+                      >
+                        <UserPlus className="h-3.5 w-3.5" />
+                        Create User
+                      </button>
+                    ) : null}
                   </div>
                 </div>
+                {!isAdmin ? (
+                  <div className="rounded-lg border border-[#cfe0f2] bg-[#f5f9ff] px-3 py-2.5 text-sm text-[#1e4c78]">
+                    Only Admin can create, edit, or delete software users.
+                  </div>
+                ) : null}
                 {users.length === 0 ? (
                   <p className="text-sm text-[--muted-foreground]">No user created yet.</p>
                 ) : (
@@ -1366,33 +1384,37 @@ export default function SettingsPage() {
                                 {formatCalendarDateTime(row.updatedAt, calendarType)}
                               </td>
                               <td className="px-3 py-2 text-right">
-                                <div className="inline-flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleEditUser(row.id)}
-                                    className="inline-flex items-center gap-1 rounded-md border border-[--border] bg-[--card] px-2 py-1.5 text-xs font-medium"
-                                  >
-                                    <Pencil className="h-3.5 w-3.5" />
-                                    Edit
-                                  </button>
-                                  {rowIsAdmin ? (
-                                    <span
-                                      title="Default admin can't be deleted. Username, role, and access are locked, but the password can still be changed via Edit."
-                                      className="inline-flex items-center rounded-md border border-[#cfe0f2] bg-[#f5f9ff] px-2 py-1.5 text-xs font-medium text-[#1e4c78]"
-                                    >
-                                      <Lock className="h-3.5 w-3.5" />
-                                    </span>
-                                  ) : (
+                                {isAdmin ? (
+                                  <div className="inline-flex items-center gap-1.5">
                                     <button
                                       type="button"
-                                      onClick={() => handleDeleteUser(row.id)}
-                                      className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs font-medium text-rose-700"
+                                      onClick={() => handleEditUser(row.id)}
+                                      className="inline-flex items-center gap-1 rounded-md border border-[--border] bg-[--card] px-2 py-1.5 text-xs font-medium"
                                     >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                      Delete
+                                      <Pencil className="h-3.5 w-3.5" />
+                                      Edit
                                     </button>
-                                  )}
-                                </div>
+                                    {rowIsAdmin ? (
+                                      <span
+                                        title="Default admin can't be deleted. Username, role, and access are locked, but the password can still be changed via Edit."
+                                        className="inline-flex items-center rounded-md border border-[#cfe0f2] bg-[#f5f9ff] px-2 py-1.5 text-xs font-medium text-[#1e4c78]"
+                                      >
+                                        <Lock className="h-3.5 w-3.5" />
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteUser(row.id)}
+                                        className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs font-medium text-rose-700"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                        Delete
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-[--muted-foreground]">—</span>
+                                )}
                               </td>
                             </tr>
                           );

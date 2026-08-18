@@ -67,6 +67,21 @@ function toInputDate(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+function csvCell(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function downloadCsv(filename: string, header: string[], rows: string[][]) {
+  const lines = [header, ...rows].map((row) => row.map(csvCell).join(","));
+  const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   let lastError: string | null = null;
   const candidates = resolveApiBases();
@@ -114,6 +129,7 @@ export default function AttendancePage() {
   const [selectedArea, setSelectedArea] = useState("");
   const [selectedDept, setSelectedDept] = useState("");
   const [selectedDevice, setSelectedDevice] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const txTotalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const txCurrentPage = Math.min(txPage, txTotalPages);
@@ -261,6 +277,42 @@ export default function AttendancePage() {
     finally { setManualSaving(false); }
   };
 
+  const exportTransactions = async () => {
+    setExporting(true);
+    try {
+      const qs = new URLSearchParams();
+      qs.set("from", fromDate);
+      qs.set("to", toDate);
+      qs.set("usePunchTime", "true");
+      qs.set("take", "20000");
+      if (search.trim()) qs.set("search", search.trim());
+      if (selectedArea) qs.set("area", selectedArea);
+      if (selectedDept) qs.set("department", selectedDept);
+      if (selectedDevice) qs.set("deviceSerial", selectedDevice);
+      const data = await requestJson<{ data: TransactionRow[] }>(`/api/transactions?${qs.toString()}`);
+      const items = Array.isArray(data?.data) ? data.data : [];
+      const csvRows = items.map((item) => [
+        item.employeeCode ?? "",
+        item.employeeName ?? "",
+        item.employeeDepartment ?? "",
+        item.punchTime ? formatCalendarDateTime(item.punchTime, calendarType) : "",
+        describeStatusCode(item.statusCode),
+        describeVerifyMode(item),
+        deviceMap[item.deviceSerialNumber ?? ""] ?? item.deviceSerialNumber ?? "",
+        displayRemarks(item),
+      ]);
+      downloadCsv(
+        `transactions_${fromDate}_to_${toDate}.csv`,
+        ["Employee ID", "Employee Name", "Department", "Punch Time", "Status", "Verify Type", "Device", "Remarks"],
+        csvRows,
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to export transactions.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleDecision = async (id: string, decision: "approve" | "reject") => {
     setActionLoading(id);
     try {
@@ -288,6 +340,7 @@ export default function AttendancePage() {
             <div className="flex items-center gap-2">
               <button onClick={() => { setFromDate(today); setToDate(today); setRangePreset("day"); }} className="rounded-xl border border-[#d3e1ee] bg-white px-3 py-2 text-xs font-bold text-[#1b4b73] hover:bg-slate-50 transition-colors">Today</button>
               <button onClick={() => { setManualMsg(null); setManualOpen(true); }} className="rounded-xl bg-[#1e7a4f] px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-900/10 hover:bg-[#165a3d] transition-all">+ Manual Punch</button>
+              <button onClick={() => void exportTransactions()} disabled={exporting} className="rounded-xl border border-[#1b4b73] bg-white px-4 py-2 text-xs font-bold text-[#1b4b73] shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50">{exporting ? "Exporting..." : "Export CSV"}</button>
               <button onClick={() => void loadTransactions(1)} className="rounded-xl bg-[#1b4b73] px-4 py-2 text-xs font-bold text-white shadow-lg shadow-blue-900/10 hover:bg-[#153a5c] transition-all">{loading ? "..." : "Refresh"}</button>
             </div>
           </div>

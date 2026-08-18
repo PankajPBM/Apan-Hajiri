@@ -87,6 +87,7 @@ const string DefaultDepartmentCode = "1";
 const string DefaultDepartmentName = "Default Department";
 
 var isServiceMode = args.Any(a => a.Equals("--service-mode", StringComparison.OrdinalIgnoreCase));
+var serviceRole = ResolveServiceRole(args);
 var personnelStore = new PersonnelStore();
 
 builder.Services.AddDbContext<PbAttendanceDbContext>(options =>
@@ -99,7 +100,19 @@ E.Attendance.Web.ServiceExtensions.AddPostgresModules(builder.Services, postgres
 
 var settingsPath = Path.Combine(appDataRoot, "websettings.json");
 var settings = EnsureBindableRuntimePorts(WebAppSettings.Load(settingsPath), settingsPath);
-builder.WebHost.UseUrls(BuildListenUrls(settings.Port, settings.FrontendPort));
+builder.WebHost.UseUrls(BuildListenUrls(settings.Port, settings.FrontendPort, serviceRole));
+
+if (string.Equals(serviceRole, "web", StringComparison.OrdinalIgnoreCase))
+{
+    var webOnlyApp = builder.Build();
+    webOnlyApp.UseDefaultFiles();
+    webOnlyApp.UseStaticFiles();
+    webOnlyApp.MapGet("/api-config.json", () => Results.Json(new { apiPort = settings.Port, webPort = settings.FrontendPort }));
+    webOnlyApp.MapGet("/health", () => Results.Ok(new { status = "Healthy", service = "E-Attendance-Web", role = "web" }));
+    webOnlyApp.MapFallbackToFile("index.html");
+    webOnlyApp.Run();
+    return;
+}
 
 var devicePollDelaySeconds = builder.Configuration.GetValue<int?>("DeviceSettings:PollDelaySeconds") ?? 10;
 var deviceDefaultTimeZoneMinutes = DeviceProtocolService.TimezoneToMinutes(
@@ -115,25 +128,6 @@ var service = new AttendanceService(repository, protocolService);
 // Use this singleton everywhere (incl. ConfigSyncService) so commands queued by background
 // sync use the SAME instance that delivers commands and records device replies.
 builder.Services.AddSingleton<E.Attendance.Core.Interfaces.IAttendanceService>(service);
-
-// Run schema migration synchronously if PostgreSQL is already reachable (typical case after install).
-// This patches the Devices table and other missing columns BEFORE the first API request.
-// Falls back to the background task below if PostgreSQL isn't ready yet.
-try
-{
-    var probeBuilder = new Npgsql.NpgsqlConnectionStringBuilder(postgresConnectionString) { Timeout = 3 };
-    using var probeConn = new Npgsql.NpgsqlConnection(probeBuilder.ConnectionString);
-    probeConn.Open();
-    probeConn.Close();
-    // PostgreSQL is ready — patch schema now so /api/devices works on first request
-    EnsurePostgresSchema(postgresConnectionString);
-    MigrateBiometricFkConstraints(postgresConnectionString);
-    Console.WriteLine("[Startup] Schema migration completed synchronously before app.Run().");
-}
-catch
-{
-    Console.WriteLine("[Startup] PostgreSQL not immediately reachable — schema migration deferred to background task.");
-}
 
 // Heavy initialization moved to background task to prevent Windows Service startup timeout (Error 1053)
 _ = Task.Run(() =>
@@ -611,16 +605,32 @@ var fullDataResetUtcBySerial = new ConcurrentDictionary<string, DateTime>(String
 // suppress the user/biometric real-time upload (so it does NOT fetch), then consume the flag.
 var clearAllDataPendingBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 var manualUserSyncUntilUtcBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+var transactionDetailsQueuedRequests = 0L;
+var transactionDetailsPersistedRequests = 0L;
+var transactionDetailsPersistFailureCount = 0L;
+var transactionDetailsLastPersistError = string.Empty;
 
-var transactionDetailsPersistChannel = Channel.CreateBounded<TransactionDetailPersistRequest>(new BoundedChannelOptions(120)
+var transactionDetailsPersistChannel = Channel.CreateUnbounded<TransactionDetailPersistRequest>(new UnboundedChannelOptions
 {
-    FullMode = BoundedChannelFullMode.DropOldest,
     SingleReader = true,
     SingleWriter = false
 });
 
 _ = Task.Run(() => RunAppLogDbWriterAsync(postgresConnectionString, appLogPersistChannel.Reader, app.Lifetime.ApplicationStopping));
-_ = Task.Run(() => RunTransactionDetailsDbWriterAsync(postgresConnectionString, transactionDetailsPersistChannel.Reader, app.Lifetime.ApplicationStopping));
+_ = Task.Run(() => RunTransactionDetailsDbWriterAsync(
+    postgresConnectionString,
+    transactionDetailsPersistChannel.Reader,
+    app.Lifetime.ApplicationStopping,
+    persistedCount =>
+    {
+        Interlocked.Add(ref transactionDetailsPersistedRequests, persistedCount);
+        transactionDetailsLastPersistError = string.Empty;
+    },
+    errorMessage =>
+    {
+        Interlocked.Increment(ref transactionDetailsPersistFailureCount);
+        transactionDetailsLastPersistError = errorMessage ?? "Unknown punch persistence error.";
+    }));
 
 void AddLog(string level, string source, string message, string? detail = null)
 {
@@ -634,6 +644,23 @@ void AddLog(string level, string source, string message, string? detail = null)
     _ = appLogPersistChannel.Writer.TryWrite(entry);
 }
 
+// Memory-only variant (never hits the DB) for high-frequency, zero-diagnostic-value entries —
+// routine heartbeats (idle getrequest polls, ping heartbeats, the options=all handshake) that
+// would otherwise flood the AppLogs table at scale (e.g. 100 devices polling every 15-30s each).
+// Still shows up in the live in-memory view (capped at 2000 entries) for real-time "is this
+// device still talking to us" visibility. Kept as a separate function (not an AddLog parameter)
+// because AddLog's method group is passed around as a bare Action<string,string,string,string?>
+// delegate elsewhere, which breaks if AddLog's signature changes.
+void AddLogTransient(string level, string source, string message, string? detail = null)
+{
+    var entry = new AppLogEntry(DateTime.UtcNow, level, source, message, detail);
+    appLogs.Enqueue(entry);
+    while (appLogs.Count > 2000)
+    {
+        appLogs.TryDequeue(out _);
+    }
+}
+
 void QueueTransactionDetails(string? serialNumber, string sourceTable, string payload)
 {
     if (string.IsNullOrWhiteSpace(payload))
@@ -641,10 +668,13 @@ void QueueTransactionDetails(string? serialNumber, string sourceTable, string pa
         return;
     }
 
-    _ = transactionDetailsPersistChannel.Writer.TryWrite(new TransactionDetailPersistRequest(
+    if (transactionDetailsPersistChannel.Writer.TryWrite(new TransactionDetailPersistRequest(
         serialNumber?.Trim(),
         sourceTable,
-        payload));
+        payload)))
+    {
+        Interlocked.Increment(ref transactionDetailsQueuedRequests);
+    }
 }
 
 object BuildLicenseStatusPayload(LicenseAccessSnapshot state)
@@ -916,6 +946,8 @@ app.MapPost("/api/license/activate", async (HttpRequest request) =>
     return Results.Json(new
     {
         success = licenseState.Validation.IsValid,
+        message = licenseState.ActivationMessage,
+        code = licenseState.Validation.Code,
         status = BuildLicenseStatusPayload(licenseState)
     });
 });
@@ -1034,6 +1066,19 @@ app.MapGet("/api/server/stats", () =>
     });
 });
 
+// Public (no login required) — lets the login page, support staff, and the installer/updater all
+// confirm which build is actually running without needing a session. Single source of truth is
+// the assembly version baked in from E.Attendance.Web.csproj's <Version> at build time; the
+// installer (.iss) reads that same compiled value via GetVersionNumbersString so there is exactly
+// one place to bump the version instead of several hand-maintained copies drifting out of sync.
+app.MapGet("/api/version", () =>
+{
+    var asmVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+    var version = asmVersion is null ? "0.0.0" : $"{asmVersion.Major}.{asmVersion.Minor}.{asmVersion.Build}";
+    var buildUtc = System.IO.File.GetLastWriteTimeUtc(System.Reflection.Assembly.GetExecutingAssembly().Location);
+    return Results.Json(new { version, buildUtc });
+});
+
 app.MapGet("/health", (IServiceProvider services) =>
 {
     try
@@ -1049,6 +1094,16 @@ app.MapGet("/health", (IServiceProvider services) =>
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
+});
+
+app.MapGet("/api/services/status", (HttpContext context) =>
+{
+    if (!IsCallerAdmin(context))
+    {
+        return Results.Json(new { message = "Only Admin can view service status." }, statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    return Results.Json(BuildEAttServicesSnapshot());
 });
 
 app.MapGet("/api/logs", (string? search, string? level, string? source, int? take, int? page, int? pageSize, string? from, string? to) =>
@@ -1280,7 +1335,7 @@ app.MapPut("/api/app-config/shifts", async (HttpRequest request, ConfigSyncServi
     }
 });
 
-app.MapGet("/api/app-config/access-control", IResult () =>
+app.MapGet("/api/app-config/access-control", async Task<IResult> (ConfigSyncService syncService) =>
 {
     lock (licenseRefreshSync)
     {
@@ -1289,6 +1344,7 @@ app.MapGet("/api/app-config/access-control", IResult () =>
             return Results.Json(new { error = "access_control_locked", message = "Access Control requires a valid activated license and is not available in trial mode." }, statusCode: StatusCodes.Status423Locked);
         }
     }
+    await EnsureAccessControlDefaultsForAllAreas(postgresConnectionString, service, personnelStore, syncService, syncWhenUnchangedWithDevices: false);
     var json = ReadAppConfigJson(postgresConnectionString, "access-control");
     return Results.Content(json, "application/json");
 });
@@ -1307,12 +1363,20 @@ app.MapPut("/api/app-config/access-control", async Task<IResult> (HttpRequest re
         using var document = await JsonDocument.ParseAsync(request.Body);
         var rawJson = document.RootElement.GetRawText();
         SaveAppConfigJson(postgresConnectionString, "access-control", rawJson);
-        await syncService.SyncAccessControlAsync(rawJson);
-        if (ApplyAccessControlPrivilegesToEmployees(rawJson, repository, personnelStore))
+        await EnsureAccessControlDefaultsForAllAreas(
+            postgresConnectionString,
+            service,
+            personnelStore,
+            syncService,
+            syncWhenUnchangedWithDevices: false,
+            syncWhenChanged: false);
+        var repairedJson = ReadAppConfigJson(postgresConnectionString, "access-control");
+        await syncService.SyncAccessControlAsync(repairedJson);
+        if (ApplyAccessControlPrivilegesToEmployees(repairedJson, repository, personnelStore))
         {
             SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
         }
-        return Results.Content(rawJson, "application/json");
+        return Results.Content(repairedJson, "application/json");
     }
     catch (Exception ex)
     {
@@ -1429,8 +1493,12 @@ app.MapPost("/api/auth/login", async (HttpRequest request) =>
     }
 });
 
-app.MapGet("/api/auth/users", () =>
+app.MapGet("/api/auth/users", (HttpContext context) =>
 {
+    if (!IsCallerAdmin(context))
+    {
+        return Results.Json(new { message = "Only Admin can view software users." }, statusCode: StatusCodes.Status403Forbidden);
+    }
     try
     {
         return Results.Json(LoadAuthUsersFromDb(postgresConnectionString));
@@ -1441,8 +1509,12 @@ app.MapGet("/api/auth/users", () =>
     }
 });
 
-app.MapPut("/api/auth/users", async (HttpRequest request) =>
+app.MapPut("/api/auth/users", async (HttpContext context, HttpRequest request) =>
 {
+    if (!IsCallerAdmin(context))
+    {
+        return Results.Json(new { message = "Only Admin can create, edit, or delete software users." }, statusCode: StatusCodes.Status403Forbidden);
+    }
     var payload = await request.ReadFromJsonAsync<List<AuthUserSaveRequest>>();
     if (payload is null)
     {
@@ -1472,6 +1544,102 @@ app.MapGet("/api/auth/session", (string? userId, string? username) =>
     catch (Exception ex)
     {
         return Results.BadRequest(new { message = $"Failed to load user session: {ex.Message}" });
+    }
+});
+
+app.MapGet("/api/backup/settings", (HttpContext context) =>
+{
+    if (!IsCallerAdmin(context))
+    {
+        return Results.Json(new { message = "Only Admin can view backup settings." }, statusCode: StatusCodes.Status403Forbidden);
+    }
+    try
+    {
+        return Results.Json(LoadBackupScheduleFromDb(postgresConnectionString));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"Failed to load backup settings: {ex.Message}" });
+    }
+});
+
+app.MapPut("/api/backup/settings", async (HttpContext context, HttpRequest request) =>
+{
+    if (!IsCallerAdmin(context))
+    {
+        return Results.Json(new { message = "Only Admin can change backup settings." }, statusCode: StatusCodes.Status403Forbidden);
+    }
+    var payload = await request.ReadFromJsonAsync<BackupScheduleSaveRequest>();
+    if (payload is null)
+    {
+        return Results.BadRequest(new { message = "Invalid payload." });
+    }
+    try
+    {
+        var saved = SaveBackupScheduleToDb(postgresConnectionString, payload.Enabled, payload.Frequency, payload.RunTime, payload.BackupLocation, payload.RetentionCount);
+        return Results.Json(saved);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"Failed to save backup settings: {ex.Message}" });
+    }
+});
+
+app.MapGet("/api/backup/history", (HttpContext context, int? page, int? pageSize) =>
+{
+    if (!IsCallerAdmin(context))
+    {
+        return Results.Json(new { message = "Only Admin can view backup history." }, statusCode: StatusCodes.Status403Forbidden);
+    }
+    try
+    {
+        var (items, total) = LoadBackupHistoryFromDb(postgresConnectionString, page ?? 1, pageSize ?? 20);
+        return Results.Json(new { data = items, total });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"Failed to load backup history: {ex.Message}" });
+    }
+});
+
+app.MapPost("/api/backup/run", async (HttpContext context) =>
+{
+    if (!IsCallerAdmin(context))
+    {
+        return Results.Json(new { message = "Only Admin can run a backup." }, statusCode: StatusCodes.Status403Forbidden);
+    }
+    try
+    {
+        // A full dump is typically seconds to a couple of minutes even for large installs, so this
+        // runs synchronously and returns the finished row — no polling/fire-and-forget needed.
+        var entry = await RunAndRecordBackupAsync(postgresConnectionString, "manual", AddLog);
+        return Results.Json(entry);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"Backup failed: {ex.Message}" });
+    }
+});
+
+app.MapGet("/api/backup/download/{id}", (HttpContext context, string id) =>
+{
+    if (!IsCallerAdmin(context))
+    {
+        return Results.Json(new { message = "Only Admin can download backups." }, statusCode: StatusCodes.Status403Forbidden);
+    }
+    try
+    {
+        var filePath = LoadBackupFilePathById(postgresConnectionString, id);
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            return Results.NotFound(new { message = "Backup file not found." });
+        }
+        var stream = System.IO.File.OpenRead(filePath);
+        return Results.File(stream, "application/octet-stream", Path.GetFileName(filePath));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"Failed to download backup: {ex.Message}" });
     }
 });
 
@@ -1983,6 +2151,23 @@ app.MapPut("/api/personnel/employees/{id:guid}", async (Guid id, HttpRequest req
         return Results.NotFound(new { message = "Employee not found." });
     }
 
+    // Capture the employee's area(s) BEFORE any field on `employee` is mutated below, so that if
+    // this edit moves them to a different area we can tell which devices they need to be removed
+    // from (previously in scope, no longer assigned) vs. which they're newly pushed to.
+    var previousProfileForAreaDiff = personnelStore.Profiles.FirstOrDefault(p =>
+        string.Equals(p.EmployeeCode, employee.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+    var previousAreaCodes = GetResolvedEmployeeAssignments(
+            personnelStore,
+            employee,
+            previousProfileForAreaDiff,
+            DefaultAreaCode,
+            DefaultAreaName,
+            DefaultDepartmentCode,
+            DefaultDepartmentName)
+        .Select(a => a.Area.Code)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     var normalizedEmployeeCode = NormalizeEmployeeCode(payload.EmployeeCode);
     var normalizedCardNumber = NormalizeCardNumber(payload.CardNumber);
     var normalizedPhotoInput = payload.PictureDataUrl?.Trim() ?? string.Empty;
@@ -2106,12 +2291,32 @@ app.MapPut("/api/personnel/employees/{id:guid}", async (Guid id, HttpRequest req
         try
         {
             var updatedProfile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, employee.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+            var newAreaCodes = resolvedAssignments
+                .Select(a => a.AreaCode)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var devicesToWake = new List<Device>();
+            var safeCodeForAreaRemoval = SanitizeCommandValue(employee.EmployeeCode);
             foreach (var device in service.ListDevices())
             {
                 var setup = ResolveDeviceSetupForSerial(personnelStore, device.SerialNumber, device.Location, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
                 var deptName = ResolveEmployeeDepartmentForDevice(personnelStore, employee, updatedProfile, setup.Department, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
-                if (string.IsNullOrWhiteSpace(deptName)) continue;
+                if (string.IsNullOrWhiteSpace(deptName))
+                {
+                    // This edit may have moved the employee OUT of a device's area (e.g. Area A -> Area
+                    // B). Without this, the employee's old enrollment silently lingers forever on
+                    // devices in areas they're no longer assigned to, since nothing else ever revisits
+                    // devices the employee isn't currently mapped to.
+                    if (!string.IsNullOrWhiteSpace(safeCodeForAreaRemoval) &&
+                        previousAreaCodes.Contains(setup.Area.Code) &&
+                        !newAreaCodes.Contains(setup.Area.Code))
+                    {
+                        service.QueueDeviceCommand(device.SerialNumber, "CHECK");
+                        service.QueueDeviceCommand(device.SerialNumber, $"DATA DELETE USERINFO PIN={safeCodeForAreaRemoval}");
+                        devicesToWake.Add(device);
+                    }
+                    continue;
+                }
                 var syncEmp = CreateEmployeeForDeviceSync(employee, updatedProfile, deptName);
                 syncEmp.DepartmentId = payload.GroupId ?? syncEmp.DepartmentId;
                 syncEmp.VerifyMode = employee.VerifyMode;
@@ -3478,6 +3683,19 @@ app.MapPost("/api/personnel/departments", async (HttpRequest request) =>
         area.Code);
     personnelStore.Departments.Add(dept);
     SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            using var scope = app.Services.CreateScope();
+            var scopedSync = scope.ServiceProvider.GetRequiredService<ConfigSyncService>();
+            await EnsureDefaultShiftAssignmentsForAllDepartments(postgresConnectionString, personnelStore, scopedSync);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Department post-create defaults error: {ex.Message}");
+        }
+    });
     return Results.Json(dept);
 });
 
@@ -3958,9 +4176,22 @@ app.MapPost("/api/personnel/areas", async (HttpRequest request, ConfigSyncServic
     }
 
     SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
-    // Auto-create this area's default access-control entities (Time Period 1, Access Group 1,
-    // Combination 1) so they exist without opening the Access Control page.
-    await EnsureAccessControlDefaultsForAllAreas(postgresConnectionString, service, personnelStore, syncService);
+    // Post-create defaults can sync devices and should never make a completed area create look
+    // failed to the UI. The read/save paths also repair these defaults if this background pass lags.
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            using var scope = app.Services.CreateScope();
+            var scopedSync = scope.ServiceProvider.GetRequiredService<ConfigSyncService>();
+            await EnsureAccessControlDefaultsForAllAreas(postgresConnectionString, service, personnelStore, scopedSync);
+            await EnsureDefaultShiftAssignmentsForAllDepartments(postgresConnectionString, personnelStore, scopedSync);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Area post-create defaults error: {ex.Message}");
+        }
+    });
     return Results.Json(item);
 });
 
@@ -4682,6 +4913,80 @@ app.MapPost("/api/devices/{serial}/commands", async (string serial, HttpRequest 
     {
         return Results.BadRequest(new { message = ex.Message });
     }
+});
+
+// ─── Firmware Upgrade ───────────────────────────────────────────────────────
+// POST /api/devices/firmware-upgrade
+// Accepts multipart/form-data:  file=<emfw.cfg>  serials=SN1,SN2,...
+// Stores the file, computes MD5, queues UPGRADE command to each target serial.
+app.MapPost("/api/devices/firmware-upgrade", async (HttpRequest request) =>
+{
+    if (!serverRunning)
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+
+    if (!request.HasFormContentType)
+        return Results.BadRequest(new { message = "Multipart form required." });
+
+    IFormFile? fwFile = null;
+    var fwSerials = new List<string>();
+
+    try
+    {
+        var form = await request.ReadFormAsync();
+        fwFile = form.Files.GetFile("file");
+        var serialsRaw = form["serials"].ToString();
+        if (!string.IsNullOrWhiteSpace(serialsRaw))
+            fwSerials.AddRange(serialsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"Failed to read form: {ex.Message}" });
+    }
+
+    if (fwFile == null || fwFile.Length == 0)
+        return Results.BadRequest(new { message = "Firmware file is required." });
+
+    var allDevices = service.ListDevices();
+    var fwTargets = fwSerials.Count > 0
+        ? allDevices.Where(d => fwSerials.Contains(d.SerialNumber, StringComparer.OrdinalIgnoreCase)).ToList()
+        : allDevices.ToList();
+
+    if (fwTargets.Count == 0)
+        return Results.BadRequest(new { message = "No matching devices found." });
+
+    var fwTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    var fwBaseDir = Path.Combine(app.Environment.WebRootPath, "file", "fw", fwTimestamp.ToString());
+    Directory.CreateDirectory(fwBaseDir);
+    var fwFileName = Path.GetFileName(fwFile.FileName).Replace(" ", "_");
+    var fwFilePath = Path.Combine(fwBaseDir, fwFileName);
+    await using (var fwFs = System.IO.File.Create(fwFilePath))
+        await fwFile.CopyToAsync(fwFs);
+
+    string fwMd5;
+    await using (var fwFs = System.IO.File.OpenRead(fwFilePath))
+    {
+        var hashBytes = System.Security.Cryptography.MD5.HashData(fwFs);
+        fwMd5 = Convert.ToHexString(hashBytes).ToLowerInvariant();
+    }
+
+    var fwFileSize = new FileInfo(fwFilePath).Length;
+    var fwRelUrl = $"file/fw/{fwTimestamp}/{fwFileName}";
+    var fwUpgradeCmd = $"UPGRADE checksum={fwMd5},url={fwRelUrl},s={fwFileSize}";
+
+    var fwQueued = new List<string>();
+    foreach (var dev in fwTargets)
+    {
+        service.QueueDeviceCommand(dev.SerialNumber, fwUpgradeCmd);
+        fwQueued.Add(dev.SerialNumber);
+        AddLog("INFO", "Firmware", $"Queued UPGRADE for {dev.SerialNumber}: {fwUpgradeCmd}");
+    }
+
+    return Results.Ok(new
+    {
+        message = $"Firmware upgrade queued for {fwQueued.Count} device(s).",
+        command = fwUpgradeCmd,
+        queued = fwQueued
+    });
 });
 
 app.MapPost("/api/devices/{serial}/commands/clear", (string serial) =>
@@ -5966,7 +6271,7 @@ app.MapGet("/api/attendance", (string? from, string? to, Guid? employeeId, Guid?
     return Results.Json(rows);
 });
 
-app.MapGet("/api/transactions", (string? from, string? to, string? search, string? deviceSerial, string? area, string? department, int? take, bool? usePunchTime, bool? lite, int? page, int? pageSize, bool? approvedOnly) =>
+app.MapGet("/api/transactions", (string? from, string? to, string? search, string? deviceSerial, string? area, string? department, string? employeeCode, int? take, bool? usePunchTime, bool? lite, int? page, int? pageSize, bool? approvedOnly) =>
 {
     NormalizeEmployeeDepartmentsToSetup(
         repository,
@@ -5979,16 +6284,38 @@ app.MapGet("/api/transactions", (string? from, string? to, string? search, strin
     string[]? filterCodes = null;
     if (!string.IsNullOrWhiteSpace(area) || !string.IsNullOrWhiteSpace(department))
     {
-        var query = service.ListEmployees();
+        var query = service.ListEmployees().AsEnumerable();
         if (!string.IsNullOrWhiteSpace(area))
         {
             query = query.Where(e => string.Equals(e.Area, area, StringComparison.OrdinalIgnoreCase));
         }
         if (!string.IsNullOrWhiteSpace(department))
         {
-            query = query.Where(e => string.Equals(e.Department, department, StringComparison.OrdinalIgnoreCase));
+            var targetDept = department.Trim();
+            var mappedDeptNames = personnelStore.Departments
+                .Where(d => string.Equals(d.Name, targetDept, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(d.Code, targetDept, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(d.Id.ToString(), targetDept, StringComparison.OrdinalIgnoreCase))
+                .Select(d => d.Name)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            query = query.Where(e =>
+                string.Equals(e.Department, targetDept, StringComparison.OrdinalIgnoreCase) ||
+                mappedDeptNames.Contains(e.Department ?? string.Empty));
         }
-        filterCodes = query.Select(e => e.EmployeeCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var codes = query.Select(e => e.EmployeeCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (codes.Length > 0)
+        {
+            filterCodes = codes;
+        }
+    }
+
+    if (!string.IsNullOrWhiteSpace(employeeCode))
+    {
+        var code = employeeCode.Trim();
+        filterCodes = filterCodes is null
+            ? new[] { code }
+            : filterCodes.Where(c => string.Equals(c, code, StringComparison.OrdinalIgnoreCase)).ToArray();
     }
 
     // Server-side pagination mode when page/pageSize are provided
@@ -6615,7 +6942,7 @@ app.MapMethods("/iclock/ping", ["GET"], (HttpRequest request) =>
     // DIAGNOSTIC: log ping heartbeats so we can see whether the device is heartbeating via /iclock/ping
     // (busy/upload mode — delivers NO commands) instead of /iclock/getrequest (idle mode that pulls
     // commands). pending>0 here means commands are queued but the device is pinging, not pulling them.
-    AddLog("INFO", "DeviceEvent", $"PING heartbeat from {serialNumber ?? "unknown"}.",
+    AddLogTransient("INFO", "DeviceEvent", $"PING heartbeat from {serialNumber ?? "unknown"}.",
         $"ip={ipAddress ?? string.Empty}; pending={(knownDevice && !string.IsNullOrWhiteSpace(serialNumber) ? service.GetPendingCommands(serialNumber, 5).Count : 0)}");
     return Results.Text("OK", "text/plain");
 });
@@ -6697,7 +7024,7 @@ app.MapMethods("/iclock/getrequest", ["GET", "POST"], async (HttpRequest request
     {
         // DIAGNOSTIC: log idle getrequest polls so we can confirm the device is using getrequest for its
         // heartbeat (which delivers commands). pending>0 here would mean a delivery bug; pending=0 is normal.
-        AddLog("INFO", "DeviceEvent", $"GETREQUEST poll from {serialNumber} — no commands (OK).",
+        AddLogTransient("INFO", "DeviceEvent", $"GETREQUEST poll from {serialNumber} — no commands (OK).",
             $"ip={ipAddress ?? string.Empty}; pending={service.GetPendingCommands(serialNumber, 5).Count}");
     }
     return Results.Text(commandPayload, "text/plain");
@@ -6869,7 +7196,9 @@ app.MapMethods("/iclock/devicecmd", ["POST"], async (HttpRequest request) =>
                         mappedSetup.Department.Name,
                         mappedPosition,
                         mappedSetup.Area.Code,
-                        mappedSetup.Department.Code),
+                        mappedSetup.Department.Code,
+                        service,
+                        serial),
                     "USERPIC" => HandleUserPicPayload(
                         repository,
                         personnelStore,
@@ -6937,7 +7266,7 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
             string.Equals(options.ToString(), "all", StringComparison.OrdinalIgnoreCase))
         {
             request.HttpContext.Response.Headers.Date = DateTime.UtcNow.ToString("R");
-            AddLog("INFO", "DeviceEvent", $"CDATA options=all from {serialNumber ?? "unknown"}", $"ip={ipAddress ?? string.Empty}");
+            AddLogTransient("INFO", "DeviceEvent", $"CDATA options=all from {serialNumber ?? "unknown"}", $"ip={ipAddress ?? string.Empty}");
             ApplyInitOptionsAllUpdate(service, discoveredDevices, serialNumber, request.Query, ipAddress);
 
             if (!knownDevice)
@@ -7458,7 +7787,9 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
             mappedSetup.Department.Name,
             mappedPosition,
             mappedSetup.Area.Code,
-            mappedSetup.Department.Code);
+            mappedSetup.Department.Code,
+            service,
+            serialNumber);
         SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
         TryUpdateDeviceTableStampFromRequest(service, serialNumber, "FACE", request.Query);
         AddLog("INFO", "DeviceEvent", $"CDATA FACE from {serialNumber ?? "unknown"}", $"rows={count}; ip={ipAddress ?? string.Empty}");
@@ -7561,7 +7892,235 @@ _ = Task.Run(async () =>
     catch (Exception ex) { Console.WriteLine($"Startup AC defaults seed error: {ex.Message}"); }
 });
 
+// Automatic backup scheduler — polls every 10 minutes (a full dump only takes seconds to a couple
+// of minutes, so a lightweight poll loop is enough; no cron library needed). Failures are logged
+// but don't stop the loop or block the next scheduled run from being computed — a persistently
+// broken backup location (e.g. drive unplugged) shouldn't spin the loop or spam failures every poll.
+_ = Task.Run(async () =>
+{
+    while (!app.Lifetime.ApplicationStopping.IsCancellationRequested)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromMinutes(10), app.Lifetime.ApplicationStopping);
+            var schedule = LoadBackupScheduleFromDb(postgresConnectionString);
+            var due = schedule.Enabled &&
+                (schedule.NextRunUtc is null || DateTime.Parse(schedule.NextRunUtc, null, System.Globalization.DateTimeStyles.RoundtripKind) <= DateTime.UtcNow);
+            if (due)
+            {
+                await RunAndRecordBackupAsync(postgresConnectionString, "scheduled", AddLog);
+                var refreshed = LoadBackupScheduleFromDb(postgresConnectionString);
+                SaveBackupScheduleToDb(postgresConnectionString, refreshed.Enabled, refreshed.Frequency, refreshed.RunTime, refreshed.BackupLocation, refreshed.RetentionCount);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            break;
+        }
+        catch (Exception ex)
+        {
+            AddLog("WARN", "Backup", "Scheduled backup check failed.", ex.Message);
+        }
+    }
+});
+
+// E-Attendance-Health-Monitor: internal production status monitor. It keeps the service names consistent
+// with the planned split-service architecture without requiring extra Windows services yet.
+_ = Task.Run(async () =>
+{
+    while (!app.Lifetime.ApplicationStopping.IsCancellationRequested)
+    {
+        try
+        {
+            var snapshot = BuildEAttServicesSnapshot();
+            var unhealthy = snapshot.Services.Where(s => !string.Equals(s.Status, "Healthy", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (unhealthy.Count > 0)
+            {
+                AddLog(
+                    "WARN",
+                    "E-Attendance-Health-Monitor",
+                    $"Health monitor found {unhealthy.Count} service issue(s).",
+                    string.Join("; ", unhealthy.Select(s => $"{s.Name}={s.Status}: {s.Message}")));
+            }
+        }
+        catch (Exception ex)
+        {
+            AddLog("WARN", "E-Attendance-Health-Monitor", "Health monitor check failed.", ex.Message);
+        }
+
+        try
+        {
+            await Task.Delay(TimeSpan.FromMinutes(1), app.Lifetime.ApplicationStopping);
+        }
+        catch (TaskCanceledException)
+        {
+            break;
+        }
+    }
+});
+
 app.Run();
+
+EAttServicesSnapshot BuildEAttServicesSnapshot()
+{
+    var checkedAtUtc = DateTime.UtcNow;
+    var services = new List<EAttServiceStatus>();
+
+    var databaseHealthy = false;
+    string databaseMessage;
+    try
+    {
+        using var conn = new NpgsqlConnection(postgresConnectionString);
+        conn.Open();
+        using var cmd = new NpgsqlCommand("SELECT 1;", conn);
+        cmd.ExecuteScalar();
+        databaseHealthy = true;
+        databaseMessage = "PostgreSQL connection OK.";
+    }
+    catch (Exception ex)
+    {
+        databaseMessage = ex.Message;
+    }
+
+    var devices = new List<Device>();
+    try
+    {
+        devices = service.ListDevices().ToList();
+    }
+    catch
+    {
+        // Keep health endpoint alive even if repository read fails; DB status carries the error.
+    }
+
+    var pendingCommandCount = 0;
+    try
+    {
+        pendingCommandCount = devices.Sum(d => service.GetPendingCommands(d.SerialNumber, 2000).Count);
+    }
+    catch
+    {
+        pendingCommandCount = -1;
+    }
+
+    var queuedPunchRequests = Interlocked.Read(ref transactionDetailsQueuedRequests);
+    var persistedPunchRequests = Interlocked.Read(ref transactionDetailsPersistedRequests);
+    var failedPunchPersists = Interlocked.Read(ref transactionDetailsPersistFailureCount);
+    var punchBacklog = Math.Max(0, queuedPunchRequests - persistedPunchRequests);
+
+    BackupScheduleResponse? backupSchedule = null;
+    BackupHistoryResponse? latestBackup = null;
+    try
+    {
+        backupSchedule = LoadBackupScheduleFromDb(postgresConnectionString);
+        var (items, _) = LoadBackupHistoryFromDb(postgresConnectionString, 1, 1);
+        latestBackup = items.FirstOrDefault();
+    }
+    catch
+    {
+        // DB status already reports connection/schema problems.
+    }
+
+    services.Add(new EAttServiceStatus(
+        "E-Attendance-Health-Monitor",
+        "Internal",
+        "Healthy",
+        "Service health monitor is running inside E.Attendance.Web.",
+        checkedAtUtc,
+        new Dictionary<string, object?>
+        {
+            ["apiPort"] = settings.Port,
+            ["webPort"] = settings.FrontendPort,
+            ["requestCount"] = Interlocked.Read(ref requestCount)
+        }));
+
+    services.Add(new EAttServiceStatus(
+        "E-Attendance-PostgreSQL",
+        "Dependency",
+        databaseHealthy ? "Healthy" : "Critical",
+        databaseMessage,
+        checkedAtUtc,
+        new Dictionary<string, object?>
+        {
+            ["database"] = "E_Attendace",
+            ["schema"] = "E_Attendace"
+        }));
+
+    services.Add(new EAttServiceStatus(
+        "E-Attendance-Punch-Queue",
+        "Internal",
+        failedPunchPersists > 0 ? "Warning" : punchBacklog > 5000 ? "Warning" : "Healthy",
+        failedPunchPersists > 0
+            ? $"Punch DB writer had {failedPunchPersists} failure(s)."
+            : punchBacklog > 5000
+                ? $"Punch queue backlog is high: {punchBacklog} request(s)."
+                : "Punch persistence queue is running.",
+        checkedAtUtc,
+        new Dictionary<string, object?>
+        {
+            ["queuedRequests"] = queuedPunchRequests,
+            ["persistedRequests"] = persistedPunchRequests,
+            ["backlogRequests"] = punchBacklog,
+            ["failureCount"] = failedPunchPersists,
+            ["lastError"] = string.IsNullOrWhiteSpace(transactionDetailsLastPersistError) ? null : transactionDetailsLastPersistError
+        }));
+
+    services.Add(new EAttServiceStatus(
+        "E-Attendance-Device-Command-Worker",
+        "Internal",
+        pendingCommandCount < 0 ? "Warning" : pendingCommandCount > 5000 ? "Warning" : "Healthy",
+        pendingCommandCount < 0
+            ? "Could not read pending device commands."
+            : pendingCommandCount > 5000
+                ? $"Pending command backlog is high: {pendingCommandCount} command(s)."
+                : "Device command queue is within normal range.",
+        checkedAtUtc,
+        new Dictionary<string, object?>
+        {
+            ["deviceCount"] = devices.Count,
+            ["pendingCommandCount"] = pendingCommandCount
+        }));
+
+    services.Add(new EAttServiceStatus(
+        "E-Attendance-Backup-Worker",
+        "Internal",
+        backupSchedule is null
+            ? "Warning"
+            : latestBackup is not null && string.Equals(latestBackup.Status, "failed", StringComparison.OrdinalIgnoreCase)
+                ? "Warning"
+                : "Healthy",
+        backupSchedule is null
+            ? "Could not read backup schedule."
+            : latestBackup is not null && string.Equals(latestBackup.Status, "failed", StringComparison.OrdinalIgnoreCase)
+                ? $"Latest backup failed: {latestBackup.ErrorMessage}"
+                : backupSchedule.Enabled
+                    ? "Backup scheduler is enabled."
+                    : "Backup scheduler is disabled.",
+        checkedAtUtc,
+        new Dictionary<string, object?>
+        {
+            ["enabled"] = backupSchedule?.Enabled,
+            ["frequency"] = backupSchedule?.Frequency,
+            ["nextRunUtc"] = backupSchedule?.NextRunUtc,
+            ["latestStatus"] = latestBackup?.Status,
+            ["latestStartedAtUtc"] = latestBackup?.StartedAtUtc
+        }));
+
+    services.Add(new EAttServiceStatus(
+        "E-Attendance-PostgreSQL-Maintenance",
+        "Planned",
+        "Planned",
+        "Recommended next: scheduled VACUUM/ANALYZE, old log cleanup, and punch archive jobs.",
+        checkedAtUtc,
+        new Dictionary<string, object?>()));
+
+    var overallStatus = services.Any(s => s.Status == "Critical")
+        ? "Critical"
+        : services.Any(s => s.Status == "Warning")
+            ? "Warning"
+            : "Healthy";
+
+    return new EAttServicesSnapshot(checkedAtUtc, overallStatus, services);
+}
 
 static byte[] LoadOrCreateJwtSigningKey(string path)
 {
@@ -7912,18 +8471,26 @@ static void TryStartPostgreSqlService(string connectionString)
             return;
         }
 
-        if (RunHiddenProcess("cmd.exe", "/c sc query \"PB_PostgreSQL\" | findstr /I \"RUNNING\" >nul") == 0)
+        var candidateServices = new[] { "E_Attendance_PostgreSQL", "E-Attendance-PostgreSQL" };
+        foreach (var postgresServiceName in candidateServices)
         {
-            return;
-        }
+            if (RunHiddenProcess("cmd.exe", $"/c sc query \"{postgresServiceName}\" | findstr /I \"RUNNING\" >nul") == 0)
+            {
+                return;
+            }
 
-        _ = RunHiddenProcess("sc.exe", "config \"PB_PostgreSQL\" start= auto");
-        _ = RunHiddenProcess("sc.exe", "start \"PB_PostgreSQL\"");
-        Console.WriteLine("[Startup] Requested start for PB_PostgreSQL service.");
+            if (RunHiddenProcess("cmd.exe", $"/c sc query \"{postgresServiceName}\" >nul 2>&1") == 0)
+            {
+                _ = RunHiddenProcess("sc.exe", $"config \"{postgresServiceName}\" start= auto");
+                _ = RunHiddenProcess("sc.exe", $"start \"{postgresServiceName}\"");
+                Console.WriteLine($"[Startup] Requested start for {postgresServiceName} service.");
+                return;
+            }
+        }
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"[Startup] Unable to auto-start PB_PostgreSQL service: {ex.Message}");
+        Console.Error.WriteLine($"[Startup] Unable to auto-start PostgreSQL service: {ex.Message}");
     }
 }
 
@@ -9163,25 +9730,39 @@ static void EnsurePostgresSchema(string connectionString)
             CREATE TABLE IF NOT EXISTS "E_Attendace"."Areas" (
                 "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 "Name" TEXT NOT NULL,
-                "IsDefault" BOOLEAN NOT NULL DEFAULT FALSE,
+                "IsDefault" INTEGER NOT NULL DEFAULT 0,
                 "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
                 "UpdatedAt" timestamptz NOT NULL DEFAULT NOW(),
                 UNIQUE ("Name")
             );
             """);
-        TryExec(conn, """INSERT INTO "E_Attendace"."Areas" ("Name","IsDefault") VALUES ('Default Area',TRUE) ON CONFLICT ("Name") DO NOTHING;""");
+        TryExec(conn, """INSERT INTO "E_Attendace"."Areas" ("Name","IsDefault") VALUES ('Default Area',1) ON CONFLICT ("Name") DO NOTHING;""");
         TryExec(conn, """
             CREATE TABLE IF NOT EXISTS "E_Attendace"."Departments" (
                 "Id" INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 "Name" TEXT NOT NULL,
                 "AreaId" INTEGER NOT NULL DEFAULT 1,
-                "IsDefault" BOOLEAN NOT NULL DEFAULT FALSE,
+                "IsDefault" INTEGER NOT NULL DEFAULT 0,
                 "CreatedAt" timestamptz NOT NULL DEFAULT NOW(),
                 "UpdatedAt" timestamptz NOT NULL DEFAULT NOW(),
                 UNIQUE ("AreaId","Name")
             );
             """);
-        TryExec(conn, """INSERT INTO "E_Attendace"."Departments" ("Name","AreaId","IsDefault") VALUES ('Default Department',1,TRUE) ON CONFLICT ("AreaId","Name") DO NOTHING;""");
+        TryExec(conn, """INSERT INTO "E_Attendace"."Departments" ("Name","AreaId","IsDefault") VALUES ('Default Department',1,1) ON CONFLICT ("AreaId","Name") DO NOTHING;""");
+        // Migrate any previously-created boolean IsDefault columns (repo binds this as a C# int
+        // 0/1 for both SQLite and Postgres; a BOOLEAN column throws 42804 the first time a
+        // brand-new area/department is auto-created, e.g. via device-add).
+        TryExec(conn, """
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='Areas' AND column_name='IsDefault' AND data_type='boolean') THEN
+                    ALTER TABLE "E_Attendace"."Areas" ALTER COLUMN "IsDefault" TYPE INTEGER USING ("IsDefault"::integer);
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='E_Attendace' AND table_name='Departments' AND column_name='IsDefault' AND data_type='boolean') THEN
+                    ALTER TABLE "E_Attendace"."Departments" ALTER COLUMN "IsDefault" TYPE INTEGER USING ("IsDefault"::integer);
+                END IF;
+            END $$;
+            """);
         TryExec(conn, """
             CREATE TABLE IF NOT EXISTS "E_Attendace"."EmployeeDepartments" (
                 "EmployeeId" TEXT NOT NULL,
@@ -9376,6 +9957,42 @@ static void EnsurePostgresSchema(string connectionString)
             END $$;
             """);
 
+        // ── Backup / restore (single global schedule + run history) ────────────
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."BackupSchedule" (
+                "Id" INTEGER PRIMARY KEY DEFAULT 1 CHECK ("Id" = 1),
+                "Enabled" INTEGER NOT NULL DEFAULT 1,
+                "Frequency" TEXT NOT NULL DEFAULT 'weekly',
+                "RunTime" TEXT NOT NULL DEFAULT '12:00',
+                "BackupLocation" TEXT NOT NULL DEFAULT '',
+                "RetentionCount" INTEGER NOT NULL DEFAULT 7,
+                "LastRunUtc" timestamptz NULL,
+                "NextRunUtc" timestamptz NULL,
+                "UpdatedAtUtc" timestamptz NOT NULL DEFAULT NOW()
+            );
+            """);
+        TryExec(conn, """ALTER TABLE "E_Attendace"."BackupSchedule" ADD COLUMN IF NOT EXISTS "RunTime" TEXT NOT NULL DEFAULT '12:00';""");
+        // Default is enabled/weekly/12:00 out of the box — the row is only ever inserted once per
+        // install (ON CONFLICT DO NOTHING), so an admin's later changes are never overwritten.
+        TryExec(conn, """
+            INSERT INTO "E_Attendace"."BackupSchedule" ("Id", "Enabled", "Frequency", "RunTime")
+            VALUES (1, 1, 'weekly', '12:00') ON CONFLICT ("Id") DO NOTHING;
+            """);
+        TryExec(conn, """
+            CREATE TABLE IF NOT EXISTS "E_Attendace"."BackupHistory" (
+                "Id" TEXT PRIMARY KEY,
+                "FileName" TEXT NOT NULL,
+                "FilePath" TEXT NOT NULL,
+                "FileSizeBytes" BIGINT NULL,
+                "Status" TEXT NOT NULL,
+                "Trigger" TEXT NOT NULL,
+                "ErrorMessage" TEXT NULL,
+                "StartedAtUtc" timestamptz NOT NULL DEFAULT NOW(),
+                "FinishedAtUtc" timestamptz NULL
+            );
+            """);
+        TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_BackupHistory_StartedAtUtc" ON "E_Attendace"."BackupHistory" ("StartedAtUtc" DESC);""");
+
         // ── Grant all on everything created ─────────────────────────────────────
         TryExec(conn, $"""GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA "E_Attendace" TO "{dbUser}";""");
         TryExec(conn, $"""GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA "E_Attendace" TO "{dbUser}";""");
@@ -9503,20 +10120,29 @@ static void PersistAppLogsBatch(string connectionString, IReadOnlyList<AppLogEnt
 static async Task RunTransactionDetailsDbWriterAsync(
     string connectionString,
     ChannelReader<TransactionDetailPersistRequest> reader,
-    CancellationToken cancellationToken)
+    CancellationToken cancellationToken,
+    Action<int> recordPersisted,
+    Action<string?> recordFailure)
 {
-    var buffer = new List<TransactionDetailPersistRequest>(80);
-    using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(900));
+    var buffer = new List<TransactionDetailPersistRequest>(500);
+    using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
 
     try
     {
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
-            DrainChannel(reader, buffer, maxItems: 80);
+            DrainChannel(reader, buffer, maxItems: 500);
             if (buffer.Count > 0)
             {
-                PersistTransactionDetailRequests(connectionString, buffer);
-                buffer.Clear();
+                if (PersistTransactionDetailRequests(connectionString, buffer, out var persistError))
+                {
+                    recordPersisted(buffer.Count);
+                    buffer.Clear();
+                }
+                else
+                {
+                    recordFailure(persistError);
+                }
             }
         }
     }
@@ -9525,10 +10151,17 @@ static async Task RunTransactionDetailsDbWriterAsync(
         // Fall through to flush remaining items.
     }
 
-    DrainChannel(reader, buffer, maxItems: 2000);
+    DrainChannel(reader, buffer, maxItems: 10000);
     if (buffer.Count > 0)
     {
-        PersistTransactionDetailRequests(connectionString, buffer);
+        if (PersistTransactionDetailRequests(connectionString, buffer, out var persistError))
+        {
+            recordPersisted(buffer.Count);
+        }
+        else
+        {
+            recordFailure(persistError);
+        }
     }
 
     static void DrainChannel(ChannelReader<TransactionDetailPersistRequest> reader, List<TransactionDetailPersistRequest> buffer, int maxItems)
@@ -9540,11 +10173,12 @@ static async Task RunTransactionDetailsDbWriterAsync(
     }
 }
 
-static void PersistTransactionDetailRequests(string connectionString, IReadOnlyList<TransactionDetailPersistRequest> requests)
+static bool PersistTransactionDetailRequests(string connectionString, IReadOnlyList<TransactionDetailPersistRequest> requests, out string? errorMessage)
 {
+    errorMessage = null;
     if (requests.Count == 0)
     {
-        return;
+        return true;
     }
 
     try
@@ -9611,10 +10245,14 @@ static void PersistTransactionDetailRequests(string connectionString, IReadOnlyL
         {
             PersistTransactionDetailsBatch(conn, rows);
         }
+
+        return true;
     }
-    catch
+    catch (Exception ex)
     {
         // Non-blocking: background persistence should not crash the server.
+        errorMessage = ex.Message;
+        return false;
     }
 }
 
@@ -10463,7 +11101,7 @@ static string DescribeAttendanceStatusCode(int statusCode)
         3 => "Overtime out",
         4 => "Break in",
         5 => "Break out",
-        255 => "Unknown/undefined",
+        255 => "Auto",
         _ => $"Status {statusCode}"
     };
 }
@@ -10745,43 +11383,62 @@ static async Task EnsureAccessControlDefaultsForAllAreas(
     string connectionString,
     AttendanceService service,
     PersonnelStore personnelStore,
-    ConfigSyncService syncService)
+    ConfigSyncService syncService,
+    bool syncWhenUnchangedWithDevices = true,
+    bool syncWhenChanged = true)
 {
     try
     {
+        HydratePersonnelStoreFromDb(personnelStore, connectionString);
         var json = ReadAppConfigJson(connectionString, "access-control");
         var root = (JsonNode.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json) as JsonObject) ?? new JsonObject();
         if (root["timePeriods"] is not JsonArray timePeriods) { timePeriods = new JsonArray(); root["timePeriods"] = timePeriods; }
         if (root["groups"] is not JsonArray groups) { groups = new JsonArray(); root["groups"] = groups; }
         if (root["combinations"] is not JsonArray combinations) { combinations = new JsonArray(); root["combinations"] = combinations; }
-        if (root["privileges"] is not JsonArray) { root["privileges"] = new JsonArray(); }
+        if (root["privileges"] is not JsonArray privileges) { privileges = new JsonArray(); root["privileges"] = privileges; }
 
         var devices = service.ListDevices().ToList();
         var now = DateTime.UtcNow.ToString("O");
         var changed = false;
+        var hasDevicesInArea = false;
         string NewId(string p) => $"{p}-{DateTime.UtcNow.Ticks}-{Guid.NewGuid().ToString("N")[..6]}";
 
         foreach (var area in personnelStore.Areas)
         {
-            var areaName = area.Name;
+            var areaName = area.Name?.Trim() ?? string.Empty;
+            var areaCode = area.Code?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(areaName)) continue;
+
             var serials = devices
-                .Where(d => string.Equals(d.Location, areaName, StringComparison.OrdinalIgnoreCase))
+                .Where(d => string.Equals(d.Location, areaName, StringComparison.OrdinalIgnoreCase) ||
+                            (!string.IsNullOrWhiteSpace(areaCode) && string.Equals(d.Location, areaCode, StringComparison.OrdinalIgnoreCase)))
                 .Select(d => d.SerialNumber)
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
+            if (serials.Count > 0)
+            {
+                hasDevicesInArea = true;
+            }
+
             JsonArray SerialArray() { var a = new JsonArray(); foreach (var s in serials) a.Add(s); return a; }
             bool SerialsDiffer(JsonNode? node)
             {
-                var existing = (node as JsonArray)?.Select(x => (string?)x ?? string.Empty).Where(x => x.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new(StringComparer.OrdinalIgnoreCase);
+                var existing = (node as JsonArray)?.Select(x => x?.ToString() ?? string.Empty).Where(x => x.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new(StringComparer.OrdinalIgnoreCase);
                 return !existing.SetEquals(serials);
             }
-            JsonObject? Find(JsonArray arr, string slotKey, string slotVal) => arr.OfType<JsonObject>().FirstOrDefault(o =>
-                string.Equals((string?)o["area"], areaName, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals((string?)o[slotKey], slotVal, StringComparison.Ordinal));
 
-            // Time Period 1
+            JsonObject? Find(JsonArray arr, string slotKey, string slotVal) => arr.OfType<JsonObject>().FirstOrDefault(o =>
+            {
+                var itemArea = (string?)o["area"] ?? string.Empty;
+                var areaMatch = string.Equals(itemArea, areaName, StringComparison.OrdinalIgnoreCase) ||
+                                (!string.IsNullOrWhiteSpace(areaCode) && string.Equals(itemArea, areaCode, StringComparison.OrdinalIgnoreCase));
+                var slotValStr = o[slotKey]?.ToString()?.Trim() ?? string.Empty;
+                return areaMatch && string.Equals(slotValStr, slotVal, StringComparison.OrdinalIgnoreCase);
+            });
+
+            // 1. Time Period 1
             var tp1 = Find(timePeriods, "periodNo", "1");
             string tp1Id;
             if (tp1 is null)
@@ -10795,10 +11452,16 @@ static async Task EnsureAccessControlDefaultsForAllAreas(
             else
             {
                 tp1Id = (string?)tp1["id"] ?? NewId("period");
-                if (SerialsDiffer(tp1["deviceSerials"])) { tp1["deviceSerials"] = SerialArray(); tp1["updatedAt"] = now; changed = true; }
+                if (SerialsDiffer(tp1["deviceSerials"]) || !string.Equals((string?)tp1["area"], areaName, StringComparison.Ordinal))
+                {
+                    tp1["area"] = areaName;
+                    tp1["deviceSerials"] = SerialArray();
+                    tp1["updatedAt"] = now;
+                    changed = true;
+                }
             }
 
-            // Access Group 1
+            // 2. Access Group 1
             var grp1 = Find(groups, "groupNo", "1");
             string grp1Id;
             if (grp1 is null)
@@ -10810,30 +11473,404 @@ static async Task EnsureAccessControlDefaultsForAllAreas(
             else
             {
                 grp1Id = (string?)grp1["id"] ?? NewId("group");
-                if (SerialsDiffer(grp1["deviceSerials"])) { grp1["deviceSerials"] = SerialArray(); grp1["updatedAt"] = now; changed = true; }
+                if (SerialsDiffer(grp1["deviceSerials"]) || !string.Equals((string?)grp1["area"], areaName, StringComparison.Ordinal))
+                {
+                    grp1["area"] = areaName;
+                    grp1["deviceSerials"] = SerialArray();
+                    grp1["updatedAt"] = now;
+                    changed = true;
+                }
             }
 
-            // Unlock Combination 1
+            // 3. Unlock Combination 1
             var comb1 = Find(combinations, "combinationNo", "1");
             if (comb1 is null)
             {
                 combinations.Add(new JsonObject { ["id"] = NewId("combination"), ["area"] = areaName, ["department"] = "All", ["deviceSerials"] = SerialArray(), ["combinationNo"] = "1", ["name"] = "Combination 1", ["groupIds"] = new JsonArray(grp1Id, "", "", "", ""), ["remark"] = "Default", ["createdAt"] = now, ["updatedAt"] = now });
                 changed = true;
             }
-            else if (SerialsDiffer(comb1["deviceSerials"])) { comb1["deviceSerials"] = SerialArray(); comb1["updatedAt"] = now; changed = true; }
+            else if (SerialsDiffer(comb1["deviceSerials"]) || !string.Equals((string?)comb1["area"], areaName, StringComparison.Ordinal))
+            {
+                comb1["area"] = areaName;
+                comb1["deviceSerials"] = SerialArray();
+                comb1["updatedAt"] = now;
+                changed = true;
+            }
+
+            // 4. Default Privilege
+            var priv1 = privileges.OfType<JsonObject>().FirstOrDefault(o =>
+            {
+                var itemArea = (string?)o["area"] ?? string.Empty;
+                return string.Equals(itemArea, areaName, StringComparison.OrdinalIgnoreCase) ||
+                       (!string.IsNullOrWhiteSpace(areaCode) && string.Equals(itemArea, areaCode, StringComparison.OrdinalIgnoreCase));
+            });
+            if (priv1 is null)
+            {
+                privileges.Add(new JsonObject
+                {
+                    ["id"] = NewId("privilege"),
+                    ["area"] = areaName,
+                    ["department"] = "All",
+                    ["deviceSerials"] = SerialArray(),
+                    ["employeeIds"] = new JsonArray(),
+                    ["employeeNames"] = new JsonArray(),
+                    ["groupId"] = grp1Id,
+                    ["verificationMode"] = "0",
+                    ["timePeriodIds"] = new JsonArray(tp1Id, "", ""),
+                    ["remark"] = "Default",
+                    ["createdAt"] = now,
+                    ["updatedAt"] = now
+                });
+                changed = true;
+            }
+            else if (SerialsDiffer(priv1["deviceSerials"]) || !string.Equals((string?)priv1["area"], areaName, StringComparison.Ordinal))
+            {
+                priv1["area"] = areaName;
+                priv1["deviceSerials"] = SerialArray();
+                priv1["updatedAt"] = now;
+                changed = true;
+            }
         }
 
-        if (changed)
+        if (changed || (syncWhenUnchangedWithDevices && hasDevicesInArea))
         {
             var raw = root.ToJsonString();
             SaveAppConfigJson(connectionString, "access-control", raw);
-            await syncService.SyncAccessControlAsync(raw);
+            if (syncWhenChanged || !changed)
+            {
+                await syncService.SyncAccessControlAsync(raw);
+            }
         }
+
     }
     catch (Exception ex)
     {
         Console.WriteLine($"EnsureAccessControlDefaultsForAllAreas error: {ex.Message}");
     }
+}
+
+static async Task EnsureDefaultShiftAssignmentsForAllDepartments(
+    string connectionString,
+    PersonnelStore personnelStore,
+    ConfigSyncService syncService)
+{
+    try
+    {
+        var json = ReadAppConfigJson(connectionString, "shifts");
+        var root = (JsonNode.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json) as JsonObject) ?? new JsonObject();
+        if (root["shiftAssignments"] is not JsonArray assignments)
+        {
+            assignments = new JsonArray();
+            root["shiftAssignments"] = assignments;
+        }
+
+        var defaultShiftId = "general";
+        if (root["shiftDefinitions"] is JsonArray shiftDefs)
+        {
+            var firstActive = shiftDefs.OfType<JsonObject>().FirstOrDefault(s => (bool?)s["isActive"] == true);
+            if (firstActive != null && firstActive["id"] != null)
+            {
+                defaultShiftId = firstActive["id"]!.ToString();
+            }
+        }
+
+        var changed = false;
+        var now = DateTime.UtcNow.ToString("O");
+        string NewId() => $"assign-{DateTime.UtcNow.Ticks}-{Guid.NewGuid().ToString("N")[..6]}";
+
+        foreach (var dept in personnelStore.Departments)
+        {
+            var deptName = dept.Name?.Trim();
+            if (string.IsNullOrWhiteSpace(deptName)) continue;
+
+            var existing = assignments.OfType<JsonObject>().FirstOrDefault(a =>
+                string.Equals((string?)a["targetType"], "department", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals((string?)a["department"], deptName, StringComparison.OrdinalIgnoreCase));
+
+            if (existing is null)
+            {
+                assignments.Add(new JsonObject
+                {
+                    ["id"] = NewId(),
+                    ["targetType"] = "department",
+                    ["employeeCode"] = "",
+                    ["employeeName"] = "",
+                    ["department"] = deptName,
+                    ["groupId"] = "",
+                    ["groupName"] = "",
+                    ["shiftId"] = defaultShiftId,
+                    ["effectiveFrom"] = "2026-01-01",
+                    ["effectiveTo"] = null,
+                    ["isActive"] = true,
+                    ["createdAt"] = now,
+                    ["updatedAt"] = now
+                });
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            var raw = root.ToJsonString();
+            SaveAppConfigJson(connectionString, "shifts", raw);
+            await syncService.SyncShiftsAsync(raw);
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"EnsureDefaultShiftAssignmentsForAllDepartments error: {ex.Message}");
+    }
+}
+
+
+static BackupScheduleResponse LoadBackupScheduleFromDb(string connectionString)
+{
+    using var conn = new NpgsqlConnection(connectionString);
+    conn.Open();
+    using var cmd = new NpgsqlCommand(
+        """
+        SELECT "Enabled", "Frequency", "RunTime", "BackupLocation", "RetentionCount", "LastRunUtc", "NextRunUtc"
+        FROM "E_Attendace"."BackupSchedule"
+        WHERE "Id" = 1;
+        """,
+        conn);
+    using var reader = cmd.ExecuteReader();
+    if (!reader.Read())
+    {
+        return new BackupScheduleResponse(true, "weekly", "12:00", "", 7, null, null);
+    }
+
+    var location = (reader["BackupLocation"]?.ToString() ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(location))
+    {
+        var enabled = Convert.ToInt32(reader["Enabled"]) != 0;
+        var frequency = reader["Frequency"]?.ToString() ?? "weekly";
+        var runTime = reader["RunTime"]?.ToString() ?? "12:00";
+        var retention = Convert.ToInt32(reader["RetentionCount"]);
+        location = BackupService.ResolveDefaultBackupLocation();
+        reader.Close();
+        SaveBackupLocationToDb(connectionString, location);
+        return new BackupScheduleResponse(enabled, frequency, runTime, location, retention, null, null);
+    }
+
+    return new BackupScheduleResponse(
+        Convert.ToInt32(reader["Enabled"]) != 0,
+        reader["Frequency"]?.ToString() ?? "weekly",
+        reader["RunTime"]?.ToString() ?? "12:00",
+        location,
+        Convert.ToInt32(reader["RetentionCount"]),
+        reader["LastRunUtc"] is DBNull ? null : ToIsoUtcString(reader["LastRunUtc"]),
+        reader["NextRunUtc"] is DBNull ? null : ToIsoUtcString(reader["NextRunUtc"]));
+}
+
+static void SaveBackupLocationToDb(string connectionString, string location)
+{
+    using var conn = new NpgsqlConnection(connectionString);
+    conn.Open();
+    using var cmd = new NpgsqlCommand(
+        """UPDATE "E_Attendace"."BackupSchedule" SET "BackupLocation" = @loc, "UpdatedAtUtc" = NOW() WHERE "Id" = 1;""",
+        conn);
+    cmd.Parameters.AddWithValue("loc", location);
+    cmd.ExecuteNonQuery();
+}
+
+static BackupScheduleResponse SaveBackupScheduleToDb(
+    string connectionString,
+    bool enabled,
+    string frequency,
+    string runTime,
+    string backupLocation,
+    int retentionCount)
+{
+    var normalizedFrequency = frequency.Trim().ToLowerInvariant() is "weekly" or "monthly" ? frequency.Trim().ToLowerInvariant() : "daily";
+    var normalizedRunTime = TimeSpan.TryParse(runTime, out _) ? runTime.Trim() : "12:00";
+    var normalizedLocation = string.IsNullOrWhiteSpace(backupLocation) ? BackupService.ResolveDefaultBackupLocation() : backupLocation.Trim();
+    var normalizedRetention = Math.Clamp(retentionCount, 1, 365);
+    DateTime? nextRunUtc = enabled ? BackupService.ComputeNextRunUtc(DateTime.UtcNow, normalizedFrequency, normalizedRunTime) : null;
+
+    using var conn = new NpgsqlConnection(connectionString);
+    conn.Open();
+    using var cmd = new NpgsqlCommand(
+        """
+        UPDATE "E_Attendace"."BackupSchedule"
+        SET "Enabled" = @enabled, "Frequency" = @frequency, "RunTime" = @runTime, "BackupLocation" = @location,
+            "RetentionCount" = @retention, "NextRunUtc" = @nextRun, "UpdatedAtUtc" = NOW()
+        WHERE "Id" = 1;
+        """,
+        conn);
+    cmd.Parameters.AddWithValue("enabled", enabled ? 1 : 0);
+    cmd.Parameters.AddWithValue("frequency", normalizedFrequency);
+    cmd.Parameters.AddWithValue("runTime", normalizedRunTime);
+    cmd.Parameters.AddWithValue("location", normalizedLocation);
+    cmd.Parameters.AddWithValue("retention", normalizedRetention);
+    cmd.Parameters.AddWithValue("nextRun", (object?)nextRunUtc ?? DBNull.Value);
+    cmd.ExecuteNonQuery();
+
+    return LoadBackupScheduleFromDb(connectionString);
+}
+
+static (List<BackupHistoryResponse> Items, int Total) LoadBackupHistoryFromDb(string connectionString, int page, int pageSize)
+{
+    using var conn = new NpgsqlConnection(connectionString);
+    conn.Open();
+
+    var total = 0;
+    using (var countCmd = new NpgsqlCommand("""SELECT COUNT(*) FROM "E_Attendace"."BackupHistory";""", conn))
+    {
+        total = Convert.ToInt32(countCmd.ExecuteScalar() ?? 0);
+    }
+
+    var items = new List<BackupHistoryResponse>();
+    using var cmd = new NpgsqlCommand(
+        """
+        SELECT "Id", "FileName", "FileSizeBytes", "Status", "Trigger", "ErrorMessage", "StartedAtUtc", "FinishedAtUtc"
+        FROM "E_Attendace"."BackupHistory"
+        ORDER BY "StartedAtUtc" DESC
+        LIMIT @take OFFSET @skip;
+        """,
+        conn);
+    cmd.Parameters.AddWithValue("take", Math.Clamp(pageSize, 1, 200));
+    cmd.Parameters.AddWithValue("skip", Math.Max(0, (page - 1) * pageSize));
+    using var reader = cmd.ExecuteReader();
+    while (reader.Read())
+    {
+        items.Add(new BackupHistoryResponse(
+            reader["Id"]?.ToString() ?? string.Empty,
+            reader["FileName"]?.ToString() ?? string.Empty,
+            reader["FileSizeBytes"] is DBNull ? null : Convert.ToInt64(reader["FileSizeBytes"]),
+            reader["Status"]?.ToString() ?? string.Empty,
+            reader["Trigger"]?.ToString() ?? string.Empty,
+            reader["ErrorMessage"] is DBNull ? null : reader["ErrorMessage"]?.ToString(),
+            ToIsoUtcString(reader["StartedAtUtc"]),
+            reader["FinishedAtUtc"] is DBNull ? null : ToIsoUtcString(reader["FinishedAtUtc"])));
+    }
+    return (items, total);
+}
+
+static string? LoadBackupFilePathById(string connectionString, string id)
+{
+    using var conn = new NpgsqlConnection(connectionString);
+    conn.Open();
+    using var cmd = new NpgsqlCommand(
+        """SELECT "FilePath" FROM "E_Attendace"."BackupHistory" WHERE "Id" = @id AND "Status" = 'completed';""",
+        conn);
+    cmd.Parameters.AddWithValue("id", id);
+    return cmd.ExecuteScalar() as string;
+}
+
+static void PruneOldBackups(string connectionString, string backupLocation, int retentionCount)
+{
+    using var conn = new NpgsqlConnection(connectionString);
+    conn.Open();
+    var toDelete = new List<(string Id, string FilePath)>();
+    using (var cmd = new NpgsqlCommand(
+        """
+        SELECT "Id", "FilePath" FROM "E_Attendace"."BackupHistory"
+        WHERE "Status" = 'completed'
+        ORDER BY "StartedAtUtc" DESC
+        OFFSET @keep;
+        """,
+        conn))
+    {
+        cmd.Parameters.AddWithValue("keep", Math.Max(0, retentionCount));
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            toDelete.Add((reader["Id"]?.ToString() ?? string.Empty, reader["FilePath"]?.ToString() ?? string.Empty));
+        }
+    }
+
+    foreach (var (id, filePath) in toDelete)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
+            {
+                File.Delete(filePath);
+            }
+        }
+        catch
+        {
+            // best-effort — a locked/permission-denied file just stays on disk; the history row
+            // still gets removed below so the list doesn't grow unbounded either way.
+        }
+
+        using var deleteCmd = new NpgsqlCommand("""DELETE FROM "E_Attendace"."BackupHistory" WHERE "Id" = @id;""", conn);
+        deleteCmd.Parameters.AddWithValue("id", id);
+        deleteCmd.ExecuteNonQuery();
+    }
+}
+
+static async Task<BackupHistoryResponse> RunAndRecordBackupAsync(string connectionString, string trigger, Action<string, string, string, string?> addLog)
+{
+    var schedule = LoadBackupScheduleFromDb(connectionString);
+    var location = string.IsNullOrWhiteSpace(schedule.BackupLocation) ? BackupService.ResolveDefaultBackupLocation() : schedule.BackupLocation;
+    var id = Guid.NewGuid().ToString("N");
+    var startedUtc = DateTime.UtcNow;
+    var appVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+
+    using (var conn = new NpgsqlConnection(connectionString))
+    {
+        conn.Open();
+        using var insertCmd = new NpgsqlCommand(
+            """
+            INSERT INTO "E_Attendace"."BackupHistory" ("Id", "FileName", "FilePath", "Status", "Trigger", "StartedAtUtc")
+            VALUES (@id, '', '', 'running', @trigger, @started);
+            """,
+            conn);
+        insertCmd.Parameters.AddWithValue("id", id);
+        insertCmd.Parameters.AddWithValue("trigger", trigger);
+        insertCmd.Parameters.AddWithValue("started", startedUtc);
+        insertCmd.ExecuteNonQuery();
+    }
+
+    var result = await BackupService.RunBackupAsync(connectionString, location, appVersion);
+
+    using (var conn = new NpgsqlConnection(connectionString))
+    {
+        conn.Open();
+        using var updateCmd = new NpgsqlCommand(
+            """
+            UPDATE "E_Attendace"."BackupHistory"
+            SET "FileName" = @fileName, "FilePath" = @filePath, "FileSizeBytes" = @size,
+                "Status" = @status, "ErrorMessage" = @error, "FinishedAtUtc" = NOW()
+            WHERE "Id" = @id;
+            """,
+            conn);
+        updateCmd.Parameters.AddWithValue("id", id);
+        updateCmd.Parameters.AddWithValue("fileName", result.FileName);
+        updateCmd.Parameters.AddWithValue("filePath", result.FilePath);
+        updateCmd.Parameters.AddWithValue("size", (object?)result.FileSizeBytes ?? DBNull.Value);
+        updateCmd.Parameters.AddWithValue("status", result.Success ? "completed" : "failed");
+        updateCmd.Parameters.AddWithValue("error", (object?)result.ErrorMessage ?? DBNull.Value);
+        updateCmd.ExecuteNonQuery();
+
+        using var touchCmd = new NpgsqlCommand(
+            """UPDATE "E_Attendace"."BackupSchedule" SET "LastRunUtc" = NOW() WHERE "Id" = 1;""",
+            conn);
+        touchCmd.ExecuteNonQuery();
+    }
+
+    addLog(
+        result.Success ? "INFO" : "ERROR",
+        "Backup",
+        result.Success ? $"Database backup completed ({trigger}): {result.FileName}" : $"Database backup failed ({trigger}): {result.ErrorMessage}",
+        result.FilePath);
+
+    if (result.Success)
+    {
+        try
+        {
+            PruneOldBackups(connectionString, location, schedule.RetentionCount);
+        }
+        catch (Exception ex)
+        {
+            addLog("WARN", "Backup", "Failed to prune old backups.", ex.Message);
+        }
+    }
+
+    var (items, _) = LoadBackupHistoryFromDb(connectionString, 1, 1);
+    return items.FirstOrDefault(x => x.Id == id) ?? new BackupHistoryResponse(id, result.FileName, result.FileSizeBytes, result.Success ? "completed" : "failed", trigger, result.ErrorMessage, ToIsoUtcString(startedUtc), ToIsoUtcString(DateTime.UtcNow));
 }
 
 static List<AuthUserResponse> LoadAuthUsersFromDb(string connectionString)
@@ -10920,7 +11957,7 @@ static List<AuthUserResponse> ReplaceAuthUsersInDb(
 {
     const string defaultUserName = "admin";
     const string defaultFullName = "Admin User";
-    const string defaultPassword = "PB@14891277";
+    const string defaultPassword = "PB@TechZone";
     var defaultPasswordHash = NormalizePasswordHash(defaultPassword);
 
     if (string.IsNullOrWhiteSpace(connectionString))
@@ -11055,7 +12092,7 @@ static List<AuthUserResponse> ReplaceAuthUsersInDb(
                     ("UserName", "FullName", "PasswordHash", "Role", "Status", "FeatureAccessJson", "CreatedAtUtc", "UpdatedAtUtc")
                 VALUES
                     (@userName, @fullName, @passwordHash, @role, @status, CAST(@featureAccessJson AS jsonb), NOW(), NOW())
-                ON CONFLICT ("UserName") DO UPDATE
+                ON CONFLICT (LOWER(TRIM("UserName"))) DO UPDATE
                 SET
                     "FullName" = EXCLUDED."FullName",
                     "PasswordHash" = EXCLUDED."PasswordHash",
@@ -11618,6 +12655,15 @@ static bool IsDeviceRoute(string? path)
 // Self-service kiosk flows (QR check-in and QR leave application) are used by employees who never
 // log in to the software, so their endpoints must stay reachable without a bearer token. Both write
 // to a "pending" state requiring admin approval, so leaving them public does not create real records.
+// User management (create/edit/delete software accounts, role assignment) is Admin-only. The JWT's
+// Role claim is set at login time (see GenerateJwtToken) from the account's own Role column, so this
+// reads the caller's actual current role rather than trusting anything client-supplied.
+static bool IsCallerAdmin(HttpContext context)
+{
+    var role = context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+    return string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase);
+}
+
 static bool IsPubliclyAllowedApiRequest(string method, string path)
 {
     if (path.StartsWith("/api/license", StringComparison.OrdinalIgnoreCase))
@@ -11646,6 +12692,11 @@ static bool IsPubliclyAllowedApiRequest(string method, string path)
     }
 
     if (HttpMethods.IsGet(method) && string.Equals(path, "/api/leave/types", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    if (HttpMethods.IsGet(method) && string.Equals(path, "/api/version", StringComparison.OrdinalIgnoreCase))
     {
         return true;
     }
@@ -14310,7 +15361,7 @@ static void ApplyMappedDepartmentAndPosition(Employee employee, string? mappedDe
             ? HandleFingerTemplatePayload(repository, personnelStore, fingerLines.ToString(), fallbackDepartment, fallbackPosition, mappedAreaCode, mappedDepartmentCode)
             : 0;
         var face = includeUserData
-            ? HandleFaceTemplatePayload(repository, personnelStore, faceLines.ToString(), fallbackDepartment, fallbackPosition, mappedAreaCode, mappedDepartmentCode)
+            ? HandleFaceTemplatePayload(repository, personnelStore, faceLines.ToString(), fallbackDepartment, fallbackPosition, mappedAreaCode, mappedDepartmentCode, service, deviceSerialNumber)
             : 0;
         var userPic = includeUserData
             ? HandleUserPicPayload(repository, personnelStore, userPicLines.ToString(), fallbackDepartment, fallbackPosition, mappedAreaCode, mappedDepartmentCode)
@@ -14591,9 +15642,13 @@ static int HandleFaceTemplatePayload(
     string? fallbackDepartment,
     string? fallbackPosition,
     string? mappedAreaCode,
-    string? mappedDepartmentCode)
+    string? mappedDepartmentCode,
+    AttendanceService? service = null,
+    string? serialNumber = null)
 {
-    return repository.RunInTransaction(() =>
+    var sawInfraredTemplate = false;
+    var sawVisibleTemplate = false;
+    var result = repository.RunInTransaction(() =>
     {
         var rows = ParseDataRows(payload, "FACE");
         var count = 0;
@@ -14635,10 +15690,12 @@ static int HandleFaceTemplatePayload(
                 if (faceType == 2)
                 {
                     employee.FaceTemplateInfrared = normalizedTemplate;
+                    sawInfraredTemplate = true;
                 }
                 else
                 {
                     employee.FaceTemplateVisible = normalizedTemplate;
+                    sawVisibleTemplate = true;
                 }
                 employee.SyncedAt = DateTime.UtcNow;
                 repository.UpdateEmployee(employee);
@@ -14649,6 +15706,27 @@ static int HandleFaceTemplatePayload(
 
         return count;
     });
+
+    // Uploading a real face template is direct proof this device has working face hardware —
+    // stronger evidence than its INFO handshake, which for some low-end/older devices (e.g.
+    // ZKTeco MB-series) never reliably reports FaceFunOn. Self-heal the capability flag here so
+    // redistributing this employee's template to other devices isn't blocked by a flag that was
+    // never set correctly in the first place. Runs after the transaction commits (not inside it)
+    // to avoid nesting a second repository call within RunInTransaction.
+    if (service is not null && !string.IsNullOrWhiteSpace(serialNumber) && (sawInfraredTemplate || sawVisibleTemplate))
+    {
+        var deviceForCaps = service.ListDevices().FirstOrDefault(d => string.Equals(d.SerialNumber, serialNumber, StringComparison.OrdinalIgnoreCase));
+        if (deviceForCaps is not null)
+        {
+            service.UpdateDeviceCapabilities(
+                serialNumber,
+                visibleLight: sawVisibleTemplate || deviceForCaps.SupportsVisibleLightFace,
+                infrared: sawInfraredTemplate || deviceForCaps.SupportsInfraredFace,
+                fingerprint: deviceForCaps.SupportsFingerprint);
+        }
+    }
+
+    return result;
 }
 
 static int HandleUserPicPayload(
@@ -17391,20 +18469,48 @@ static void EnsureBundledWebUiFile(string path, string content)
     }
 }
 
-static string[] BuildListenUrls(int apiPort, int frontendPort)
+static string ResolveServiceRole(string[] args)
+{
+    foreach (var arg in args)
+    {
+        if (!arg.StartsWith("--service-role=", StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        var role = arg["--service-role=".Length..].Trim().ToLowerInvariant();
+        if (role is "api" or "web")
+        {
+            return role;
+        }
+    }
+
+    return "all";
+}
+
+static string[] BuildListenUrls(int apiPort, int frontendPort, string serviceRole = "all")
 {
     var urls = new List<string>();
 
     static bool IsValidPort(int port) => port is >= 1 and <= 65535;
 
-    if (IsValidPort(apiPort))
+    var apiOnly = string.Equals(serviceRole, "api", StringComparison.OrdinalIgnoreCase);
+    var webOnly = string.Equals(serviceRole, "web", StringComparison.OrdinalIgnoreCase);
+    var listenHost = string.Equals(
+        Environment.GetEnvironmentVariable("E_ATTENDANCE_LOOPBACK_ONLY"),
+        "true",
+        StringComparison.OrdinalIgnoreCase)
+        ? "127.0.0.1"
+        : "0.0.0.0";
+
+    if (!webOnly && IsValidPort(apiPort))
     {
-        urls.Add($"http://0.0.0.0:{apiPort}");
+        urls.Add($"http://{listenHost}:{apiPort}");
     }
 
-    if (IsValidPort(frontendPort) && frontendPort != apiPort)
+    if (!apiOnly && IsValidPort(frontendPort) && (webOnly || frontendPort != apiPort))
     {
-        urls.Add($"http://0.0.0.0:{frontendPort}");
+        urls.Add($"http://{listenHost}:{frontendPort}");
     }
 
     return urls.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -17840,6 +18946,12 @@ internal sealed record PersonnelEmployeeProfile(
     int VerifyMode = 0,
     List<PersonnelEmployeeAssignment>? Assignments = null);
 internal sealed record AppLogEntry(DateTime TimestampUtc, string Level, string Source, string Message, string? Detail);
+
+record BackupScheduleResponse(bool Enabled, string Frequency, string RunTime, string BackupLocation, int RetentionCount, string? LastRunUtc, string? NextRunUtc);
+record BackupHistoryResponse(string Id, string FileName, long? FileSizeBytes, string Status, string Trigger, string? ErrorMessage, string StartedAtUtc, string? FinishedAtUtc);
+record BackupScheduleSaveRequest(bool Enabled, string Frequency, string RunTime, string BackupLocation, int RetentionCount);
+record EAttServicesSnapshot(DateTime CheckedAtUtc, string OverallStatus, List<EAttServiceStatus> Services);
+record EAttServiceStatus(string Name, string Kind, string Status, string Message, DateTime CheckedAtUtc, Dictionary<string, object?> Metrics);
 internal sealed record TransactionDetailPersistRequest(string? SerialNumber, string SourceTable, string Payload);
 internal sealed record TransactionDetailRow(
     string Id,
