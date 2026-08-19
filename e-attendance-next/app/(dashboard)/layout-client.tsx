@@ -29,8 +29,8 @@ export function DashboardLayoutClient({ children }: Readonly<{ children: React.R
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [desktop, setDesktop] = useState(false);
-  const [authReady, setAuthReady] = useState(false);
-  const [session, setSession] = useState<AuthSession | null>(null);
+  const [authReady, setAuthReady] = useState(() => typeof window !== "undefined" && !!readAuthSession());
+  const [session, setSession] = useState<AuthSession | null>(() => (typeof window !== "undefined" ? readAuthSession() : null));
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshAuth = useCallback(() => {
@@ -116,16 +116,24 @@ export function DashboardLayoutClient({ children }: Readonly<{ children: React.R
       return;
     }
 
-    const requiredFeature = resolveFeatureForPath(pathname, tab);
+    if (session.role === "Admin" || session.role === "Manager") {
+      return;
+    }
+
+    const normalizedPathname = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+    const requiredFeature = resolveFeatureForPath(normalizedPathname, tab);
     if (!requiredFeature) {
       return;
     }
 
     if (!session.featureAccess[requiredFeature]) {
       const target = firstAllowedRouteForSession(session);
-      const nextTarget = target === pathname ? "/" : target;
+      const normalizedTarget = target.length > 1 ? target.replace(/\/+$/, "") : target;
+      if (normalizedTarget === normalizedPathname || normalizedPathname === "/") {
+        return;
+      }
       startTransition(() => {
-        router.replace(nextTarget as Route);
+        router.replace(target as Route);
       });
     }
   }, [authReady, pathname, router, session, startTransition, tab]);
@@ -153,14 +161,13 @@ export function DashboardLayoutClient({ children }: Readonly<{ children: React.R
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [mobileOpen]);
 
-  const handleToggleSidebar = () => {
+  const handleToggleSidebar = useCallback(() => {
     if (desktop) {
       setCollapsed((value) => !value);
-      return;
+    } else {
+      setMobileOpen((value) => !value);
     }
-
-    setMobileOpen((value) => !value);
-  };
+  }, [desktop]);
 
   const handleNavigate = () => {
     if (!desktop) {
@@ -223,13 +230,14 @@ export function DashboardLayoutClient({ children }: Readonly<{ children: React.R
   }, [handleLogout, session]);
 
   const canRender = useMemo(() => {
-    if (!authReady) {
+    if (!authReady || !session) {
       return false;
     }
-    if (!session) {
-      return false;
+    if (session.role === "Admin" || session.role === "Manager") {
+      return true;
     }
-    const requiredFeature = resolveFeatureForPath(pathname, tab);
+    const normalizedPathname = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+    const requiredFeature = resolveFeatureForPath(normalizedPathname, tab);
     if (!requiredFeature) {
       return true;
     }

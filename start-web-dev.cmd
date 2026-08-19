@@ -3,7 +3,7 @@ setlocal
 
 set "ROOT=%~dp0"
 set "BACKEND=%ROOT%E.Attendance.Web"
-set "FRONTEND=%ROOT%pb-attendance-next"
+set "FRONTEND=%ROOT%e-attendance-next"
 set "WEB_PORT=8073"
 
 echo Starting E-Attendance web stack...

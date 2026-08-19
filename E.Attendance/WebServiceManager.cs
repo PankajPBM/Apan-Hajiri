@@ -4095,6 +4095,12 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
             var outputDirs = ResolveWebOutputDirectories(webBinRoot).ToArray();
             foreach (var outputDir in outputDirs)
             {
+                var directStartInfo = BuildWebStartInfoForDirectory(outputDir);
+                if (directStartInfo is not null)
+                {
+                    return directStartInfo;
+                }
+
                 var runtimeCopyDir = TryPrepareWebRuntimeCopy(outputDir);
                 if (!string.IsNullOrWhiteSpace(runtimeCopyDir))
                 {
@@ -4103,13 +4109,6 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
                     {
                         return copiedStartInfo;
                     }
-                }
-    
-                // Fallback to source output directory when runtime copy is unavailable.
-                var fallbackStartInfo = BuildWebStartInfoForDirectory(outputDir);
-                if (fallbackStartInfo is not null)
-                {
-                    return fallbackStartInfo;
                 }
             }
         }
@@ -4311,7 +4310,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
     private static IEnumerable<string> ResolveWebOutputDirectories(string webBinRoot)
     {
         var preferredFrameworks = new[] { "net10.0", "net8.0" };
-        var configurations = new[] { "Debug", "Release" };
+        var configurations = new[] { "Release", "Debug" };
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var candidates = new List<string>();
 

@@ -16,6 +16,7 @@ import {
   Send,
   Settings2,
   Trash2,
+  UploadCloud,
   Wifi,
   WifiOff,
   Wrench,
@@ -126,7 +127,8 @@ type DeviceControlAction =
   | "fetch-all-log-data"
   | "fetch-users"
   | "sync-time"
-  | "sync-data";
+  | "sync-data"
+  | "upgrade-firmware";
 type DeviceFetchAction =
   | ""
   | "fetch-all-data"
@@ -448,6 +450,11 @@ export default function DevicesPage() {
   const [commandQueueOpen, setCommandQueueOpen] = useState(false);
   const [dataCleanMode, setDataCleanMode] = useState<"attendance" | "captured-image" | "all">("attendance");
   const [editOpen, setEditOpen] = useState(false);
+  const [firmwareUpgradeOpen, setFirmwareUpgradeOpen] = useState(false);
+  const [firmwareFile, setFirmwareFile] = useState<File | null>(null);
+  const [firmwareTargetSerials, setFirmwareTargetSerials] = useState<string[]>([]);
+  const [firmwareUploading, setFirmwareUploading] = useState(false);
+  const [firmwareResult, setFirmwareResult] = useState<{ message: string; command: string; queued: string[] } | null>(null);
   const [editDevice, setEditDevice] = useState<EditDevice | null>(null);
   const [capacityModalData, setCapacityModalData] = useState<{
     open: boolean;
@@ -1221,6 +1228,54 @@ export default function DevicesPage() {
     return selectedSerial ? [selectedSerial] : [];
   };
 
+  const openFirmwareUpgrade = () => {
+    const targets = getControlTargets();
+    setFirmwareTargetSerials(targets);
+    setFirmwareFile(null);
+    setFirmwareResult(null);
+    setFirmwareUpgradeOpen(true);
+  };
+
+  const submitFirmwareUpgrade = async () => {
+    if (!firmwareFile) {
+      setError("Please select a firmware file.");
+      return;
+    }
+    setFirmwareUploading(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", firmwareFile);
+      if (firmwareTargetSerials.length > 0) {
+        formData.append("serials", firmwareTargetSerials.join(","));
+      }
+      let lastError: string | null = null;
+      for (const base of getApiBases()) {
+        try {
+          const res = await fetch(`${base}/api/devices/firmware-upgrade`, {
+            method: "POST",
+            body: formData,
+            cache: "no-store",
+          });
+          if (res.ok) {
+            const data = await res.json() as { message: string; command: string; queued: string[] };
+            setFirmwareResult(data);
+            await loadManaged();
+            return;
+          }
+          const txt = await res.text();
+          lastError = txt || `Request failed (${res.status})`;
+          break;
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : "Failed to fetch";
+        }
+      }
+      setError(lastError ?? "Failed to push firmware upgrade.");
+    } finally {
+      setFirmwareUploading(false);
+    }
+  };
+
   const getDeviceTimeZoneValue = () => "345";
 
 
@@ -1830,8 +1885,11 @@ export default function DevicesPage() {
                     onChange={(event) => {
                       const next = event.target.value as DeviceControlAction;
                       setControlAction(next);
-                      if (next) {
+                      if (next && next !== "upgrade-firmware") {
                         void executeControlAction(next);
+                      } else if (next === "upgrade-firmware") {
+                        setControlAction("");
+                        openFirmwareUpgrade();
                       }
                     }}
                     disabled={!hasTargets}
@@ -1843,6 +1901,7 @@ export default function DevicesPage() {
                     <option value="reboot-device">Reboot Device</option>
                     <option value="sync-time">Sync Time</option>
                     <option value="sync-data">Sync Data</option>
+                    <option value="upgrade-firmware">Upgrade Firmware</option>
                   </select>
                 </div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-2 py-1">
@@ -3053,6 +3112,100 @@ export default function DevicesPage() {
               <button type="button" onClick={() => void submitEditDevice()} className="rounded-lg bg-[--primary] px-3 py-2 text-sm font-medium text-[--primary-foreground]">
                 Save
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Firmware Upgrade Modal ── */}
+      {firmwareUpgradeOpen ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/45 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-[#bcd3f0] bg-white shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-[#e1efff] bg-[#f5faff] px-5 py-4">
+              <div className="flex items-center gap-2">
+                <UploadCloud className="h-5 w-5 text-[#1a4a73]" />
+                <h2 className="text-base font-semibold text-[#0f3254]">Upgrade Firmware</h2>
+              </div>
+              <button type="button" onClick={() => { setFirmwareUpgradeOpen(false); setFirmwareResult(null); }} className="rounded-lg p-1 hover:bg-[#eef6ff] text-[#5f7f9d]">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Warning */}
+              <div className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-xs text-orange-800 leading-relaxed">
+                <p className="font-semibold mb-1">⚠ Important — Read Before Proceeding</p>
+                <p>Only use firmware files (<code className="font-mono bg-orange-100 px-1 rounded">emfw.cfg</code>) provided by ZKTeco for your exact device model. Wrong firmware can brick the terminal and require hardware recovery. The device will download and flash automatically after the next poll.</p>
+              </div>
+
+              {/* Result */}
+              {firmwareResult && (
+                <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-xs text-green-800 space-y-1">
+                  <p className="font-semibold">{firmwareResult.message}</p>
+                  <p className="font-mono text-[10px] break-all text-green-700">{firmwareResult.command}</p>
+                  <p>Queued to: {firmwareResult.queued.join(", ")}</p>
+                </div>
+              )}
+
+              {/* File picker */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#1a4a73]">Firmware File <span className="text-[#7a93ab] font-normal">(emfw.cfg or .bin)</span></label>
+                <input
+                  type="file"
+                  accept=".cfg,.bin,.tar,.zip"
+                  onChange={(e) => setFirmwareFile(e.target.files?.[0] ?? null)}
+                  className="w-full rounded-lg border border-[#c8ddf0] bg-[#f8fbfe] px-3 py-2 text-sm text-[#0f3356] outline-none file:mr-3 file:rounded file:border-0 file:bg-[#dceeff] file:px-3 file:py-1 file:text-xs file:font-semibold file:text-[#1a4a73] hover:file:bg-[#c5e0f8]"
+                />
+                {firmwareFile && <p className="text-[11px] text-[#5a7a96]">Selected: {firmwareFile.name} ({(firmwareFile.size / 1024).toFixed(1)} KB)</p>}
+              </div>
+
+              {/* Target devices */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#1a4a73]">Target Devices</label>
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-[#d5e8f7] divide-y divide-[#eef5fc]">
+                  {devices.map((dev) => (
+                    <label key={dev.serialNumber} className="flex items-center gap-2.5 px-3 py-2 hover:bg-[#f4f9ff] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={firmwareTargetSerials.length === 0 || firmwareTargetSerials.includes(dev.serialNumber)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFirmwareTargetSerials((prev) => [...prev, dev.serialNumber]);
+                          } else {
+                            setFirmwareTargetSerials((prev) => prev.filter((s) => s !== dev.serialNumber));
+                          }
+                        }}
+                        className="h-3.5 w-3.5 accent-[#1a4a73]"
+                      />
+                      <span className="text-xs font-medium text-[#0f3356]">{dev.name || dev.serialNumber}</span>
+                      <span className="text-[10px] text-[#5a7a96] font-mono ml-auto">{dev.serialNumber}</span>
+                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dev.isOnline ? "bg-green-500" : "bg-gray-300"}`} />
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[10px] text-[#7a93ab]">
+                  {firmwareTargetSerials.length === 0 ? "All devices selected" : `${firmwareTargetSerials.length} device(s) selected`}
+                  {" · "}
+                  <button type="button" onClick={() => setFirmwareTargetSerials([])} className="underline hover:text-[#1a4a73]">Select All</button>
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => { setFirmwareUpgradeOpen(false); setFirmwareResult(null); }} className="rounded-lg border border-[#c8ddf0] bg-white px-4 py-2 text-sm font-medium text-[#1a4a73] hover:bg-[#eef6ff]">
+                  Close
+                </button>
+                <button
+                  type="button"
+                  disabled={firmwareUploading || !firmwareFile}
+                  onClick={() => void submitFirmwareUpgrade()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#1a4a73] px-5 py-2 text-sm font-semibold text-white hover:bg-[#15395c] disabled:opacity-50"
+                >
+                  <UploadCloud className="h-4 w-4" />
+                  {firmwareUploading ? "Uploading..." : "Upload & Push"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

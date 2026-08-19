@@ -59,7 +59,7 @@ function apiBases(): string[] {
 }
 
 async function requestWithFallback(path: string, init?: RequestInit): Promise<Response> {
-  let lastMessage = "Failed to contact API.";
+  let lastMessage = "API service is offline or starting up.";
   for (const base of apiBases()) {
     try {
       const controller = new AbortController();
@@ -70,13 +70,19 @@ async function requestWithFallback(path: string, init?: RequestInit): Promise<Re
         signal: controller.signal,
       });
       clearTimeout(timeout);
-      if (response.ok) {
+
+      const contentType = response.headers.get("content-type") || "";
+      if (response.ok && !contentType.includes("text/html")) {
         preferredApiBase = base;
         return response;
       }
 
       const errorText = await response.text();
-      lastMessage = errorText || `Request failed (${response.status}).`;
+      if (errorText && !errorText.trim().startsWith("<")) {
+        lastMessage = errorText;
+      } else {
+        lastMessage = `API service is offline or starting up (${response.status}).`;
+      }
     } catch (error) {
       lastMessage = error instanceof Error ? error.message : "Unknown request error.";
     }
@@ -153,16 +159,34 @@ function normalizeLicenseStatus(raw: unknown): LicenseStatusResponse {
 
 async function readJsonResponse(response: Response): Promise<unknown> {
   const text = await response.text();
-  if (!text) {
+  if (!text || !text.trim()) {
     return {};
   }
-  return JSON.parse(text);
+  const trimmed = text.trim();
+  if (trimmed.startsWith("<")) {
+    throw new Error("API server is offline or returned invalid response.");
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    throw new Error("Invalid JSON response received from API server.");
+  }
 }
 
 export async function fetchLicenseStatus(): Promise<LicenseStatusResponse> {
   const response = await requestWithFallback("/api/license/status");
   const payload = await readJsonResponse(response);
   return normalizeLicenseStatus(payload);
+}
+
+export async function fetchAppVersion(): Promise<string | null> {
+  try {
+    const response = await requestWithFallback("/api/version");
+    const payload = (await readJsonResponse(response)) as { version?: string };
+    return typeof payload?.version === "string" && payload.version.trim() ? payload.version.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function reloadLicenseStatus(): Promise<LicenseStatusResponse> {

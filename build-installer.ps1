@@ -1,7 +1,9 @@
 param(
     [ValidateSet("Offline", "Min")]
     [string]$Mode = "Offline",
-    [switch]$SkipFrontendBuild
+    [switch]$SkipFrontendBuild,
+    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [string]$Version
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,6 +28,22 @@ if ([string]::IsNullOrWhiteSpace($iscc)) {
     throw "Inno Setup 6 not found. Download from https://jrsoftware.org/issetup.php"
 }
 
+if (-not [string]::IsNullOrWhiteSpace($Version)) {
+    & (Join-Path $solutionRoot "bump-version.ps1") $Version
+    if ($LASTEXITCODE -ne 0) { throw "version bump failed." }
+}
+
+# ── Resolve the version to embed in the installer filename ────────────────
+$csprojPath = Join-Path $solutionRoot "E.Attendance.Web\E.Attendance.Web.csproj"
+$resolvedVersion = if (-not [string]::IsNullOrWhiteSpace($Version)) {
+    $Version
+} else {
+    $xml = [xml](Get-Content -LiteralPath $csprojPath -Raw)
+    $ver = $xml.Project.PropertyGroup | ForEach-Object { $_.Version } | Where-Object { $_ } | Select-Object -First 1
+    if (-not $ver) { "1.0.0" } else { $ver }
+}
+Write-Host "Version: $resolvedVersion"
+
 # ── Step 1: Build the solution (Release, no incremental) ──────────────────
 Write-Host "Building solution in Release mode..."
 $sln = Join-Path $solutionRoot "E-Attendance.sln"
@@ -47,7 +65,7 @@ $pgSearchRoots = @(
 )
 foreach ($root in $pgSearchRoots) {
     if (-not (Test-Path $root)) { continue }
-    $candidate = Get-ChildItem -Path $root -Filter "postgresql-*-windows-x64.exe" -ErrorAction SilentlyContinue |
+    $candidate = Get-ChildItem -Path $root -Filter "postgresql-*.exe" -ErrorAction SilentlyContinue |
         Sort-Object Name -Descending | Select-Object -First 1
     if ($candidate) { $postgresInstaller = $candidate.FullName; break }
 }
@@ -57,6 +75,7 @@ New-Item -ItemType Directory -Path $installerOut -Force | Out-Null
 
 $isccArgs = @(
     "/DBuildMode=$Mode",
+    "/DMyAppVersion=$resolvedVersion",
     "/DAppExePath=$appExe",
     "/DControllerExePath=$controllerExe",
     "/DControllerBinDir=$controllerBin",
@@ -76,7 +95,7 @@ Write-Host "Running InnoSetup..."
 & $iscc @isccArgs $setupScript
 if ($LASTEXITCODE -ne 0) { throw "InnoSetup failed." }
 
-$result = Join-Path $installerOut "E-Attendance_${Mode}_Setup.exe"
+$result = Join-Path $installerOut "E-Attendance_${resolvedVersion}_${Mode}_Setup.exe"
 if (Test-Path $result) {
     Write-Host ""
     Write-Host "SUCCESS: $result"

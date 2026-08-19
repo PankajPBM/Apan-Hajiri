@@ -273,6 +273,24 @@ public sealed class ConfigSyncService(PbAttendanceDbContext db, IAttendanceServi
                     attendanceService.QueueDeviceCommand(serial, command);
                 }
             }
+            var dupMinutes = config.DeviceDuplicatePunchPeriodMinutes ?? config.ReCheckMin ?? config.AlarmReRec;
+            if (dupMinutes.HasValue)
+            {
+                var val = Math.Max(0, Math.Min(99, dupMinutes.Value));
+                var targetSerials = config.DeviceSerials != null && config.DeviceSerials.Count > 0
+                    ? config.DeviceSerials
+                    : attendanceService.ListDevices().Select(d => d.SerialNumber).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+
+                foreach (var serial in targetSerials)
+                {
+                    if (!string.IsNullOrWhiteSpace(serial))
+                    {
+                        QueueOnce(serial, $"SET OPTION AlarmReRec={val}");
+                        QueueOnce(serial, $"SET OPTION ReCheckMin={val}");
+                    }
+                }
+            }
+
             // AccUnLockComb must run AFTER its referenced AccGroups are committed on the device
             // (a later poll cycle), otherwise the device ignores it. Collect and flush after a delay.
             var deferredCombos = new List<(string Serial, string Command)>();
@@ -1110,5 +1128,9 @@ public sealed class ConfigSyncService(PbAttendanceDbContext db, IAttendanceServi
         public List<AccessControlGroupJson> Groups { get; set; } = [];
         public List<AccessControlCombinationJson> Combinations { get; set; } = [];
         public List<AccessControlPrivilegeJson> Privileges { get; set; } = [];
+        public int? DeviceDuplicatePunchPeriodMinutes { get; set; }
+        public int? ReCheckMin { get; set; }
+        public int? AlarmReRec { get; set; }
+        public List<string> DeviceSerials { get; set; } = [];
     }
 }

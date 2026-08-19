@@ -86,6 +86,8 @@ export type AccessControlSnapshot = {
   groups: AccessControlGroup[];
   combinations: AccessControlCombination[];
   privileges: AccessControlPrivilege[];
+  deviceDuplicatePunchPeriodMinutes?: number;
+  deviceSerials?: string[];
 };
 
 function hasWindow() {
@@ -105,6 +107,11 @@ async function accessControlRequest<T>(init?: RequestInit): Promise<T> {
         cache: "no-store",
       });
       if (response.ok) {
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/json")) {
+          lastError = `Expected JSON response, received ${contentType || "HTML"}`;
+          continue;
+        }
         preferredApiBase = base;
         return (await response.json()) as T;
       }
@@ -160,14 +167,16 @@ function normalizePeriods(rows: unknown): AccessControlTimePeriod[] {
     .map((item, index): AccessControlTimePeriod | null => {
       if (!item || typeof item !== "object") return null;
       const source = item as Record<string, unknown>;
-      const name = typeof source.name === "string" ? source.name.trim() : "";
+      const rawNo = source.periodNo ?? source.period_no ?? source.no;
+      const periodNo = typeof rawNo === "string" && rawNo.trim() ? rawNo.trim() : typeof rawNo === "number" ? String(rawNo) : "1";
+      const name = typeof source.name === "string" && source.name.trim() ? source.name.trim() : `Time Period ${periodNo}`;
       return {
         id: typeof source.id === "string" && source.id.trim() ? source.id : `period-${index + 1}`,
         area: typeof source.area === "string" ? source.area.trim() : "",
-        department: typeof source.department === "string" ? source.department.trim() : "",
+        department: typeof source.department === "string" ? source.department.trim() : "All",
         deviceSerials: normalizeStringArray(source.deviceSerials),
-        periodNo: typeof source.periodNo === "string" ? source.periodNo.trim() : String(index + 1),
-        name: name || `Time Period ${index + 1}`,
+        periodNo,
+        name,
         remark: typeof source.remark === "string" ? source.remark.trim() : "",
         days: Array.from({ length: 7 }, (_, day) => normalizeDay((source.days as unknown[] | undefined)?.[day], day)),
         createdAt: typeof source.createdAt === "string" ? source.createdAt : nowIso(),
@@ -183,13 +192,16 @@ function normalizeGroups(rows: unknown): AccessControlGroup[] {
     .map((item, index): AccessControlGroup | null => {
       if (!item || typeof item !== "object") return null;
       const source = item as Record<string, unknown>;
+      const rawNo = source.groupNo ?? source.group_no ?? source.no;
+      const groupNo = typeof rawNo === "string" && rawNo.trim() ? rawNo.trim() : typeof rawNo === "number" ? String(rawNo) : "1";
+      const name = typeof source.name === "string" && source.name.trim() ? source.name.trim() : `Access Group ${groupNo}`;
       return {
         id: typeof source.id === "string" && source.id.trim() ? source.id : `group-${index + 1}`,
         area: typeof source.area === "string" ? source.area.trim() : "",
-        department: typeof source.department === "string" ? source.department.trim() : "",
+        department: typeof source.department === "string" ? source.department.trim() : "All",
         deviceSerials: normalizeStringArray(source.deviceSerials),
-        groupNo: typeof source.groupNo === "string" ? source.groupNo.trim() : String(index + 1),
-        name: typeof source.name === "string" && source.name.trim() ? source.name.trim() : `Group ${index + 1}`,
+        groupNo,
+        name,
         timePeriodIds: normalizeStringTuple(source.timePeriodIds, 3) as [string, string, string],
         verificationMode: normalizeVerificationMode(source.verificationMode),
         includeHoliday: source.includeHoliday === true,
@@ -207,6 +219,9 @@ function normalizeCombinations(rows: unknown): AccessControlCombination[] {
     .map((item, index): AccessControlCombination | null => {
       if (!item || typeof item !== "object") return null;
       const source = item as Record<string, unknown>;
+      const rawNo = source.combinationNo ?? source.combination_no ?? source.no;
+      const combinationNo = typeof rawNo === "string" && rawNo.trim() ? rawNo.trim() : typeof rawNo === "number" ? String(rawNo) : "1";
+      const name = typeof source.name === "string" && source.name.trim() ? source.name.trim() : `Combination ${combinationNo}`;
       const groupIds = normalizeStringTuple(source.groupIds, 5) as [
         string,
         string,
@@ -217,10 +232,10 @@ function normalizeCombinations(rows: unknown): AccessControlCombination[] {
       return {
         id: typeof source.id === "string" && source.id.trim() ? source.id : `combination-${index + 1}`,
         area: typeof source.area === "string" ? source.area.trim() : "",
-        department: typeof source.department === "string" ? source.department.trim() : "",
+        department: typeof source.department === "string" ? source.department.trim() : "All",
         deviceSerials: normalizeStringArray(source.deviceSerials),
-        combinationNo: typeof source.combinationNo === "string" ? source.combinationNo.trim() : String(index + 1),
-        name: typeof source.name === "string" && source.name.trim() ? source.name.trim() : `Combination ${index + 1}`,
+        combinationNo,
+        name,
         groupIds,
         remark: typeof source.remark === "string" ? source.remark.trim() : "",
         createdAt: typeof source.createdAt === "string" ? source.createdAt : nowIso(),
@@ -321,6 +336,8 @@ export async function ensureAccessControlDefaults(
     groups: [...currentSnapshot.groups],
     combinations: [...currentSnapshot.combinations],
     privileges: [...currentSnapshot.privileges],
+    deviceDuplicatePunchPeriodMinutes: currentSnapshot.deviceDuplicatePunchPeriodMinutes,
+    deviceSerials: currentSnapshot.deviceSerials,
   };
 
   const createId = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -336,17 +353,29 @@ export async function ensureAccessControlDefaults(
   // default Time Period 1 (00:00-23:59 all days), Access Group 1 (verify=Auto, TP1=1, TP2/3=none),
   // and Combination 1 (Group1=Access Group 1). All are synced to every device in that area.
   for (const area of areas) {
+    const areaName = (area.name || "").trim();
+    const areaCode = (area.code || "").trim();
+    if (!areaName) continue;
+
     const areaSerials = devices
-      .filter((d) => (d.area ?? "") === area.name)
+      .filter((d) => {
+        const devArea = (d.area ?? "").trim().toLowerCase();
+        return devArea === areaName.toLowerCase() || (areaCode && devArea === areaCode.toLowerCase());
+      })
       .map((d) => d.serialNumber)
       .filter((s) => !!s);
 
+    const matchesArea = (itemArea: string) => {
+      const a = (itemArea || "").trim().toLowerCase();
+      return a === areaName.toLowerCase() || (areaCode && a === areaCode.toLowerCase());
+    };
+
     // 1. Time Period 1
-    let tp1 = next.timePeriods.find((x) => x.area === area.name && x.periodNo === "1");
+    let tp1 = next.timePeriods.find((x) => matchesArea(x.area) && String(x.periodNo).trim() === "1");
     if (!tp1) {
       tp1 = {
         id: createId("period"),
-        area: area.name,
+        area: areaName,
         department: "All",
         deviceSerials: areaSerials,
         periodNo: "1",
@@ -358,18 +387,18 @@ export async function ensureAccessControlDefaults(
       };
       next.timePeriods.push(tp1);
       changed = true;
-    } else if (!sameSet(tp1.deviceSerials, areaSerials)) {
-      tp1 = { ...tp1, deviceSerials: areaSerials, updatedAt: new Date().toISOString() };
+    } else if (!sameSet(tp1.deviceSerials, areaSerials) || tp1.area !== areaName) {
+      tp1 = { ...tp1, area: areaName, deviceSerials: areaSerials, updatedAt: new Date().toISOString() };
       next.timePeriods = next.timePeriods.map((x) => (x.id === tp1!.id ? tp1! : x));
       changed = true;
     }
 
     // 2. Access Group 1
-    let grp1 = next.groups.find((x) => x.area === area.name && x.groupNo === "1");
+    let grp1 = next.groups.find((x) => matchesArea(x.area) && String(x.groupNo).trim() === "1");
     if (!grp1) {
       grp1 = {
         id: createId("group"),
-        area: area.name,
+        area: areaName,
         department: "All",
         deviceSerials: areaSerials,
         groupNo: "1",
@@ -383,18 +412,18 @@ export async function ensureAccessControlDefaults(
       };
       next.groups.push(grp1);
       changed = true;
-    } else if (!sameSet(grp1.deviceSerials, areaSerials)) {
-      grp1 = { ...grp1, deviceSerials: areaSerials, updatedAt: new Date().toISOString() };
+    } else if (!sameSet(grp1.deviceSerials, areaSerials) || grp1.area !== areaName) {
+      grp1 = { ...grp1, area: areaName, deviceSerials: areaSerials, updatedAt: new Date().toISOString() };
       next.groups = next.groups.map((x) => (x.id === grp1!.id ? grp1! : x));
       changed = true;
     }
 
     // 3. Combination 1
-    const comb1 = next.combinations.find((x) => x.area === area.name && x.combinationNo === "1");
+    const comb1 = next.combinations.find((x) => matchesArea(x.area) && String(x.combinationNo).trim() === "1");
     if (!comb1) {
       next.combinations.push({
         id: createId("combination"),
-        area: area.name,
+        area: areaName,
         department: "All",
         deviceSerials: areaSerials,
         combinationNo: "1",
@@ -405,9 +434,33 @@ export async function ensureAccessControlDefaults(
         updatedAt: new Date().toISOString(),
       });
       changed = true;
-    } else if (!sameSet(comb1.deviceSerials, areaSerials)) {
-      const updated = { ...comb1, deviceSerials: areaSerials, updatedAt: new Date().toISOString() };
+    } else if (!sameSet(comb1.deviceSerials, areaSerials) || comb1.area !== areaName) {
+      const updated = { ...comb1, area: areaName, deviceSerials: areaSerials, updatedAt: new Date().toISOString() };
       next.combinations = next.combinations.map((x) => (x.id === comb1.id ? updated : x));
+      changed = true;
+    }
+
+    // 4. Default Privilege
+    const priv1 = next.privileges.find((x) => matchesArea(x.area));
+    if (!priv1) {
+      next.privileges.push({
+        id: createId("privilege"),
+        area: areaName,
+        department: "All",
+        deviceSerials: areaSerials,
+        employeeIds: [],
+        employeeNames: [],
+        groupId: grp1.id,
+        verificationMode: "0",
+        timePeriodIds: [tp1.id, "", ""],
+        remark: "Default",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      changed = true;
+    } else if (!sameSet(priv1.deviceSerials, areaSerials) || priv1.area !== areaName) {
+      const updated = { ...priv1, area: areaName, deviceSerials: areaSerials, updatedAt: new Date().toISOString() };
+      next.privileges = next.privileges.map((x) => (x.id === priv1.id ? updated : x));
       changed = true;
     }
   }
@@ -421,21 +474,8 @@ export async function ensureAccessControlDefaults(
 function withDefaultAccessControlRows(snapshot: AccessControlSnapshot): AccessControlSnapshot {
   const defaults = defaultAccessControlSnapshot();
   const timePeriods = snapshot.timePeriods.length > 0 ? [...snapshot.timePeriods] : [...defaults.timePeriods];
-  
-  // Use existing groups; deduplicate if multiple default-looking groups exist
   let groups = snapshot.groups.length > 0 ? [...snapshot.groups] : [];
-  
-  // Deduplicate: if we have multiple groups with groupNo "1" and name "Access Group 1", keep only one
-  if (groups.length > 1) {
-    const defaultName = defaults.groups[0].name;
-    const defaultNo = defaults.groups[0].groupNo;
-    const firstDefaultIdx = groups.findIndex(g => g.groupNo === defaultNo && g.name === defaultName);
-    if (firstDefaultIdx !== -1) {
-      groups = groups.filter((g, idx) => idx === firstDefaultIdx || !(g.groupNo === defaultNo && g.name === defaultName));
-    }
-  }
 
-  // Only inject a default group if there are NO groups at all
   if (groups.length === 0) {
     const defaultPeriod = timePeriods[0] ?? defaults.timePeriods[0];
     groups.push({ ...defaults.groups[0], timePeriodIds: [defaultPeriod.id, "", ""] });
@@ -446,6 +486,8 @@ function withDefaultAccessControlRows(snapshot: AccessControlSnapshot): AccessCo
     groups,
     combinations: snapshot.combinations,
     privileges: snapshot.privileges,
+    deviceDuplicatePunchPeriodMinutes: snapshot.deviceDuplicatePunchPeriodMinutes ?? 2,
+    deviceSerials: snapshot.deviceSerials,
   };
 }
 

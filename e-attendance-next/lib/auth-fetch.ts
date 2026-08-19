@@ -77,9 +77,6 @@ function installAuthFetchInterceptor() {
 
     if (isApiCall && response.status === 401 && !isPublicKioskPage) {
       clearAuthToken();
-      window.localStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
-      window.sessionStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
-      window.location.href = "/login";
     }
 
     return response;

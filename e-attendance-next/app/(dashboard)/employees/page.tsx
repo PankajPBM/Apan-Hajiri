@@ -349,8 +349,8 @@ function sortRows(data: EmployeeRow[], key: SortKey, asc: boolean, extras: Recor
   return [...data].sort((a, b) => {
     let result = 0;
     if (key === "area") {
-      const areaA = (a.areas.length > 0 ? a.areas : [a.area || ""]).join(", ").toLowerCase();
-      const areaB = (b.areas.length > 0 ? b.areas : [b.area || ""]).join(", ").toLowerCase();
+      const areaA = (a.areas.length > 0 ? a.areas : [""]).join(", ").toLowerCase();
+      const areaB = (b.areas.length > 0 ? b.areas : [""]).join(", ").toLowerCase();
       result = areaA.localeCompare(areaB);
     } else if (key === "cardNumber") {
       const cardA = (extras[a.id]?.cardNumber || "").toLowerCase();
@@ -1611,6 +1611,7 @@ export default function EmployeesPage() {
       position: fallbackPosition,
       privilege: "User",
       verifyMode: 0,
+      groupId: 1,
       cardNumber: "",
       pictureDataUrl: "",
       mobileNumber: "",

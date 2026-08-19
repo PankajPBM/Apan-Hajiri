@@ -29,19 +29,23 @@ internal sealed record LicenseValidationResult(
     string? PublicKeyPath,
     string? ContactNumber = null,
     string? Email = null,
-    int? MaxDevices = null);
+    int? MaxDevices = null,
+    // Permanent tamper-block fields — populated whenever Code == "permanently_blocked".
+    bool PermanentlyBlocked = false,
+    string? BlockReason = null,
+    DateTimeOffset? BlockedSince = null);
 
 internal sealed class LicenseGuard
 {
     private const string EmbeddedPublicKeyPem = """
         -----BEGIN PUBLIC KEY-----
-        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAhqFn6s4Y2IqQGnFWu6cm
-        Iagid2Q/ydBsEjsudICPCxQoE7IpQRcOREeGOidKfDQeT0pPKM3KQBY3xjRkdxD2
-        rWXjYXS8RnpSvRfOXpW11I0FXybEnKgZHJzS9I93sLM4CJMZ61tjXnXlKwnpTRtl
-        DrdMhaNJtV4s0qUXPV+kcSBDdhSxiafitvNv2y/yB0SOkazJAxKq+fgFKRTmH8zo
-        I13mbnwmz+7bbhhf/bLvE+vpmun3oMp9r8W/x/eyUk+xCmtkVed4KyDN02fhjreA
-        YFtMyvkVRdkASBoVSkERldc7LgXcFgp9kOFCP5PftG6FLtjq9iTSzECIsszeC4uV
-        IQIDAQAB
+        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA8RRCC/UzA9mJFaYroFQe
+        uAHfhr4bIuT1kv9GG77eb0/1+5OMFvIjR44uZDeKVBvZEIHsuB5qEn6IiPgThTeJ
+        Bbb8O7pVa0v8BvgEcgk0Sv4sU+lY5IlEB5/lAI7mLsNsfVLnNpx+VmIgTEWaoFqx
+        LlLyV8CuNemT7u7x9ldAnQRhmXszs+Erw8njkqRK1/77cG1gKmxp8fqDzGxtkh+h
+        LQdLPCCDUfgHzkajwGW2RVt2zQWGLg1VEkWGygpXK0+GHmtkTS+17ZsYiPjXIX+K
+        g0nQf7d4EoYmv1B6EgHKA2pj86YInSSQgtkBa+/u9gCZiB44oSevvOIbhpcIum4i
+        gwIDAQAB
         -----END PUBLIC KEY-----
         """;
 
@@ -49,6 +53,121 @@ internal sealed class LicenseGuard
     private readonly LicenseRuntimeOptions _options;
     private readonly string _machineHash;
     private readonly HashSet<string> _machineHashVariants;
+
+    // ── Permanent tamper-block (registry) ────────────────────────────────────────
+    // Block is stored in HKLM under PB_Systems\EAttendance\SecurityGuard.
+    // Two values: BlockRecord (JSON with sig) and LastCheckedAt (ISO timestamp for clock rollback).
+    // Block can ONLY be cleared by a valid RSA-verified license activation.
+    private const string BlockRegKey    = @"SOFTWARE\PB_Systems\EAttendance\SecurityGuard";
+    private const string BlockRecordVal = "BlockRecord";
+    private const string LastCheckedVal = "LastCheckedAt";
+    private static readonly byte[] BlockHmacKey =
+        SHA256.HashData(Encoding.UTF8.GetBytes("PB_BLOCK_GUARD_V1"));
+
+    private static string ComputeBlockSignature(string machineHash, string blockedAt, string reason)
+    {
+        var data = Encoding.UTF8.GetBytes($"{machineHash}|{blockedAt}|{reason}");
+        using var hmac = new HMACSHA256(BlockHmacKey);
+        return Convert.ToHexString(hmac.ComputeHash(data)).ToLowerInvariant();
+    }
+
+    // Returns null if not blocked. Returns block reason if blocked or if block record was tampered.
+    private (bool Blocked, string? Reason, DateTimeOffset? Since) CheckPermanentBlock()
+    {
+        if (!OperatingSystem.IsWindows()) return (false, null, null);
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(BlockRegKey, writable: false);
+            if (key is null) return (false, null, null);
+            var raw = key.GetValue(BlockRecordVal)?.ToString();
+            if (string.IsNullOrWhiteSpace(raw)) return (false, null, null);
+
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            var storedHash    = TryGetString(root, "machineHash")  ?? string.Empty;
+            var blockedAt     = TryGetString(root, "blockedAt")    ?? string.Empty;
+            var reason        = TryGetString(root, "reason")       ?? string.Empty;
+            var sig           = TryGetString(root, "sig")          ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(blockedAt) || string.IsNullOrWhiteSpace(reason) || string.IsNullOrWhiteSpace(sig))
+            {
+                // Incomplete record — treat as tampered, re-block.
+                MarkMachineBlocked("block_record_tampered");
+                return (true, "block_record_tampered", DateTimeOffset.UtcNow);
+            }
+
+            // The block must be for THIS machine — a foreign hash means record was copied/tampered.
+            if (!string.Equals(storedHash, _machineHash, StringComparison.OrdinalIgnoreCase))
+            {
+                MarkMachineBlocked("block_record_tampered");
+                return (true, "block_record_tampered", DateTimeOffset.UtcNow);
+            }
+
+            var expected = ComputeBlockSignature(storedHash, blockedAt, reason);
+            if (!string.Equals(expected, sig, StringComparison.OrdinalIgnoreCase))
+            {
+                MarkMachineBlocked("block_record_tampered");
+                return (true, "block_record_tampered", DateTimeOffset.UtcNow);
+            }
+
+            var since = DateTimeOffset.TryParse(blockedAt, out var dto) ? dto : DateTimeOffset.UtcNow;
+            return (true, reason, since);
+        }
+        catch
+        {
+            return (false, null, null);
+        }
+    }
+
+    private void MarkMachineBlocked(string reason)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        try
+        {
+            using var key = Registry.LocalMachine.CreateSubKey(BlockRegKey, writable: true);
+            if (key is null) return;
+            var blockedAt = DateTimeOffset.UtcNow.ToString("O");
+            var sig       = ComputeBlockSignature(_machineHash, blockedAt, reason);
+            var payload   = JsonSerializer.Serialize(new { machineHash = _machineHash, blockedAt, reason, sig });
+            key.SetValue(BlockRecordVal, payload, RegistryValueKind.String);
+        }
+        catch { /* best-effort */ }
+    }
+
+    private static void ClearMachineBlock()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(BlockRegKey, writable: true);
+            key?.DeleteValue(BlockRecordVal, throwOnMissingValue: false);
+            key?.DeleteValue(LastCheckedVal, throwOnMissingValue: false);
+        }
+        catch { /* best-effort */ }
+    }
+
+    // Detects clock rollback: stores last validated timestamp in registry and compares on each call.
+    // A rollback of more than 10 minutes is treated as deliberate tampering and triggers a block.
+    private bool DetectAndUpdateClockCheck(DateTimeOffset now)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        try
+        {
+            using var key = Registry.LocalMachine.CreateSubKey(BlockRegKey, writable: true);
+            if (key is null) return false;
+            var raw = key.GetValue(LastCheckedVal)?.ToString();
+            if (!string.IsNullOrWhiteSpace(raw) &&
+                DateTimeOffset.TryParse(raw, out var lastChecked) &&
+                now < lastChecked.AddMinutes(-10))
+            {
+                return true; // clock was rolled back
+            }
+            key.SetValue(LastCheckedVal, now.ToString("O"), RegistryValueKind.String);
+        }
+        catch { /* best-effort */ }
+        return false;
+    }
+    // ────────────────────────────────────────────────────────────────────────────
 
     public LicenseGuard(LicenseRuntimeOptions options)
     {
@@ -62,15 +181,51 @@ internal sealed class LicenseGuard
     {
         var checkedAtUtc = DateTimeOffset.UtcNow;
         var machineHash = _machineHash;
+
         var locations = ResolveLicenseLocations();
+        var (isBlocked, blockReason, blockedSince) = CheckPermanentBlock();
+
+        // If no license key file is uploaded/present, enforce permanent block if set
         if (string.IsNullOrWhiteSpace(locations.KeyPath))
         {
+            if (isBlocked)
+            {
+                return new LicenseValidationResult(
+                    false,
+                    "permanently_blocked",
+                    "This installation has been permanently blocked due to unauthorized tampering. " +
+                    "Contact your vendor and provide your Machine ID to restore access with a valid license.",
+                    machineHash,
+                    null, null, checkedAtUtc, null, null, null, null, null,
+                    null, null, null,
+                    PermanentlyBlocked: true,
+                    BlockReason: blockReason,
+                    BlockedSince: blockedSince);
+            }
+
             return Invalid(
                 "missing_key_file",
                 "Product not activated. Encryption key file (.key) was not found.",
                 machineHash,
                 checkedAtUtc,
                 locations);
+        }
+
+        // Clock rollback detection
+        if (DetectAndUpdateClockCheck(checkedAtUtc))
+        {
+            MarkMachineBlocked("clock_rollback");
+            return new LicenseValidationResult(
+                false,
+                "permanently_blocked",
+                "This installation has been permanently blocked due to unauthorized tampering. " +
+                "Contact your vendor and provide your Machine ID to restore access with a valid license.",
+                machineHash,
+                null, null, checkedAtUtc, null, null, null, null, null,
+                null, null, null,
+                PermanentlyBlocked: true,
+                BlockReason: "clock_rollback",
+                BlockedSince: checkedAtUtc);
         }
 
         var publicKeyPem = ResolvePublicKeyPem(locations.PublicKeyPath);
@@ -185,9 +340,30 @@ internal sealed class LicenseGuard
         var signatureValid = VerifySignature(publicKeyPem, signature, signatureCandidates);
         if (!signatureValid)
         {
+            // Signature failed on a structurally valid PB-ACTIVATION-V2 envelope — the file was
+            // tampered or forged. Permanently block this machine.
+            MarkMachineBlocked("signature_tamper");
+            return new LicenseValidationResult(
+                false,
+                "permanently_blocked",
+                "This installation has been permanently blocked due to unauthorized tampering. " +
+                "Contact your vendor and provide your Machine ID to restore access with a valid license.",
+                machineHash,
+                null, null, checkedAtUtc, null, null, null, null, null,
+                null, null, null,
+                PermanentlyBlocked: true,
+                BlockReason: "signature_tamper",
+                BlockedSince: checkedAtUtc);
+        }
+
+        var product = TryGetString(payload, "product");
+        if (!string.IsNullOrWhiteSpace(product) &&
+            !string.Equals(product, "E-Attendance", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(product, "Attendance", StringComparison.OrdinalIgnoreCase))
+        {
             return Invalid(
-                "signature_invalid",
-                "License signature verification failed.",
+                "product_mismatch",
+                $"This license was issued for {product}, not E-Attendance.",
                 machineHash,
                 checkedAtUtc,
                 locations);
@@ -253,6 +429,10 @@ internal sealed class LicenseGuard
                 email,
                 maxDevices);
         }
+
+        // Valid, RSA-verified, machine-matched, non-expired license.
+        // This is the ONLY path that clears a permanent block — no other code calls ClearMachineBlock().
+        ClearMachineBlock();
 
         return new LicenseValidationResult(
             true,
@@ -381,14 +561,22 @@ internal sealed class LicenseGuard
                         throw new InvalidOperationException("Activation key file is missing encrypted payload or key.");
                     }
 
-                    var encryptedBytes = DecodeBase64Flexible(blobB64);
-                    var tokenText = Encoding.UTF8.GetString(encryptedBytes).Trim();
-                    if (string.IsNullOrWhiteSpace(tokenText))
+                    var token = blobB64.Trim();
+                    try
                     {
-                        tokenText = Convert.ToBase64String(encryptedBytes).Trim();
+                        var decodedBytes = Convert.FromBase64String(token);
+                        var decodedString = Encoding.UTF8.GetString(decodedBytes).Trim();
+                        if (decodedString.StartsWith("gAAAAA", StringComparison.Ordinal))
+                        {
+                            token = decodedString;
+                        }
+                    }
+                    catch
+                    {
+                        // Token is single-encoded
                     }
 
-                    return (tokenText, fernetKey.Trim());
+                    return (token, fernetKey.Trim());
                 }
             }
             catch (JsonException)
@@ -979,6 +1167,19 @@ internal sealed class LicenseGuard
             NormalizeHash(salted),
         };
 
+        // Also compute hash variants for identifier subsets (in case any individual WMI property was missing during generator run)
+        if (identifiers.Count > 1)
+        {
+            var subsetCombined = string.Join("|", identifiers.Where(s => !string.IsNullOrWhiteSpace(s)));
+            var subsetRaw = Encoding.UTF8.GetBytes(subsetCombined);
+            var subsetSaltedRaw = new byte[subsetRaw.Length + SystemSaltBytes.Length];
+            Buffer.BlockCopy(subsetRaw, 0, saltedRaw, 0, subsetRaw.Length);
+            Buffer.BlockCopy(SystemSaltBytes, 0, saltedRaw, subsetRaw.Length, SystemSaltBytes.Length);
+            
+            variants.Add(NormalizeHash(Convert.ToHexString(SHA256.HashData(subsetRaw)).ToUpperInvariant()));
+            variants.Add(NormalizeHash(Convert.ToHexString(SHA256.HashData(subsetSaltedRaw)).ToUpperInvariant()));
+        }
+
         return (salted, variants);
     }
 
@@ -986,9 +1187,12 @@ internal sealed class LicenseGuard
     {
         var list = new List<string>();
 
-        AddIfPresent(list, TryReadWmiValue("Win32_Bios", "SerialNumber"));
-        AddIfPresent(list, TryReadWmiValue("Win32_BaseBoard", "SerialNumber"));
-        AddIfPresent(list, TryReadWmiValue("Win32_Processor", "ProcessorId"));
+        // 1. Try fast single-batch CimInstance / Registry lookups
+        var (biosSerial, boardSerial, cpuId) = TryReadHardwareInfoFast();
+
+        AddIfPresent(list, biosSerial);
+        AddIfPresent(list, boardSerial);
+        AddIfPresent(list, cpuId);
         AddIfPresent(list, TryReadMachineGuid());
         AddIfPresent(list, Environment.GetEnvironmentVariable("COMPUTERNAME"));
         AddIfPresent(list, Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER"));
@@ -1026,58 +1230,66 @@ internal sealed class LicenseGuard
         return cleaned;
     }
 
-    private static string? TryReadWmiValue(string className, string propertyName)
+    private static (string? BiosSerial, string? BoardSerial, string? CpuId) TryReadHardwareInfoFast()
     {
         if (!OperatingSystem.IsWindows())
         {
-            return null;
+            return (null, null, null);
         }
 
+        string? bios = null;
+        string? board = null;
+        string? cpu = null;
+
+        // Try direct Registry first (instant 0ms, works in all accounts)
         try
         {
-            using var process = Process.Start(new ProcessStartInfo
+            using var biosKey = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
+            if (biosKey is not null)
             {
-                FileName = "powershell",
-                Arguments = $"-NoProfile -Command \"Get-CimInstance {className} | Select-Object -ExpandProperty {propertyName}\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-
-            if (process is null)
-            {
-                return null;
+                bios = biosKey.GetValue("SystemSerialNumber")?.ToString()
+                    ?? biosKey.GetValue("BIOSSerialNumber")?.ToString();
+                board = biosKey.GetValue("BaseBoardSerialNumber")?.ToString();
             }
 
-            var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(5000);
-            if (!process.HasExited)
+            using var cpuKey = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0");
+            if (cpuKey is not null)
             {
-                try
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Ignore kill failure.
-                }
+                cpu = cpuKey.GetValue("Identifier")?.ToString()
+                    ?? cpuKey.GetValue("ProcessorNameString")?.ToString();
             }
-
-            var trimmed = output.Trim();
-            if (string.IsNullOrWhiteSpace(trimmed))
-            {
-                return null;
-            }
-
-            return trimmed
-                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault();
         }
-        catch
+        catch { /* best-effort registry fallback */ }
+
+        // If any hardware serial is missing, run a single batch CimInstance PowerShell call (0.5 sec)
+        if (string.IsNullOrWhiteSpace(bios) || string.IsNullOrWhiteSpace(board) || string.IsNullOrWhiteSpace(cpu))
         {
-            return null;
+            try
+            {
+                using var process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "powershell",
+                    Arguments = "-NoProfile -Command \"Get-CimInstance Win32_Bios | Select-Object -ExpandProperty SerialNumber; Get-CimInstance Win32_BaseBoard | Select-Object -ExpandProperty SerialNumber; Get-CimInstance Win32_Processor | Select-Object -ExpandProperty ProcessorId\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+
+                if (process is not null)
+                {
+                    var output = process.StandardOutput.ReadToEnd();
+                    process.WaitForExit(5000);
+                    var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (lines.Length >= 1 && string.IsNullOrWhiteSpace(bios)) bios = lines[0];
+                    if (lines.Length >= 2 && string.IsNullOrWhiteSpace(board)) board = lines[1];
+                    if (lines.Length >= 3 && string.IsNullOrWhiteSpace(cpu)) cpu = lines[2];
+                }
+            }
+            catch { /* best-effort CIM fallback */ }
         }
+
+        return (bios, board, cpu);
     }
 
     private static string TryReadMachineGuid()
@@ -1125,37 +1337,43 @@ internal sealed class LicenseGuard
         }
 
         AddDir(_options.LicenseDirectory);
+        AddDir(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PB_Attendance", "license"));
         AddDir(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PB_Attendance"));
         AddDir(Path.Combine(_options.AppDataRoot, "license"));
+        AddDir(_options.AppDataRoot);
         AddDir(_options.BaseDirectory);
         AddDir(_options.ContentRootPath);
 
+        string? keyPath = ResolveKeyFileFromDirectories(directories);
         string? licensePath = null;
-        string? keyPath = null;
-        string? publicKeyPath = null;
 
-        foreach (var dir in directories)
+        if (!string.IsNullOrWhiteSpace(keyPath))
         {
-            var candidate = Path.Combine(dir, "license.dat");
-            if (File.Exists(candidate))
+            var dir = Path.GetDirectoryName(keyPath);
+            if (!string.IsNullOrWhiteSpace(dir))
             {
-                licensePath = candidate;
-                break;
+                var candidate = Path.Combine(dir, "license.dat");
+                if (File.Exists(candidate))
+                {
+                    licensePath = candidate;
+                }
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(licensePath))
+        if (string.IsNullOrWhiteSpace(licensePath))
         {
-            var licenseDir = Path.GetDirectoryName(licensePath) ?? string.Empty;
-            keyPath = ResolveKeyFile(licenseDir) ?? ResolveKeyFileFromDirectories(directories);
-            publicKeyPath = ResolvePublicKeyPath(licenseDir);
-        }
-        else
-        {
-            keyPath = ResolveKeyFileFromDirectories(directories);
-            publicKeyPath = ResolvePublicKeyPathFromDirectories(directories);
+            foreach (var dir in directories)
+            {
+                var candidate = Path.Combine(dir, "license.dat");
+                if (File.Exists(candidate))
+                {
+                    licensePath = candidate;
+                    break;
+                }
+            }
         }
 
+        string? publicKeyPath = ResolvePublicKeyPathFromDirectories(directories);
         if (!string.IsNullOrWhiteSpace(_options.PublicKeyPath) && File.Exists(_options.PublicKeyPath))
         {
             publicKeyPath = Path.GetFullPath(_options.PublicKeyPath);
@@ -1212,8 +1430,13 @@ internal sealed class LicenseGuard
 
         var preferred = Directory
             .EnumerateFiles(directory, "*.key", SearchOption.TopDirectoryOnly)
-            .Where(path => Path.GetFileName(path).StartsWith("PB-", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Where(path =>
+            {
+                var fileName = Path.GetFileName(path);
+                return fileName.StartsWith("PB-", StringComparison.OrdinalIgnoreCase) ||
+                       fileName.StartsWith("Attendance-", StringComparison.OrdinalIgnoreCase);
+            })
+            .OrderByDescending(path => File.GetLastWriteTimeUtc(path))
             .FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(preferred))
         {
@@ -1222,7 +1445,8 @@ internal sealed class LicenseGuard
 
         return Directory
             .EnumerateFiles(directory, "*.key", SearchOption.TopDirectoryOnly)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Where(path => !Path.GetFileName(path).StartsWith("Access-", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(path => File.GetLastWriteTimeUtc(path))
             .FirstOrDefault();
     }
 

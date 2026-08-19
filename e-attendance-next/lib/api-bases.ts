@@ -59,7 +59,6 @@ export function resolveApiBases(options: ResolveApiBasesOptions = {}): string[] 
   const currentPort = typeof window !== "undefined" ? window.location.port : "";
   const envBase = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
   const bases: string[] = [];
-  const includeCurrentOrigin = options.includeCurrentOrigin ?? true;
 
   const pushUnique = (value: string) => {
     const trimmed = trimBase(value);
@@ -75,19 +74,30 @@ export function resolveApiBases(options: ResolveApiBasesOptions = {}): string[] 
     }
   }
 
-  // 2. Current origin — SAME-ORIGIN, no CORS needed, works from any machine.
-  if (includeCurrentOrigin && currentOrigin) {
-    pushUnique(currentOrigin);
+  // 2. Dynamically discovered API port or cached API port from localStorage / window
+  let discoveredPort = typeof window !== "undefined" ? (window as any).DYNAMICAL_API_PORT : "";
+  if (!discoveredPort && typeof window !== "undefined") {
+    try {
+      discoveredPort = window.localStorage.getItem("pb_attendance_api_port") || "";
+    } catch {
+      // Ignore storage errors.
+    }
   }
 
-  // 3. Dynamically discovered API port (from /api-config.json)
-  if (typeof window !== "undefined" && (window as any).DYNAMICAL_API_PORT) {
-    pushUnique(`http://${currentHost}:${(window as any).DYNAMICAL_API_PORT}`);
+  // If running on default Web UI port 8001 and no discovered port yet, default candidate API port is 8081
+  if (!discoveredPort && (currentPort === "8001" || currentPort === "")) {
+    discoveredPort = "8081";
   }
 
-  // 4. Strict fallbacks only (no guessing)
-  for (const port of preferredPortsForCurrentOrigin(currentPort)) {
-    pushUnique(`http://${currentHost}:${port}`);
+  if (discoveredPort) {
+    pushUnique(`http://${currentHost}:${discoveredPort}`);
+  }
+
+  // 3. Current origin — same-origin fallback for single-port or proxy deployments
+  if (options.includeCurrentOrigin ?? true) {
+    if (currentOrigin) {
+      pushUnique(currentOrigin);
+    }
   }
 
   return bases;
@@ -95,17 +105,25 @@ export function resolveApiBases(options: ResolveApiBasesOptions = {}): string[] 
 
 /**
  * One-time background discovery of the API port from the current origin.
- * Sets window.DYNAMICAL_API_PORT for subsequent resolveApiBases calls.
+ * Sets window.DYNAMICAL_API_PORT and stores in localStorage for subsequent resolveApiBases calls.
  */
 if (typeof window !== "undefined") {
   (async () => {
     try {
       const resp = await fetch(`${window.location.origin}/api-config.json`, { cache: "no-store" });
       if (resp.ok) {
-        const config = await resp.json();
-        if (config && config.apiPort) {
-          (window as any).DYNAMICAL_API_PORT = config.apiPort;
-          console.log(`[API] Discovered backend port: ${config.apiPort}`);
+        const contentType = resp.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+          const config = await resp.json();
+          if (config && config.apiPort) {
+            (window as any).DYNAMICAL_API_PORT = config.apiPort;
+            try {
+              window.localStorage.setItem("pb_attendance_api_port", String(config.apiPort));
+            } catch {
+              // Ignore storage errors.
+            }
+            console.log(`[API] Discovered backend port: ${config.apiPort}`);
+          }
         }
       }
     } catch {

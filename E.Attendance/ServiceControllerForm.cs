@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Drawing.Drawing2D;
+using E.Attendance.Services;
 
 namespace E.Attendance;
 
@@ -21,8 +22,14 @@ internal sealed class ServiceControllerForm : Form
 
     private readonly PowerButton _powerBtn = new(BgPage);
     private readonly ServiceRow  _apiRow   = new(WebServiceManager.ApiWindowsServiceName);
-    private readonly StatusPill  _dbPill   = new("DB",    AccentGreen, AccentRed);
-    private readonly StatusPill  _pgPill   = new("PgSQL", AccentGreen, AccentRed);
+    private readonly ServiceRow  _webRow   = new(WebServiceManager.WebWindowsServiceName);
+    private readonly SingleOkRowCard _okSingleRowCard = new();
+    private readonly StatusPill  _dbPill   = new("API Port", AccentBlue, AccentRed);
+    private readonly StatusPill  _pgPill   = new("Status",   AccentGreen, AccentRed);
+
+    private TableLayoutPanel _rootLayout = null!;
+    private CardPanel _svcCard = null!;
+    private CardPanel _webSvcCard = null!;
 
     // Action buttons
     private readonly LightButton _btnDash      = new("⚡  Open Dashboard",    AccentBlue);
@@ -30,6 +37,7 @@ internal sealed class ServiceControllerForm : Form
     private readonly LightButton _btnPgRst     = new("↺   Restart PgSQL",    AccentBlue);
     private readonly LightButton _btnStop      = new("■   Stop All",         AccentRed);
     private readonly LightButton _btnInitDb    = new("🗄  Initialize DB",     AccentAmber);
+    private readonly LightButton _btnBackup    = new("💾  Restore Backup",  AccentBlue);
     private readonly LightButton _btnSvcAction = new("⬇  Install Services",  AccentGreen); // text changes
     private readonly LightButton _btnDbConfig  = new("🗃  Database Config",   AccentBlue);
 
@@ -46,8 +54,8 @@ internal sealed class ServiceControllerForm : Form
         _manager       = manager;
         Text           = "E-Attendance  —  Service Controller";
         StartPosition  = FormStartPosition.CenterScreen;
-        Size           = new Size(520, 544);
-        MinimumSize    = new Size(480, 524);
+        Size           = new Size(520, 640);
+        MinimumSize    = new Size(480, 620);
         BackColor      = BgPage;
         ForeColor      = TextHead;
         Font           = new Font("Segoe UI", 9.5F);
@@ -62,20 +70,23 @@ internal sealed class ServiceControllerForm : Form
 
     private void Build()
     {
-        // 10 rows, no DB stats row
-        var root = new TableLayoutPanel
+        // 12 rows, no DB stats row
+        _rootLayout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 10,
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 12,
             BackColor = BgPage, Padding = new Padding(12, 4, 12, 4)
         };
+        var root = _rootLayout;
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));  // header
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));   // separator
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 130)); // hero
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));  // cpu graph
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));  // service row
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));  // API service row (or single row when OK)
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));  // Web service row
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));  // row: dashboard | fix db
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));  // row: restart pg | stop all
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));  // row: initialize db (full)
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));  // row: backup / restore (full)
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));  // row: svc action | db config
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));  // port row
 
@@ -100,17 +111,23 @@ internal sealed class ServiceControllerForm : Form
         _cpuGraph.Dock = DockStyle.Fill;
         root.Controls.Add(_cpuGraph, 0, 3);
 
-        // Service status row
-        var svcCard = new CardPanel { Dock = DockStyle.Fill, BackColor = BgCard };
+        // Service status rows
+        _svcCard = new CardPanel { Dock = DockStyle.Fill, BackColor = BgCard };
         _apiRow.Dock = DockStyle.Fill; _apiRow.Margin = new Padding(8, 2, 8, 2);
-        svcCard.Controls.Add(_apiRow);
-        root.Controls.Add(svcCard, 0, 4);
+        _svcCard.Controls.Add(_apiRow);
+        root.Controls.Add(_svcCard, 0, 4);
+
+        _webSvcCard = new CardPanel { Dock = DockStyle.Fill, BackColor = BgCard };
+        _webRow.Dock = DockStyle.Fill; _webRow.Margin = new Padding(8, 2, 8, 2);
+        _webSvcCard.Controls.Add(_webRow);
+        root.Controls.Add(_webSvcCard, 0, 5);
 
         // Button rows — all equal 2-button layout
-        root.Controls.Add(MakeRow2(_btnDash, _btnFixDb), 0, 5);
-        root.Controls.Add(MakeRow2(_btnPgRst, _btnStop), 0, 6);
-        root.Controls.Add(MakeRowFull(_btnInitDb), 0, 7);
-        root.Controls.Add(MakeRow2(_btnSvcAction, _btnDbConfig), 0, 8);  // always 2 equal buttons
+        root.Controls.Add(MakeRow2(_btnDash, _btnFixDb), 0, 6);
+        root.Controls.Add(MakeRow2(_btnPgRst, _btnStop), 0, 7);
+        root.Controls.Add(MakeRowFull(_btnInitDb), 0, 8);
+        root.Controls.Add(MakeRowFull(_btnBackup), 0, 9);
+        root.Controls.Add(MakeRow2(_btnSvcAction, _btnDbConfig), 0, 10);  // always 2 equal buttons
 
         // Port row
         var pr = new FlowLayoutPanel
@@ -127,7 +144,7 @@ internal sealed class ServiceControllerForm : Form
         _btnSave.Height = 32; _btnSave.Width = 90; _btnSave.Margin = new Padding(10, 4, 0, 0);
         pr.Controls.Add(_btnSave);
         Resize += (_, _) => _btnSave.Width = Math.Max(ClientSize.Width - _btnSave.Left - 16, 90);
-        root.Controls.Add(pr, 0, 9);
+        root.Controls.Add(pr, 0, 11);
 
         Controls.Add(root);
     }
@@ -211,11 +228,25 @@ internal sealed class ServiceControllerForm : Form
                 {
                     EnsurePostgreSqlBeforeApiStart();
                     _manager.StartWindowsService(WebServiceManager.ApiWindowsServiceName);
+                    _manager.StartWindowsService(WebServiceManager.WebWindowsServiceName);
                 });
             }
         });
         _apiRow.OnStop += async () => await RunBusy(() =>
-            Task.Run(() => _manager.StopWindowsService(WebServiceManager.ApiWindowsServiceName)));
+            Task.Run(() =>
+            {
+                _manager.StopWindowsService(WebServiceManager.WebWindowsServiceName);
+                _manager.StopWindowsService(WebServiceManager.ApiWindowsServiceName);
+            }));
+        _webRow.OnStart += async () => await RunBusy(async () =>
+        {
+            if (!_winSvcInstalled)
+                await StartAllServicesAsync();
+            else
+                await Task.Run(() => _manager.StartWindowsService(WebServiceManager.WebWindowsServiceName));
+        });
+        _webRow.OnStop += async () => await RunBusy(() =>
+            Task.Run(() => _manager.StopWindowsService(WebServiceManager.WebWindowsServiceName)));
 
         // Other buttons
         _btnDash.Click   += (_, _) => Safe(() => _manager.OpenDashboard());
@@ -227,6 +258,7 @@ internal sealed class ServiceControllerForm : Form
         _btnPgRst.Click  += async (_, _) => await RunBusy(() => Task.Run(() => _manager.RestartPostgreSqlService()));
         _btnStop.Click   += async (_, _) => await RunBusy(() => Task.Run(() => _manager.NuclearStop()));
         _btnInitDb.Click += async (_, _) => await InitDbAsync();
+        _btnBackup.Click += async (_, _) => await RestoreBackupAsync();
 
         // _btnSvcAction: text/action toggles based on whether services are installed
         _btnSvcAction.Click += async (_, _) =>
@@ -292,7 +324,10 @@ internal sealed class ServiceControllerForm : Form
 
             // 4. Start API service (Windows service or direct process)
             if (_winSvcInstalled)
+            {
                 _manager.StartWindowsService(WebServiceManager.ApiWindowsServiceName);
+                _manager.StartWindowsService(WebServiceManager.WebWindowsServiceName);
+            }
             else
                 _manager.StartService();
         });
@@ -332,20 +367,61 @@ internal sealed class ServiceControllerForm : Form
             var s = await Task.Run(() => _manager.GetState());
             _winSvcInstalled = s.ApiWinSvcInstalled;
             var apiWinRunning = s.ApiWinSvcInstalled && s.ApiWinSvcStatus.Equals("Running", StringComparison.OrdinalIgnoreCase);
-            _isRunning = s.IsWebReachable || apiWinRunning;
+            var webWinStatus = _manager.GetWindowsServiceStatus(WebServiceManager.WebWindowsServiceName);
+            var webWinRunning = webWinStatus.Equals("Running", StringComparison.OrdinalIgnoreCase);
+            _isRunning = s.IsWebReachable || s.IsFrontendReachable || apiWinRunning || webWinRunning;
             var pgOn = s.PostgresStatus.Contains("running", StringComparison.OrdinalIgnoreCase)
                     || s.PostgresStatus.Contains("connected", StringComparison.OrdinalIgnoreCase);
-            var dbOn = s.PostgresStatus.Contains("Connected", StringComparison.OrdinalIgnoreCase);
+
+            var apiStatus = s.ApiWinSvcInstalled ? s.ApiWinSvcStatus : (s.IsWebReachable ? "Running" : "Stopped");
+            var webStatus = _manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName) ? webWinStatus : (s.IsFrontendReachable ? "Running" : "Stopped");
+            var apiRunning = apiStatus.Equals("Running", StringComparison.OrdinalIgnoreCase);
+            var webRunning = webStatus.Equals("Running", StringComparison.OrdinalIgnoreCase);
+            var allOk = apiRunning && webRunning && pgOn;
 
             _powerBtn.SetState(_isRunning, _busy);
             if (_cpuCounter != null) try { _cpuGraph.AddValue(_cpuCounter.NextValue()); } catch { }
 
             _apiRow.SetState(
                 s.ApiWinSvcInstalled,
-                s.ApiWinSvcInstalled ? s.ApiWinSvcStatus : (s.IsWebReachable ? "Running" : "Stopped"),
+                apiStatus,
                 s.Port);
-            _dbPill.SetState(dbOn, "");
-            _pgPill.SetState(pgOn, "");
+            _webRow.SetState(
+                _manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName),
+                webStatus,
+                s.FrontendPort);
+
+            // Left pill: API Port, Right pill: Status OK / Issue
+            _dbPill.SetState(s.IsWebReachable, $" :{s.Port}");
+            _pgPill.SetState(allOk, allOk ? " OK" : " Check");
+
+            // Service rows layout: single combined row when all OK, 2 rows when not OK
+            if (allOk)
+            {
+                _okSingleRowCard.SetState(apiStatus, s.Port, webStatus, s.FrontendPort);
+                if (!_svcCard.Controls.Contains(_okSingleRowCard))
+                {
+                    _svcCard.Controls.Clear();
+                    _svcCard.Controls.Add(_okSingleRowCard);
+                }
+                _webSvcCard.Visible = false;
+                _rootLayout.RowStyles[5].Height = 0;
+            }
+            else
+            {
+                if (!_svcCard.Controls.Contains(_apiRow))
+                {
+                    _svcCard.Controls.Clear();
+                    _svcCard.Controls.Add(_apiRow);
+                }
+                if (!_webSvcCard.Controls.Contains(_webRow))
+                {
+                    _webSvcCard.Controls.Clear();
+                    _webSvcCard.Controls.Add(_webRow);
+                }
+                _webSvcCard.Visible = true;
+                _rootLayout.RowStyles[5].Height = 48;
+            }
 
             // Toggle Install / Fix Services button text based on installed state
             _btnSvcAction.UpdateText(_winSvcInstalled ? "🔧  Fix Services" : "⬇  Install Services");
@@ -366,9 +442,10 @@ internal sealed class ServiceControllerForm : Form
         if (_busy) return;
         _busy = true;
         _powerBtn.SetState(_isRunning, true);
-        var buttons = new Control[] { _btnDash, _btnFixDb, _btnPgRst, _btnStop, _btnInitDb, _btnSvcAction, _btnDbConfig, _btnSave, _apiPort, _webPort };
+        var buttons = new Control[] { _btnDash, _btnFixDb, _btnPgRst, _btnStop, _btnInitDb, _btnBackup, _btnSvcAction, _btnDbConfig, _btnSave, _apiPort, _webPort };
         foreach (var b in buttons) b.Enabled = false;
         _apiRow.Enabled = false;
+        _webRow.Enabled = false;
         try
         {
             await action();
@@ -382,6 +459,7 @@ internal sealed class ServiceControllerForm : Form
             _busy = false;
             foreach (var b in buttons) b.Enabled = true;
             _apiRow.Enabled = true;
+            _webRow.Enabled = true;
             await RefreshAsync();
         }
     }
@@ -402,6 +480,44 @@ internal sealed class ServiceControllerForm : Form
         {
             var result = await Task.Run(() => _manager.InitializePostgreSqlDatabase(pw));
             MessageBox.Show(result, "Database Initialized", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        });
+    }
+
+    // Restore is deliberately only reachable here (not from the web dashboard) — it's a
+    // destructive operation that needs this app's OS-level ability to stop/restart the backend
+    // service around the replay. Backup scheduling/manual-run/history lives in Settings > Backup
+    // on the web dashboard instead.
+    private async Task RestoreBackupAsync()
+    {
+        var defaultDir = System.IO.Directory.Exists(BackupService.ResolveDefaultBackupLocation())
+            ? BackupService.ResolveDefaultBackupLocation()
+            : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+        using var openDialog = new OpenFileDialog
+        {
+            Title = "Select a backup file to restore",
+            InitialDirectory = defaultDir,
+            Filter = "Backup files (*.psql;*.sql)|*.psql;*.sql|All files (*.*)|*.*",
+            CheckFileExists = true,
+        };
+        if (openDialog.ShowDialog(this) != DialogResult.OK) return;
+        var backupFilePath = openDialog.FileName;
+
+        if (MessageBox.Show(
+            "⚠  This will REPLACE ALL current data (employees, devices, attendance, settings, license) " +
+            $"with the contents of:\n\n{backupFilePath}\n\n" +
+            "A safety backup of the current database will be taken automatically before restoring, " +
+            "in case this turns out to be a mistake.\n\nAre you sure?",
+            "Restore Backup", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2)
+            != DialogResult.Yes) return;
+
+        var pw = PromptPassword("PostgreSQL Admin Password", "Enter password for the 'postgres' admin user to confirm this restore:");
+        if (string.IsNullOrWhiteSpace(pw)) return;
+
+        await RunBusy(async () =>
+        {
+            var result = await Task.Run(() => _manager.RestoreDatabaseFromBackup(pw, backupFilePath));
+            MessageBox.Show(result, "Database Restored", MessageBoxButtons.OK, MessageBoxIcon.Information);
         });
     }
 
@@ -785,6 +901,61 @@ internal sealed class CardPanel : Panel
         using (var b = new SolidBrush(BackColor)) g.FillRounded(b, ClientRectangle, 8);
         using (var p = new Pen(Color.FromArgb(220, 225, 235), 1f))
             g.DrawRounded(p, new Rectangle(0, 0, Width - 1, Height - 1), 8);
+    }
+}
+
+internal sealed class SingleOkRowCard : Panel
+{
+    private string _apiStatus = "Running";
+    private int _apiPort = WebServiceManager.ApiDefaultPort;
+    private string _webStatus = "Running";
+    private int _webPort = WebServiceManager.FrontendDefaultPort;
+
+    public SingleOkRowCard()
+    {
+        Dock = DockStyle.Fill;
+        BackColor = Color.White;
+        DoubleBuffered = true;
+    }
+
+    public void SetState(string apiStatus, int apiPort, string webStatus, int webPort)
+    {
+        _apiStatus = apiStatus;
+        _apiPort = apiPort;
+        _webStatus = webStatus;
+        _webPort = webPort;
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+        var bg = Color.FromArgb(240, 253, 244);
+        var dot = Color.FromArgb(22, 163, 74);
+
+        using (var b = new SolidBrush(bg)) g.FillRounded(b, ClientRectangle, 7);
+        using (var p = new Pen(Color.FromArgb(187, 247, 208), 1f)) g.DrawRounded(p, new Rectangle(0, 0, Width - 1, Height - 1), 7);
+
+        var midX = Width / 2;
+
+        // API Status (Left Half)
+        using (var db = new SolidBrush(dot)) g.FillEllipse(db, 10, 14, 8, 8);
+        using var fontBold = new Font("Segoe UI", 8F, FontStyle.Bold);
+        using var fontSub  = new Font("Segoe UI", 7F);
+        using var textHead = new SolidBrush(Color.FromArgb(31, 41, 55));
+        using var textMuted= new SolidBrush(Color.FromArgb(107, 114, 128));
+
+        g.DrawString("API Service", fontBold, textHead, 24, 4);
+        g.DrawString($"{_apiStatus}  :{_apiPort}", fontSub, textMuted, 24, 18);
+
+        // Separator line
+        using (var p = new Pen(Color.FromArgb(200, 230, 210), 1f))
+            g.DrawLine(p, midX, 6, midX, Height - 6);
+
+        // Web Status (Right Half)
+        using (var db = new SolidBrush(dot)) g.FillEllipse(db, midX + 10, 14, 8, 8);
+        g.DrawString("Web UI Service", fontBold, textHead, midX + 24, 4);
+        g.DrawString($"{_webStatus}  :{_webPort}", fontSub, textMuted, midX + 24, 18);
     }
 }
 

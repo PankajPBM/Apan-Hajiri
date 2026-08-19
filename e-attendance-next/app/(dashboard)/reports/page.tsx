@@ -60,7 +60,7 @@ type ReportType =
   | "late"
   | "absent"
   | "overtime";
-type StatusFilter = "all" | "present" | "late" | "absent";
+type StatusFilter = "all" | "present" | "late" | "onleave" | "absent";
 type ShiftFilter = string;
 
 type EmployeeRow = {
@@ -195,6 +195,8 @@ const DEFAULT_UNCHECKED_COLUMNS = new Set([
 ]);
 
 const PREVIEW_PAGE_SIZE = 50;
+const REPORT_TRANSACTION_LIMIT = 12000;
+const REPORT_MAX_DAYS = 740;
 
 const fmtTime = (d: Date | null) =>
   d
@@ -391,7 +393,7 @@ function dateRange(from: string, to: string): string[] {
   const e = a <= b ? b : a;
   const out: string[] = [];
   const cur = new Date(s);
-  while (cur <= e && out.length < 740) {
+  while (cur <= e && out.length < REPORT_MAX_DAYS) {
     out.push(toInputDate(cur));
     cur.setDate(cur.getDate() + 1);
   }
@@ -685,6 +687,7 @@ export default function ReportsPage() {
   const [generatedAt, setGeneratedAt] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [monthlyPreviewEmployeeIndex, setMonthlyPreviewEmployeeIndex] = useState(0);
   const [previewPage, setPreviewPage] = useState(1);
   const [sortField, setSortField] = useState<string>("");
@@ -733,14 +736,56 @@ export default function ReportsPage() {
     if (!exists) setShift("assigned");
   }, [shift, shiftDefinitions]);
 
+  const [allDepartments, setAllDepartments] = useState<string[]>([]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [empData, deptData] = await Promise.all([
+          requestJson<unknown>("/api/personnel/employees?status=active").catch(() => []),
+          requestJson<unknown>("/api/personnel/departments").catch(() => []),
+        ]);
+        const unwrap = <T,>(payload: unknown): T[] => {
+          if (Array.isArray(payload)) return payload as T[];
+          const items = (payload as { items?: unknown })?.items;
+          return Array.isArray(items) ? (items as T[]) : [];
+        };
+        const empRows = unwrap<PersonnelEmployeeApiRow>(empData)
+          .map((row) => {
+            const employeeCode = (row.employeeCode || "").trim();
+            if (!employeeCode) return null;
+            return {
+              id: (row.id || employeeCode).trim(),
+              employeeCode,
+              fullName: (row.fullName || employeeCode).trim(),
+              department: normalizeDepartmentName(row.department),
+              isActive: row.isActive !== false,
+            } satisfies EmployeeRow;
+          })
+          .filter((x): x is EmployeeRow => x !== null);
+        if (empRows.length > 0) setEmployees(empRows);
+
+        const deptRows = unwrap<{ name?: string; code?: string }>(deptData)
+          .map((d) => normalizeDepartmentName(d.name || d.code || ""))
+          .filter((n) => n.length > 0);
+        if (deptRows.length > 0) setAllDepartments(deptRows);
+      } catch {
+        // Fall back to employee department list if personnel endpoints fail
+      }
+    })();
+  }, []);
+
   const empById = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
 
   const deptOptions = useMemo(
     () =>
       Array.from(
-        new Set(employees.map((e) => e.department).filter((x) => x && x.length > 0)),
+        new Set([
+          ...allDepartments,
+          ...employees.map((e) => e.department).filter((x) => x && x.length > 0),
+        ]),
       ).sort((a, b) => a.localeCompare(b)),
-    [employees],
+    [allDepartments, employees],
   );
   const days = useMemo(() => dateRange(fromDate, toDate), [fromDate, toDate]);
   const searchedTransactionCodes = useMemo(() => {
@@ -773,19 +818,34 @@ export default function ReportsPage() {
 
   const filteredTransactions = useMemo(() => {
     const token = search.trim().toLowerCase();
-    const selectedCode =
-      employeeId !== "all" ? empById.get(employeeId)?.employeeCode ?? "" : "";
+    const selectedEmp = employeeId !== "all"
+      ? (empById.get(employeeId) ?? employees.find(e => e.id === employeeId || e.employeeCode === employeeId))
+      : null;
+    const selectedCode = selectedEmp?.employeeCode?.trim().toLowerCase() ?? "";
 
     return transactions.filter((r) => {
-      if (department !== "all" && r.employeeDepartment !== department) return false;
-      if (selectedCode && r.employeeCode !== selectedCode) return false;
+      const emp = empById.get(r.employeeCode) || employees.find(e => e.employeeCode === r.employeeCode);
+      const effectiveDept = (r.employeeDepartment?.trim() || emp?.department?.trim() || "").toLowerCase();
+      const effectiveEmpCode = (r.employeeCode || "").trim().toLowerCase();
+
+      if (department !== "all" && effectiveDept && effectiveDept !== department.trim().toLowerCase()) {
+        return false;
+      }
+      if (selectedCode && effectiveEmpCode !== selectedCode) {
+        return false;
+      }
       if (!token) return true;
-      return [r.employeeCode, r.employeeName, r.employeeDepartment, r.deviceSerialNumber || ""]
-        .join(" ")
-        .toLowerCase()
-        .includes(token);
+      const haystack = [
+        r.employeeCode,
+        r.employeeName || emp?.fullName || "",
+        effectiveDept,
+        r.deviceSerialNumber || "",
+        r.verifyMode || "",
+      ].join(" ").toLowerCase();
+
+      return haystack.includes(token);
     });
-  }, [transactions, search, department, employeeId, empById]);
+  }, [transactions, search, department, employeeId, empById, employees]);
 
   const dailyRows = useMemo(() => {
     const fallbackShift =
@@ -1018,7 +1078,7 @@ export default function ReportsPage() {
           const overtimeThreshold =
             assignedSchedule.standardMinutes + Math.max(0, segmentShift.overtimeAfterMinutes);
           const segmentOvertime =
-            segmentShift.enableOvertime && workedMinutes > overtimeThreshold
+            shiftCalendar.overtimeEnabled && segmentShift.enableOvertime && workedMinutes > overtimeThreshold
               ? workedMinutes - overtimeThreshold
               : 0;
           overtimeMinutesTotal += segmentOvertime;
@@ -1032,7 +1092,11 @@ export default function ReportsPage() {
           }
         }
 
-        if (weeklyOff && anyPunch && shiftCalendar.weeklyOffWorkAsOvertime) {
+        if (shiftCalendar.overtimeEnabled && weeklyOff && anyPunch && shiftCalendar.weeklyOffWorkAsOvertime) {
+          overtimeMinutesTotal = Math.max(overtimeMinutesTotal, workedMinutesTotal);
+        }
+
+        if (shiftCalendar.overtimeEnabled && holiday && anyPunch && shiftCalendar.holidayWorkAsOvertime) {
           overtimeMinutesTotal = Math.max(overtimeMinutesTotal, workedMinutesTotal);
         }
 
@@ -1108,7 +1172,7 @@ export default function ReportsPage() {
     }
 
     if (status === "all") return out;
-    const wanted = status === "present" ? "Present" : status === "late" ? "Late" : (status === "onleave" ? "On Leave" : "Absent");
+    const wanted: DailyRow["status"] = status === "present" ? "Present" : status === "late" ? "Late" : (status === "onleave" ? "On Leave" : "Absent");
     return out.filter((r) => {
       if (r.status !== (wanted as any)) return false;
       if (wanted === "Absent") return !r.exemptAbsent;
@@ -1550,14 +1614,19 @@ export default function ReportsPage() {
   const generateReport = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setWarning(null);
     setPreviewPage(1);
     try {
+      if (days.length >= REPORT_MAX_DAYS) {
+        setWarning(`Date range is limited to ${REPORT_MAX_DAYS} days. Shorten the range for complete long-period reports.`);
+      }
+
       const requestTo = new Date(`${toDate}T00:00:00`);
       requestTo.setDate(requestTo.getDate() + 1);
       const transactionQuery = new URLSearchParams({
         from: fromDate,
         to: toInputDate(requestTo),
-        take: "12000",
+        take: String(REPORT_TRANSACTION_LIMIT),
         usePunchTime: "true",
         lite: "true",
         // Reports count only approved punches; pending QR/manual requests appear only after
@@ -1566,14 +1635,20 @@ export default function ReportsPage() {
       });
       const searchToken = search.trim();
       if (searchToken) transactionQuery.set("search", searchToken);
+      if (department !== "all") transactionQuery.set("department", department);
+      if (employeeId !== "all") {
+        const emp = empById.get(employeeId) ?? employees.find(e => e.id === employeeId || e.employeeCode === employeeId);
+        if (emp?.employeeCode) transactionQuery.set("employeeCode", emp.employeeCode);
+      }
 
-      const [tx, employeePayload, holidayPayload, leavePayload] = await Promise.all([
+      const [tx, employeePayload, holidayPayload, leavePayload, deptPayload] = await Promise.all([
         requestJson<unknown>(`/api/transactions?${transactionQuery.toString()}`),
         requestJson<unknown>("/api/personnel/employees?status=active"),
         requestJson<unknown>("/api/personnel/holidays").catch(() => []),
         // Leave data is optional for reports; don't let a leave-endpoint failure break the
         // whole report (the EF /api/leave join can error on some schemas).
         requestJson<unknown>(`/api/leave?from=${fromDate}&to=${toDate}&status=approved`).catch(() => []),
+        requestJson<unknown>("/api/personnel/departments").catch(() => []),
       ]);
 
       // Endpoints may return a bare array or a { items: [...] } wrapper.
@@ -1585,8 +1660,20 @@ export default function ReportsPage() {
 
       const txRows = unwrap<TxRow>(tx);
       setTransactions(txRows);
+      if (txRows.length >= REPORT_TRANSACTION_LIMIT) {
+        setWarning((current) =>
+          current
+            ? `${current} Also, only the latest ${REPORT_TRANSACTION_LIMIT.toLocaleString()} punches were loaded; narrow filters for exact totals.`
+            : `Only the latest ${REPORT_TRANSACTION_LIMIT.toLocaleString()} punches were loaded; narrow filters for exact totals.`,
+        );
+      }
       const leaveRows = unwrap<any>(leavePayload);
       setLeaves(leaveRows);
+
+      const deptRows = unwrap<{ name?: string; code?: string }>(deptPayload)
+        .map((d) => normalizeDepartmentName(d.name || d.code || ""))
+        .filter((n) => n.length > 0);
+      if (deptRows.length > 0) setAllDepartments(deptRows);
       const employeeRows = unwrap<PersonnelEmployeeApiRow>(employeePayload)
         .map((row) => {
           const employeeCode = (row.employeeCode || "").trim();
@@ -1623,12 +1710,13 @@ export default function ReportsPage() {
       setGeneratedAt(new Date());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate report.");
+      setWarning(null);
       setTransactions([]);
       setEmployees([]);
     } finally {
       setLoading(false);
     }
-  }, [fromDate, toDate, search]);
+  }, [days.length, department, employeeId, employees, empById, fromDate, search, toDate]);
 
   useEffect(() => {
     void generateReport();
@@ -2100,6 +2188,12 @@ export default function ReportsPage() {
           {error ? (
             <div className="rounded-lg border border-[#f2c6c6] bg-[#fff0f0] px-3 py-2 text-sm text-[#8d2f2f]">
               {error}
+            </div>
+          ) : null}
+
+          {warning ? (
+            <div className="rounded-lg border border-[#f0d18a] bg-[#fff8e6] px-3 py-2 text-sm text-[#7a5415]">
+              {warning}
             </div>
           ) : null}
 

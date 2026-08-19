@@ -118,7 +118,7 @@ const quickActions = [
   { label: "Add Employee", href: "/employees", icon: UserPlus },
   { label: "Sync Devices", href: "/devices", icon: RefreshCw },
   { label: "Generate Report", href: "/reports", icon: FileText },
-  { label: "Download Attendance", href: "/attendance", icon: Download },
+  { label: "Download Attendance", href: "/transactions", icon: Download },
   { label: "Leaves & Holiday", href: "/leaves", icon: Umbrella },
   { label: "Add Shift", href: "/shift", icon: Clock3 },
 ] as const;
@@ -128,7 +128,7 @@ const suggestedActions = [
   { label: "Apply Leave", onClick: "leave-terminal", icon: QrCode },
   { label: "Alerts", href: "/notifications", icon: BellRing },
   { label: "QR Check-in", onClick: "qr", icon: QrCode },
-  { label: "Export Logs", href: "/attendance", icon: FileOutput },
+  { label: "Export Logs", href: "/transactions", icon: FileOutput },
 ] as const;
 
 function ActionModal({ type, onClose }: { type: "qr" | "leave", onClose: () => void }) {
@@ -304,7 +304,15 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
       if (response.status === 503) {
         try { await fetch(`${base}/api/server/start`, { method: "POST", cache: "no-store" }); response = await call(); } catch { /* ignore */ }
       }
-      if (response.ok) { preferredApiBase = base; return (await response.json()) as T; }
+      if (response.ok) {
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/json")) {
+          lastError = `Expected JSON response, received ${contentType || "HTML"}`;
+          continue;
+        }
+        preferredApiBase = base;
+        return (await response.json()) as T;
+      }
       lastError = (await response.text()) || `Request failed (${response.status})`;
     } catch (error) { lastError = error instanceof Error ? error.message : lastError; }
   }

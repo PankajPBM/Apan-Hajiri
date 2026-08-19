@@ -127,7 +127,7 @@ function buildLogAlert(log: AppLogItem, index: number): AlertItem | null {
     level: normalizeLevel(log.level || ""),
     category: normalizeCategory(log.source || ""),
     timestampUtc: log.timestampUtc,
-    href: source === "attendance" ? "/attendance" : source === "device" || source === "deviceevent" ? "/devices" : "/logs",
+    href: source === "attendance" ? "/transactions" : source === "device" || source === "deviceevent" ? "/devices" : "/logs",
   };
 }
 

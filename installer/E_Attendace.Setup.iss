@@ -1,6 +1,6 @@
 #define MyAppId "{{AF12B76A-7F83-4F7F-8CA6-8C32A67D39C1}"
 #define MyAppName "E-Attendance"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.11"
 #define MyAppPublisher "PB Tech Zone"
 #define MyAppPublisherPhone "+9779814891277"
 
@@ -91,7 +91,7 @@ DefaultDirName={autopf}\E-Attendance
 DefaultGroupName=E-Attendance
 DisableProgramGroupPage=yes
 OutputDir={#OutputDirPath}
-OutputBaseFilename=E-Attendance_{#BuildMode}_Setup
+OutputBaseFilename=E-Attendance_{#MyAppVersion}_{#BuildMode}_Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

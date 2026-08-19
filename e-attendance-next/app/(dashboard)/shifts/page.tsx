@@ -8,6 +8,7 @@ import { resolveApiBases } from "@/lib/api-bases";
 import {
   WEEKDAY_LABELS,
   defaultShiftCalendarSettings,
+  defaultShiftDefinitions,
   loadShiftConfigFromApi,
   parseTimeToMinutes,
   readShiftConfigSnapshot,
@@ -264,6 +265,15 @@ function toAmPmLabel(value: string): string {
   return hour >= 12 ? "PM" : "AM";
 }
 
+function formatOtMinutes(value: number): string {
+  const minutes = Math.max(0, Math.round(value || 0));
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours > 0 && rest > 0) return `${hours}h ${rest}m`;
+  if (hours > 0) return `${hours}h`;
+  return `${rest}m`;
+}
+
 function TimeField({
   label,
   value,
@@ -443,13 +453,17 @@ export default function ShiftsPage() {
       : (isTimetableRoute || isAccessTimePeriod)
         ? "timetable"
         : isShiftsRoute
-          ? (queryTab === "break" ? "break" : queryTab === "timetable" ? "timetable" : "setup")
+          ? (queryTab === "break" ? "break" : queryTab === "overtime" ? "overtime" : queryTab === "timetable" ? "timetable" : "setup")
           : null;
-  const initialTab = routeTab ?? (queryTab === "timetable" ? "timetable" : queryTab === "break" ? "break" : "setup");
-  const [tab, setTab] = useState<"setup" | "timetable" | "break">(initialTab);
+  const initialTab = routeTab ?? (queryTab === "timetable" ? "timetable" : queryTab === "overtime" ? "overtime" : queryTab === "break" ? "break" : "setup");
+  const [tab, setTab] = useState<"setup" | "timetable" | "overtime" | "break">(initialTab);
   const [weekStart, setWeekStart] = useState(sundayOfWeek(now));
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [shiftPlanSaving, setShiftPlanSaving] = useState(false);
+  const [timetableSaving, setTimetableSaving] = useState(false);
+  const [overtimeSaving, setOvertimeSaving] = useState(false);
+  const [breakSaving, setBreakSaving] = useState(false);
 
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [departments, setDepartments] = useState<DepartmentRow[]>([]);
@@ -571,7 +585,47 @@ export default function ShiftsPage() {
       .sort((a, b) => a.dayOfMonth - b.dayOfMonth)
       .slice(0, 10)
       .map((x) => `Day ${x.dayOfMonth}: ${timetableById.get(x.timetableId) ?? "Not set"}`)
-      .join(" | ");
+  };
+
+  const otShiftRows = shifts.length ? shifts : defaultShiftDefinitions();
+
+  const updateShiftOvertime = (shiftId: string, patch: Partial<Pick<ShiftDefinition, "enableOvertime" | "overtimeAfterMinutes">>) => {
+    setShifts((prev) => {
+      const source = prev.length ? prev : defaultShiftDefinitions();
+      return source.map((shift) => (shift.id === shiftId ? { ...shift, ...patch } : shift));
+    });
+  };
+
+  const saveOvertimeSettings = async () => {
+    if (overtimeSaving) return;
+    setErr(null);
+    setMsg(null);
+
+    const normalizedShifts = otShiftRows.map((shift) => ({
+      ...shift,
+      enableOvertime: Boolean(shift.enableOvertime),
+      overtimeAfterMinutes: Math.max(0, Math.round(shift.overtimeAfterMinutes || 0)),
+    }));
+    const normalizedCalendar: ShiftCalendarSettings = {
+      ...calendar,
+      overtimeEnabled: Boolean(calendar.overtimeEnabled),
+      weeklyOffWorkAsOvertime: Boolean(calendar.weeklyOffWorkAsOvertime),
+      holidayWorkAsOvertime: Boolean(calendar.holidayWorkAsOvertime),
+    };
+
+    setOvertimeSaving(true);
+    try {
+      const saved = await saveShiftConfigToApi({
+        shiftDefinitions: normalizedShifts,
+        calendar: normalizedCalendar,
+      });
+      applyShiftConfig(saved);
+      setMsg("OT settings saved.");
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Failed to save OT settings.");
+    } finally {
+      setOvertimeSaving(false);
+    }
   };
 
   const applyShiftConfig = (config: ShiftConfigSnapshot) => {
@@ -596,21 +650,7 @@ export default function ShiftsPage() {
       ...nextTimetableForm,
       days: nextTimetableForm.days.map((day) => ({ ...day, breakTimeId: firstBreak, breakTimeIds: firstBreak ? [firstBreak] : [] })),
     });
-    const firstBreakProfile = config.breakDefinitions[0];
-    if (firstBreakProfile) {
-      setBreakForm({
-        id: firstBreakProfile.id,
-        name: firstBreakProfile.name,
-        startTime: firstBreakProfile.startTime,
-        endTime: firstBreakProfile.endTime,
-        durationMinutes: firstBreakProfile.durationMinutes,
-        calculateType: firstBreakProfile.calculateType ?? "auto_deduct",
-        minimumBreakMinutes: firstBreakProfile.minimumBreakMinutes ?? 0,
-        isActive: firstBreakProfile.isActive,
-      });
-    } else {
-      setBreakForm(breakBlank());
-    }
+    setBreakForm(breakBlank());
 
     setShiftGroupForm(shiftGroupBlank());
     setShiftAssignmentForm((prev) => ({ ...shiftAssignmentBlank(today), shiftPlanId: prev.shiftPlanId || config.shiftPlans[0]?.id || "" }));
@@ -626,6 +666,10 @@ export default function ShiftsPage() {
       setTab("timetable");
       return;
     }
+    if (tabFromQuery === "overtime") {
+      setTab("overtime");
+      return;
+    }
     if (tabFromQuery === "break") {
       setTab("break");
       return;
@@ -638,6 +682,7 @@ export default function ShiftsPage() {
     if (isShiftRoute || isTimetableRoute || isShiftsRoute) return;
     const q = new URLSearchParams(window.location.search);
     if (tab === "timetable") q.set("tab", "timetable");
+    else if (tab === "overtime") q.set("tab", "overtime");
     else if (tab === "break") q.set("tab", "break");
     else q.set("tab", "setup");
     const next = q.toString() ? `${window.location.pathname}?${q.toString()}` : window.location.pathname;
@@ -653,6 +698,7 @@ export default function ShiftsPage() {
     const targetMap: Record<string, string> = {
       shift: "shift-section",
       timetable: "timetable-section",
+      overtime: "overtime-section",
       break: "break-section",
     };
     const targetId = targetMap[section];
@@ -722,6 +768,7 @@ export default function ShiftsPage() {
 
   const showTimetableTab = true;
   const showShiftTab = true;
+  const showOvertimeTab = true;
   const showBreakTab = true;
 
   return (
@@ -752,11 +799,23 @@ export default function ShiftsPage() {
               type="button"
               onClick={() => {
                 setTab("timetable");
-                router.replace("/timetable");
+                router.replace("/shifts?tab=timetable");
               }}
               className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "timetable" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
             >
               <CalendarDays className="h-4 w-4" />Time Table
+            </button>
+          ) : null}
+          {showOvertimeTab ? (
+            <button
+              type="button"
+              onClick={() => {
+                setTab("overtime");
+                router.replace("/shifts?tab=overtime");
+              }}
+              className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "overtime" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
+            >
+              <CalendarClock className="h-4 w-4" />OT
             </button>
           ) : null}
           {showShiftTab ? (
@@ -768,7 +827,7 @@ export default function ShiftsPage() {
               }}
               className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "setup" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
             >
-              <Clock3 className="h-4 w-4" />Shift
+              <Clock3 className="h-4 w-4" />Shifts
             </button>
           ) : null}
         </div>
@@ -1234,6 +1293,107 @@ export default function ShiftsPage() {
             </div>
             </div>
 
+          </div>
+        ) : tab === "overtime" ? (
+          <div id="overtime-section" className="space-y-4">
+            <div className="rounded-xl border border-[--border] bg-white p-4">
+              <div className="mb-4">
+                <div className="text-base font-semibold text-[#1f4f79]">OT Setup</div>
+                <p className="text-xs text-[--muted-foreground]">Select which shifts allow overtime and when OT should start after the normal working duration.</p>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="flex items-center gap-2 rounded-lg border border-[--border] bg-[#f8fbff] px-3 py-2 text-sm font-medium text-[#1f4f79]">
+                  <input
+                    type="checkbox"
+                    checked={calendar.overtimeEnabled}
+                    onChange={(e) => setCalendar((p) => ({ ...p, overtimeEnabled: e.target.checked }))}
+                  />
+                  Enable OT in reports
+                </label>
+                <label className="flex items-center gap-2 rounded-lg border border-[--border] bg-[#f8fbff] px-3 py-2 text-sm font-medium text-[#1f4f79]">
+                  <input
+                    type="checkbox"
+                    checked={calendar.weeklyOffWorkAsOvertime}
+                    onChange={(e) => setCalendar((p) => ({ ...p, weeklyOffWorkAsOvertime: e.target.checked }))}
+                  />
+                  Weekly off work as OT
+                </label>
+                <label className="flex items-center gap-2 rounded-lg border border-[--border] bg-[#f8fbff] px-3 py-2 text-sm font-medium text-[#1f4f79]">
+                  <input
+                    type="checkbox"
+                    checked={calendar.holidayWorkAsOvertime}
+                    onChange={(e) => setCalendar((p) => ({ ...p, holidayWorkAsOvertime: e.target.checked }))}
+                  />
+                  Holiday work as OT
+                </label>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-[--border] p-3">
+              <div className="mb-2 text-sm font-semibold">Shift OT Rules</div>
+              <div className="overflow-x-auto rounded-lg border border-[--border]">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-[#f7fbff] text-xs uppercase text-[--muted-foreground]">
+                    <tr>
+                      <th className="px-3 py-2">Shift</th>
+                      <th className="px-3 py-2">OT</th>
+                      <th className="px-3 py-2">OT After</th>
+                      <th className="px-3 py-2">Effective Rule</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {otShiftRows.map((shift) => (
+                      <tr key={shift.id} className="border-t border-[--border]">
+                        <td className="px-3 py-2">
+                          <div className="font-medium">{shift.name}</div>
+                          <div className="text-xs text-[--muted-foreground]">{shift.id}</div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <label className="inline-flex items-center gap-2 text-sm text-[#1f4f79]">
+                            <input
+                              type="checkbox"
+                              checked={shift.enableOvertime}
+                              onChange={(e) => updateShiftOvertime(shift.id, { enableOvertime: e.target.checked })}
+                            />
+                            Selected
+                          </label>
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min={0}
+                            value={shift.overtimeAfterMinutes}
+                            onChange={(e) =>
+                              updateShiftOvertime(shift.id, {
+                                overtimeAfterMinutes: Math.max(0, Number.parseInt(e.target.value || "0", 10) || 0),
+                              })
+                            }
+                            className="w-28 rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]"
+                          />
+                          <span className="ml-2 text-xs text-[--muted-foreground]">minutes</span>
+                        </td>
+                        <td className="px-3 py-2 text-xs text-[--muted-foreground]">
+                          {calendar.overtimeEnabled && shift.enableOvertime
+                            ? `After normal work time + ${formatOtMinutes(shift.overtimeAfterMinutes)}`
+                            : "OT disabled"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={saveOvertimeSettings}
+                  disabled={overtimeSaving}
+                  className="rounded-lg bg-[#1f5c8f] px-6 py-2 text-sm font-bold text-white hover:bg-[#164a75] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {overtimeSaving ? "Saving..." : "Save OT Settings"}
+                </button>
+              </div>
+            </div>
           </div>
         ) : (
           <div id="break-section" className="space-y-4">

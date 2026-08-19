@@ -1,6 +1,7 @@
 "use client";
 
 import { resolveApiBases } from "@/lib/api-bases";
+import { getAuthToken } from "@/lib/auth-fetch";
 
 export const USER_ACCESS_STORAGE_KEY = "pb_attendance_user_access_v1";
 export const AUTH_SESSION_STORAGE_KEY = "pb_attendance_auth_session_v1";
@@ -73,7 +74,7 @@ const routePriority: Array<{ feature: FeatureKey; href: string }> = [
   { feature: "timetable", href: "/timetable" },
   { feature: "shift", href: "/shift" },
   { feature: "assign", href: "/assign" },
-  { feature: "transactions", href: "/attendance" },
+  { feature: "transactions", href: "/transactions" },
   { feature: "leaves", href: "/leaves" },
   { feature: "reports", href: "/reports" },
   { feature: "logs", href: "/logs" },
@@ -104,7 +105,10 @@ export function createFullFeatureAccess(): FeatureAccess {
   }, {} as FeatureAccess);
 }
 
-export function normalizeFeatureAccess(raw: unknown): FeatureAccess {
+export function normalizeFeatureAccess(raw: unknown, role?: string): FeatureAccess {
+  if (role === "Admin" || role === "Manager") {
+    return createFullFeatureAccess();
+  }
   const fallback = createDefaultFeatureAccess();
   const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   for (const key of featureOrder) {
@@ -141,7 +145,7 @@ function mapRawUser(item: unknown, index: number): UserAccessRecord | null {
     password: typeof source.password === "string" ? source.password : "",
     role,
     isActive: typeof source.isActive === "boolean" ? source.isActive : true,
-    featureAccess: normalizeFeatureAccess(source.featureAccess),
+    featureAccess: normalizeFeatureAccess(source.featureAccess, role),
     createdAt: typeof source.createdAt === "string" ? source.createdAt : nowIso,
     updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : nowIso,
   };
@@ -257,18 +261,19 @@ export function readAuthSession(): AuthSession | null {
       if (typeof parsed.username !== "string" || parsed.username.trim().length === 0) {
         return null;
       }
+      const role: UserRole =
+        parsed.role === "Admin" || parsed.role === "Manager" || parsed.role === "Operator"
+          ? parsed.role
+          : "Admin";
       return {
         userId: typeof parsed.userId === "string" ? parsed.userId : "",
         username: parsed.username.trim(),
         fullName: typeof parsed.fullName === "string" && parsed.fullName.trim().length > 0
           ? parsed.fullName.trim()
           : parsed.username.trim(),
-        role:
-          parsed.role === "Admin" || parsed.role === "Manager" || parsed.role === "Operator"
-            ? parsed.role
-            : "Operator",
+        role,
         isActive: parsed.isActive !== false,
-        featureAccess: normalizeFeatureAccess(parsed.featureAccess),
+        featureAccess: normalizeFeatureAccess(parsed.featureAccess, role),
         loginAt: typeof parsed.loginAt === "string" ? parsed.loginAt : new Date().toISOString(),
       };
     } catch {
@@ -324,19 +329,30 @@ function createAuthApiError(message: string, status?: number): AuthApiError {
 async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
   let lastNetworkError: AuthApiError = createAuthApiError("Failed to reach the server.");
   let lastHttpError: AuthApiError | null = null;
+  const token = getAuthToken();
 
   for (const base of resolveApiBases({ preferredBase: preferredApiBase, includeCurrentOrigin: true })) {
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...(init?.headers as Record<string, string> ?? {}),
+      };
+      if (token && !headers["Authorization"]) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
       const response = await fetch(`${base}${path}`, {
         ...init,
-        headers: {
-          "Content-Type": "application/json",
-          ...(init?.headers ?? {}),
-        },
+        headers,
         cache: "no-store",
       });
 
       if (response.ok) {
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/json")) {
+          lastHttpError = createAuthApiError(`Expected JSON response, received ${contentType || "HTML"}`);
+          continue;
+        }
         preferredApiBase = base;
         return (await response.json()) as T;
       }
@@ -379,7 +395,7 @@ export async function saveUsersToApi(users: UserAccessRecord[]): Promise<UserAcc
     password: user.password,
     role: user.role,
     isActive: user.isActive,
-    featureAccess: normalizeFeatureAccess(user.featureAccess),
+    featureAccess: normalizeFeatureAccess(user.featureAccess, user.role),
   }));
   const saved = await authRequest<UserAccessRecord[]>("/api/auth/users", {
     method: "PUT",
@@ -422,7 +438,7 @@ export async function hydrateAuthSession(session: AuthSession): Promise<AuthSess
     if (apiError.status === 404 || apiError.status === 401 || apiError.status === 403) {
       return null;
     }
-    throw error;
+    return session;
   }
 }
 
@@ -433,7 +449,7 @@ export function toAuthSession(user: UserAccessRecord, loginAt?: string): AuthSes
     fullName: user.fullName,
     role: user.role,
     isActive: user.isActive,
-    featureAccess: normalizeFeatureAccess(user.featureAccess),
+    featureAccess: normalizeFeatureAccess(user.featureAccess, user.role),
     loginAt: loginAt ?? new Date().toISOString(),
   };
 }
@@ -463,7 +479,7 @@ export function resolveFeatureForPath(pathname: string, tab: string | null): Fea
   if (pathname.startsWith("/shifts")) {
     return tab === "timetable" ? "timetable" : "shift";
   }
-  if (pathname.startsWith("/attendance")) {
+  if (pathname.startsWith("/transactions") || pathname.startsWith("/attendance")) {
     return "transactions";
   }
   if (pathname.startsWith("/leaves")) {

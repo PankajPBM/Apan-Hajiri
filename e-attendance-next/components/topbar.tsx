@@ -21,7 +21,8 @@ const pageTitleMap: Record<string, string> = {
   "/": "Dashboard",
   "/employees": "Employees",
   "/devices": "Devices",
-  "/attendance": "Attendance",
+  "/transactions": "Transactions",
+  "/attendance": "Transactions",
   "/leaves": "Leaves and Holiday",
   "/shifts": "Shift Setup",
   "/shift": "Shifts",
@@ -54,8 +55,14 @@ export function Topbar({ onToggleSidebar, onLogout, session }: TopbarProps) {
   const alertsMenuRef = useRef<HTMLDivElement | null>(null);
   const activeTab = searchParams.get("tab");
   const cleanPath = pathname !== "/" ? pathname.replace(/\/+$/, "") : "/";
-  const title = cleanPath === "/shifts" && activeTab === "timetable"
-    ? "Time Table"
+  const title = cleanPath === "/shifts"
+    ? activeTab === "timetable"
+      ? "Time Table"
+      : activeTab === "break"
+        ? "Break Time"
+        : activeTab === "overtime"
+          ? "OT"
+          : "Shifts"
     : pageTitleMap[cleanPath] ??
       Object.entries(pageTitleMap).find(([path]) => path !== "/" && cleanPath.startsWith(path))?.[1] ??
       "E-Attendance";

@@ -9,6 +9,7 @@ import { useCalendarPreference } from "@/components/date/calendar-context";
 import { resolveCalendarYearRange } from "@/components/date/calendar-range";
 import { formatCalendarDate } from "@/components/date/date-display";
 import {
+  ensureDefaultDepartmentShiftAssignments,
   loadShiftConfigFromApi,
   readShiftConfigSnapshot,
   saveShiftConfigToApi,
@@ -127,6 +128,8 @@ export default function AssignPage() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const [groupSaving, setGroupSaving] = useState(false);
 
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [departments, setDepartments] = useState<DepartmentRow[]>([]);
@@ -314,16 +317,20 @@ export default function AssignPage() {
             }))
             .filter((row) => row.employeeCode || row.fullName || row.id),
         );
-        setDepartments(
-          departmentRows
-            .map((row) => ({
-              id: String(row.id ?? row.code ?? ""),
-              code: String(row.code ?? ""),
-              name: String(row.name ?? ""),
-              isDefault: row.isDefault,
-            }))
-            .filter((row) => row.code || row.name || row.id),
-        );
+        const depts = departmentRows
+          .map((row) => ({
+            id: String(row.id ?? row.code ?? ""),
+            code: String(row.code ?? ""),
+            name: String(row.name ?? ""),
+            isDefault: row.isDefault,
+          }))
+          .filter((row) => row.code || row.name || row.id);
+        setDepartments(depts);
+        if (depts.length > 0) {
+          void ensureDefaultDepartmentShiftAssignments(depts, readShiftConfigSnapshot()).then((updated) => {
+            setShiftAssignments(updated.shiftAssignments);
+          });
+        }
       } catch (error) {
         setErr(error instanceof Error ? error.message : "Failed to load assignments data.");
       } finally {
@@ -409,6 +416,7 @@ export default function AssignPage() {
   };
 
   const handleSaveAssignment = async (stayOpen = false) => {
+    if (assignmentSaving) return;
     setMsg(null);
     setErr(null);
     const effectiveFrom = assignmentForm.effectiveFrom.trim();
@@ -472,6 +480,7 @@ export default function AssignPage() {
       ? shiftAssignments.map((row) => (row.id === assignmentForm.id ? newRow : row))
       : [...shiftAssignments, newRow];
 
+    setAssignmentSaving(true);
     try {
       await saveShiftConfig(nextAssignments, shiftGroups);
       setMsg(assignmentForm.id ? "Assignment updated." : "Assignment created.");
@@ -485,6 +494,8 @@ export default function AssignPage() {
       setFormMode("add");
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Failed to save assignment.");
+    } finally {
+      setAssignmentSaving(false);
     }
   };
 
@@ -523,6 +534,7 @@ export default function AssignPage() {
   };
 
   const handleSaveGroup = async () => {
+    if (groupSaving) return;
     setMsg(null);
     setErr(null);
     const name = groupForm.name.trim();
@@ -547,12 +559,15 @@ export default function AssignPage() {
       ? shiftGroups.map((g) => (g.id === id ? nextGroup : g))
       : [...shiftGroups, nextGroup];
 
+    setGroupSaving(true);
     try {
       await saveShiftConfig(shiftAssignments, nextGroups);
       setMsg(groupForm.id ? "Group updated." : "Group created.");
       setGroupForm({ id: null, name: "", memberEmployeeCodes: [], isActive: true });
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Failed to save group.");
+    } finally {
+      setGroupSaving(false);
     }
   };
 
@@ -633,7 +648,7 @@ export default function AssignPage() {
             return pri(b) - pri(a) || b.effectiveFrom.localeCompare(a.effectiveFrom);
           });
         const assignment = active[0];
-        const plan = assignment ? shiftPlanMap.get(assignment.shiftId) : null;
+        const plan = assignment ? (shiftPlanMap.get(assignment.shiftId) ?? null) : null;
         const holiday = isHoliday(previewDate, e.department, shiftCalendar);
         const label = holiday ? `Holiday${holiday.name ? ` (${holiday.name})` : ""}` : plan ? plan.name : "Not Assigned";
         return {
@@ -972,10 +987,11 @@ export default function AssignPage() {
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
+                  disabled={groupSaving}
                   onClick={handleSaveGroup}
-                  className="rounded-lg bg-[--primary] px-4 py-2 text-sm font-medium text-[--primary-foreground]"
+                  className="rounded-lg bg-[--primary] px-4 py-2 text-sm font-medium text-[--primary-foreground] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {groupForm.id ? "Update Group" : "Save Group"}
+                  {groupSaving ? "Saving..." : groupForm.id ? "Update Group" : "Save Group"}
                 </button>
                 {groupForm.id ? (
                   <button
@@ -1137,18 +1153,20 @@ export default function AssignPage() {
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
+                disabled={assignmentSaving}
                 onClick={() => handleSaveAssignment(false)}
-                className="rounded-lg bg-[--primary] px-4 py-2 text-sm font-medium text-[--primary-foreground]"
+                className="rounded-lg bg-[--primary] px-4 py-2 text-sm font-medium text-[--primary-foreground] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {assignmentForm.id ? "Save Changes" : "Save Assignment"}
+                {assignmentSaving ? "Saving..." : assignmentForm.id ? "Save Changes" : "Save Assignment"}
               </button>
               {!assignmentForm.id ? (
                 <button
                   type="button"
+                  disabled={assignmentSaving}
                   onClick={() => handleSaveAssignment(true)}
-                  className="rounded-lg border border-[#c8dbf0] bg-white px-4 py-2 text-sm text-[#1f5c8f]"
+                  className="rounded-lg border border-[#c8dbf0] bg-white px-4 py-2 text-sm text-[#1f5c8f] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Save & Add
+                  {assignmentSaving ? "Saving..." : "Save & Add"}
                 </button>
               ) : null}
               <button

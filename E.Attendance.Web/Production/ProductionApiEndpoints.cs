@@ -1071,6 +1071,7 @@ public static class ProductionApiEndpoints
 
             var rows = await query
                 .OrderByDescending(x => x.AppliedDate)
+                .Take(5000)
                 .Select(x => new
                 {
                     x.Id,
@@ -1240,6 +1241,7 @@ public static class ProductionApiEndpoints
                 .Include(x => x.Personnel)
                 .Where(x => x.AttendanceDate >= start && x.AttendanceDate <= end && x.Status == "Holiday Work")
                 .OrderByDescending(x => x.AttendanceDate)
+                .Take(5000)
                 .Select(x => new
                 {
                     x.Id,
@@ -1297,6 +1299,7 @@ public static class ProductionApiEndpoints
                 .Include(x => x.Personnel)
                 .Where(x => x.AttendanceDate >= fromDate && x.AttendanceDate <= toDate)
                 .OrderBy(x => x.AttendanceDate)
+                .Take(20000)
                 .ToListAsync(cancellationToken);
 
             var csv = new StringBuilder();

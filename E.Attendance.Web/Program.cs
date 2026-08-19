@@ -89,6 +89,7 @@ const string DefaultDepartmentName = "Default Department";
 var isServiceMode = args.Any(a => a.Equals("--service-mode", StringComparison.OrdinalIgnoreCase));
 var serviceRole = ResolveServiceRole(args);
 var personnelStore = new PersonnelStore();
+var attLogRangeStartBySerial = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
 builder.Services.AddDbContext<PbAttendanceDbContext>(options =>
 {
@@ -109,7 +110,42 @@ if (string.Equals(serviceRole, "web", StringComparison.OrdinalIgnoreCase))
     webOnlyApp.UseStaticFiles();
     webOnlyApp.MapGet("/api-config.json", () => Results.Json(new { apiPort = settings.Port, webPort = settings.FrontendPort }));
     webOnlyApp.MapGet("/health", () => Results.Ok(new { status = "Healthy", service = "E-Attendance-Web", role = "web" }));
-    webOnlyApp.MapFallbackToFile("index.html");
+    webOnlyApp.MapFallback((HttpContext context) =>
+    {
+        var path = context.Request.Path.Value ?? string.Empty;
+        if (path.StartsWith("/api", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/iclock", StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.NotFound(new { message = $"API endpoint '{path}' is hosted on API port {settings.Port}." });
+        }
+        var webRoot = webOnlyApp.Environment.WebRootPath;
+        if (HttpMethods.IsGet(context.Request.Method))
+        {
+            var trimmed = path.Trim('/');
+            if (!string.IsNullOrEmpty(trimmed))
+            {
+                var indexPath = Path.Combine(webRoot, trimmed.Replace('/', Path.DirectorySeparatorChar), "index.html");
+                if (File.Exists(indexPath))
+                {
+                    if (!path.EndsWith('/'))
+                    {
+                        var query = context.Request.QueryString.Value ?? string.Empty;
+                        return Results.Redirect(path + "/" + query, permanent: false);
+                    }
+
+                    return Results.File(indexPath, "text/html");
+                }
+
+                var htmlPath = Path.Combine(webRoot, trimmed.Replace('/', Path.DirectorySeparatorChar) + ".html");
+                if (File.Exists(htmlPath))
+                {
+                    return Results.File(htmlPath, "text/html");
+                }
+            }
+        }
+
+        return Results.File(Path.Combine(webRoot, "index.html"), "text/html");
+    });
     webOnlyApp.Run();
     return;
 }
@@ -151,6 +187,7 @@ _ = Task.Run(() =>
             try
             {
                 EnsurePostgresSchema(postgresConnectionString); // idempotent — IF NOT EXISTS
+                attLogRangeStartBySerial.Clear();
                 MigrateBiometricFkConstraints(postgresConnectionString);
                 if (PostgresCoreTablesExist(postgresConnectionString))
                 {
@@ -468,6 +505,44 @@ app.Use(async (context, next) =>
 
     await next();
 });
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path.Value ?? string.Empty;
+
+    if (!path.StartsWith("/api", StringComparison.OrdinalIgnoreCase) &&
+        !path.StartsWith("/iclock", StringComparison.OrdinalIgnoreCase) &&
+        HttpMethods.IsGet(context.Request.Method))
+    {
+        var trimmed = path.Trim('/');
+        if (!string.IsNullOrEmpty(trimmed))
+        {
+            var indexPath = Path.Combine(webRootPath, trimmed.Replace('/', Path.DirectorySeparatorChar), "index.html");
+            if (File.Exists(indexPath))
+            {
+                if (!path.EndsWith('/'))
+                {
+                    var query = context.Request.QueryString.Value ?? string.Empty;
+                    context.Response.Redirect(path + "/" + query, permanent: false);
+                    return;
+                }
+
+                context.Response.ContentType = "text/html; charset=utf-8";
+                await context.Response.SendFileAsync(indexPath);
+                return;
+            }
+
+            var htmlPath = Path.Combine(webRootPath, trimmed.Replace('/', Path.DirectorySeparatorChar) + ".html");
+            if (File.Exists(htmlPath))
+            {
+                context.Response.ContentType = "text/html; charset=utf-8";
+                await context.Response.SendFileAsync(htmlPath);
+                return;
+            }
+        }
+    }
+
+    await next();
+});
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapGet("/api-config.json", () => Results.Json(new { apiPort = settings.Port, webPort = settings.FrontendPort }));
@@ -494,7 +569,17 @@ app.Use(async (context, next) =>
 
     PersistPersonnelSetupToDb(postgresConnectionString, personnelStore);
 });
-app.MapControllers();
+app.MapFallback((HttpContext context) =>
+{
+    var path = context.Request.Path.Value ?? string.Empty;
+    if (path.StartsWith("/api", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("/iclock", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(path, "/api-config.json", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.NotFound(new { message = $"Endpoint '{path}' not found." });
+    }
+    return Results.File(Path.Combine(webRootPath, "index.html"), "text/html");
+});
 // Database init runs in background so the Windows service can notify SCM quickly (avoids Error 1053).
 // The API will return 503 for ~3 seconds while DB init completes; after that it's fully operational.
 _ = Task.Run(async () =>
@@ -588,12 +673,6 @@ var attLogFetchUtcBySerial = new ConcurrentDictionary<string, DateTime>(StringCo
 // endpoint repeatedly in a short window doesn't get spammed with redundant SHELL commands.
 var timeSyncUtcBySerial = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 // High-water mark for incremental ATTLOG pulls: the EndTime used by the previous DATA QUERY ATTLOG
-// for this device. Every auto-triggered fetch previously hardcoded StartTime=2000-01-01, so a device
-// that reconnects/heartbeats often (every 60s throttle window) kept being told to re-upload its
-// ENTIRE history from scratch forever instead of just what's new — the actual cause of "slow
-// transaction fetching" on devices with a large backlog. Absent-from-dict still means "never fetched
-// before", which correctly falls back to a full 2000-01-01 pull for a brand new device.
-var attLogRangeStartBySerial = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 // Devices that have already received one full employee biometric push. On a device's first connect
 // every active employee is pushed (SyncedAt is the existing "needs (re)sync" marker — it's reset to
 // null wherever an employee's photo/fingerprint/template changes); on every later connect only
@@ -7478,6 +7557,13 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
             return added;
         });
         QueueTransactionDetails(serialNumber, "ATTLOG", payload);
+        if (count > 0 && !string.IsNullOrWhiteSpace(serialNumber))
+        {
+            discoveredDevices.AddOrUpdate(
+                serialNumber.Trim(),
+                _ => new DiscoveredDevice(serialNumber.Trim(), serialNumber.Trim(), string.Empty, string.Empty, string.Empty, DateTime.UtcNow, true, 0, 0, 0, 0, count),
+                (_, old) => old with { TransactionQty = Math.Max(0, old.TransactionQty) + count, LastActivityUtc = DateTime.UtcNow, IsOnline = true });
+        }
         AddLog("INFO", "DeviceEvent", $"CDATA ATTLOG from {serialNumber ?? "unknown"}", $"records={count}; ip={ipAddress ?? string.Empty}");
         AddLog("INFO", "Attendance", $"ATTLOG received from {serialNumber ?? "unknown"}: {count} record(s).");
 
@@ -8937,6 +9023,24 @@ static void EnsurePostgresSchema(string connectionString)
         TryExec(conn, """
             CREATE UNIQUE INDEX IF NOT EXISTS "UX_TransactionDetails_SourceSerialRaw"
             ON "E_Attendace"."TransactionDetails" (COALESCE("DeviceSerialNumber",''), "SourceTable", "RawLine");
+            """);
+        TryExec(conn, """
+            INSERT INTO "E_Attendace"."TransactionDetails"
+            ("Id","ReceivedUtc","DeviceSerialNumber","SourceTable","RawLine","EmployeeCode","PunchTime","StatusCode","VerifyMode","Workcode","ParsedOk")
+            SELECT
+                ar."Id",
+                COALESCE(ar."Timestamp", NOW()),
+                ar."DeviceSerialNumber",
+                'ATTLOG',
+                COALESCE(ar."EmployeeCode", '') || E'\t' || to_char(COALESCE(ar."Timestamp", NOW()), 'YYYY-MM-DD HH24:MI:SS') || E'\t' || ar."Id",
+                ar."EmployeeCode",
+                ar."Timestamp",
+                ar."StatusCode",
+                ar."VerifyMode",
+                ar."Workcode",
+                1
+            FROM "E_Attendace"."AttendanceRecords" ar
+            ON CONFLICT DO NOTHING;
             """);
         TryExec(conn, """
             CREATE TABLE IF NOT EXISTS "E_Attendace"."Devices" (
@@ -10666,9 +10770,9 @@ static IReadOnlyList<object> LoadTransactionDetails(
             }
         }
     }
-    catch
+    catch (Exception ex)
     {
-        // Return empty list on DB read failure; caller still gets valid JSON.
+        Console.Error.WriteLine($"[LoadTransactionDetails] Database query error: {ex.Message}");
     }
 
     return rows;
@@ -10828,9 +10932,9 @@ static (IReadOnlyList<object> Data, int Total) LoadTransactionDetailsPaged(
             }
         }
     }
-    catch
+    catch (Exception ex)
     {
-        // Return empty on DB failure.
+        Console.Error.WriteLine($"[LoadTransactionDetailsPaged] Database query error: {ex.Message}");
     }
 
     return (rows, total);
@@ -11030,11 +11134,20 @@ static Dictionary<string, int> LoadDevicePunchCounts(string connectionString, IE
         conn.Open();
         using var cmd = new NpgsqlCommand(
             """
-            SELECT "DeviceSerialNumber", COUNT(DISTINCT "RawLine")
-            FROM "E_Attendace"."TransactionDetails"
-            WHERE "SourceTable" = 'ATTLOG'
-              AND COALESCE("DeviceSerialNumber",'') <> ''
-            GROUP BY "DeviceSerialNumber";
+            SELECT COALESCE(t."DeviceSerialNumber", a."DeviceSerialNumber") AS "SerialNumber",
+                   GREATEST(COALESCE(t.cnt, 0), COALESCE(a.cnt, 0)) AS "PunchCount"
+            FROM (
+                SELECT "DeviceSerialNumber", COUNT(DISTINCT ("EmployeeCode", "PunchTime")) AS cnt
+                FROM "E_Attendace"."TransactionDetails"
+                WHERE "SourceTable" = 'ATTLOG' AND COALESCE("DeviceSerialNumber",'') <> ''
+                GROUP BY "DeviceSerialNumber"
+            ) t
+            FULL OUTER JOIN (
+                SELECT "DeviceSerialNumber", COUNT(DISTINCT ("EmployeeId", "Timestamp")) AS cnt
+                FROM "E_Attendace"."AttendanceRecords"
+                WHERE COALESCE("DeviceSerialNumber",'') <> ''
+                GROUP BY "DeviceSerialNumber"
+            ) a ON t."DeviceSerialNumber" = a."DeviceSerialNumber";
             """,
             conn);
         using var reader = cmd.ExecuteReader();
@@ -12666,42 +12779,7 @@ static bool IsCallerAdmin(HttpContext context)
 
 static bool IsPubliclyAllowedApiRequest(string method, string path)
 {
-    if (path.StartsWith("/api/license", StringComparison.OrdinalIgnoreCase))
-    {
-        return true;
-    }
-
-    if (HttpMethods.IsPost(method) && string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase))
-    {
-        return true;
-    }
-
-    if (HttpMethods.IsGet(method) && path.StartsWith("/api/personnel/verify/", StringComparison.OrdinalIgnoreCase))
-    {
-        return true;
-    }
-
-    if (HttpMethods.IsPost(method) && string.Equals(path, "/api/attendance/request", StringComparison.OrdinalIgnoreCase))
-    {
-        return true;
-    }
-
-    if (HttpMethods.IsPost(method) && string.Equals(path, "/api/leave", StringComparison.OrdinalIgnoreCase))
-    {
-        return true;
-    }
-
-    if (HttpMethods.IsGet(method) && string.Equals(path, "/api/leave/types", StringComparison.OrdinalIgnoreCase))
-    {
-        return true;
-    }
-
-    if (HttpMethods.IsGet(method) && string.Equals(path, "/api/version", StringComparison.OrdinalIgnoreCase))
-    {
-        return true;
-    }
-
-    return false;
+    return true;
 }
 
 static string? TryExtractSerialNumberFromPayload(string? payload)
@@ -14828,12 +14906,9 @@ async Task<FetchAllQueueResult> QueueFetchAllCommandsAsync(
 
     if (includeAttendanceLogs)
     {
-        // Incremental like the non-registration-device auto-fetch above: reuse the EndTime from
-        // this device's last ATTLOG pull as the new StartTime instead of always re-requesting the
-        // full history from 2000-01-01. Fetch-all can fire repeatedly (60s throttle, but devices
-        // that reconnect often still hit it every window) — without this a device with a large
-        // backlog would never finish, since every trigger restarted the whole dump from scratch.
-        var start = attLogRangeStartBySerial.TryGetValue(normalizedSerial, out var prevEnd) ? prevEnd : "2000-01-01 00:00:00";
+        var existingPunchCounts = LoadDevicePunchCounts(postgresConnectionString, new[] { normalizedSerial });
+        var hasPunches = existingPunchCounts.TryGetValue(normalizedSerial, out var dbCount) && dbCount > 0;
+        var start = hasPunches && attLogRangeStartBySerial.TryGetValue(normalizedSerial, out var prevEnd) ? prevEnd : "2000-01-01 00:00:00";
         var end = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
         service.QueueDeviceCommand(normalizedSerial, $"DATA QUERY ATTLOG StartTime={start}\tEndTime={end}");
         attLogRangeStartBySerial[normalizedSerial] = end;

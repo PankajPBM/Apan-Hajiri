@@ -6,6 +6,8 @@ import {
   Check,
   Clock3,
   Cpu,
+  DatabaseBackup,
+  Download,
   Globe2,
   KeyRound,
   Lock,
@@ -26,7 +28,7 @@ import { formatCalendarDateTime } from "@/components/date/date-display";
 import { loadUsersFromApi, notifyAuthUpdated, readAuthSession, saveUsersToApi } from "@/components/data/auth-store";
 import { resolveApiBases } from "@/lib/api-bases";
 
-type SettingsTab = "general" | "attendance" | "device" | "branding" | "license" | "user";
+type SettingsTab = "general" | "attendance" | "device" | "branding" | "license" | "user" | "backup";
 type ActionKind = "success" | "warning" | "error";
 type AuditStatus = "pass" | "warn" | "fail";
 type UserRole = "Admin" | "Manager" | "Operator";
@@ -108,6 +110,33 @@ type SettingsTabItem = {
   icon: React.ComponentType<{ className?: string }>;
 };
 
+type BackupSchedule = {
+  enabled: boolean;
+  frequency: "daily" | "weekly" | "monthly";
+  runTime: string;
+  backupLocation: string;
+  retentionCount: number;
+  lastRunUtc: string | null;
+  nextRunUtc: string | null;
+};
+
+type BackupHistoryEntry = {
+  id: string;
+  fileName: string;
+  fileSizeBytes: number | null;
+  status: "running" | "completed" | "failed";
+  trigger: "manual" | "scheduled";
+  errorMessage: string | null;
+  startedAtUtc: string;
+  finishedAtUtc: string | null;
+};
+
+function formatBackupSize(bytes: number | null): string {
+  if (bytes === null || bytes === undefined) return "-";
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 const DEFAULT_ADMIN_USER_ID = "default-admin";
 const DEFAULT_ADMIN_USERNAME = "admin";
 const DEFAULT_ADMIN_PASSWORD = "PB@14891277";
@@ -151,6 +180,7 @@ const tabFields: Record<SettingsTab, Array<keyof SettingsState>> = {
   branding: ["systemTitle", "primaryColor"],
   license: [],
   user: [],
+  backup: [],
 };
 
 const tabs: SettingsTabItem[] = [
@@ -160,6 +190,7 @@ const tabs: SettingsTabItem[] = [
   { id: "branding", label: "Branding", description: "System name, logo, and visual identity.", icon: Brush },
   { id: "license", label: "License", description: "Trial, activation, expiry, and deactivation controls.", icon: KeyRound },
   { id: "user", label: "User", description: "Create users and assign feature access permissions.", icon: Users },
+  { id: "backup", label: "Backup", description: "Database backup schedule, manual backup, and restore history.", icon: DatabaseBackup },
 ];
 
 const featureDefinitions: Array<{ key: FeatureKey; label: string; detail: string }> = [
@@ -507,6 +538,26 @@ async function updateRuntimePort(port: number, frontendPort?: number): Promise<R
   };
 }
 
+async function loadBackupScheduleFromApi(): Promise<BackupSchedule> {
+  return requestSettingsJson<BackupSchedule>("/api/backup/settings");
+}
+
+async function saveBackupScheduleToApi(schedule: Pick<BackupSchedule, "enabled" | "frequency" | "runTime" | "backupLocation" | "retentionCount">): Promise<BackupSchedule> {
+  return requestSettingsJson<BackupSchedule>("/api/backup/settings", {
+    method: "PUT",
+    body: JSON.stringify(schedule),
+  });
+}
+
+async function loadBackupHistoryFromApi(): Promise<BackupHistoryEntry[]> {
+  const payload = await requestSettingsJson<{ data: BackupHistoryEntry[] }>("/api/backup/history?page=1&pageSize=20");
+  return Array.isArray(payload?.data) ? payload.data : [];
+}
+
+async function runBackupNowApi(): Promise<BackupHistoryEntry> {
+  return requestSettingsJson<BackupHistoryEntry>("/api/backup/run", { method: "POST" });
+}
+
 async function trySyncAttendancePolicy(settings: SettingsState): Promise<boolean> {
   if (typeof window === "undefined") {
     return false;
@@ -619,6 +670,13 @@ export default function SettingsPage() {
   const [actionKind, setActionKind] = useState<ActionKind>("success");
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [backupSchedule, setBackupSchedule] = useState<BackupSchedule | null>(null);
+  const [backupHistory, setBackupHistory] = useState<BackupHistoryEntry[]>([]);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [backupSaving, setBackupSaving] = useState(false);
+  const [backupRunning, setBackupRunning] = useState(false);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
 
   const currentTab = useMemo(() => tabs.find((item) => item.id === tab) ?? tabs[0], [tab]);
   const sectionFieldCount = tabFields[tab].length;
@@ -636,6 +694,91 @@ export default function SettingsPage() {
     setEditingUserId(null);
     setUserForm(createEmptyUserForm());
   }, [tab]);
+
+  const loadBackupData = async () => {
+    setBackupLoading(true);
+    setBackupError(null);
+    try {
+      const [schedule, history] = await Promise.all([loadBackupScheduleFromApi(), loadBackupHistoryFromApi()]);
+      setBackupSchedule(schedule);
+      setBackupHistory(history);
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : "Failed to load backup settings.");
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === "backup" && isAdmin) {
+      void loadBackupData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  const saveBackupSchedule = async () => {
+    if (!backupSchedule) return;
+    setBackupSaving(true);
+    setBackupError(null);
+    setBackupMessage(null);
+    try {
+      const saved = await saveBackupScheduleToApi(backupSchedule);
+      setBackupSchedule(saved);
+      setBackupMessage("Backup settings saved.");
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : "Failed to save backup settings.");
+    } finally {
+      setBackupSaving(false);
+    }
+  };
+
+  const runBackupNow = async () => {
+    setBackupRunning(true);
+    setBackupError(null);
+    setBackupMessage(null);
+    try {
+      await runBackupNowApi();
+      setBackupMessage("Backup completed.");
+      await loadBackupData();
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : "Backup failed.");
+      await loadBackupData();
+    } finally {
+      setBackupRunning(false);
+    }
+  };
+
+  const downloadBackup = async (id: string, fileName: string) => {
+    setBackupError(null);
+    try {
+      // Plain window.open() can't attach the bearer auth header the API requires, so fetch the
+      // file as a blob (the global fetch patch attaches it automatically) and trigger a download.
+      const bases = resolveApiBases({ includeCurrentOrigin: true });
+      let lastError = "Failed to download backup.";
+      for (const base of bases) {
+        try {
+          const response = await fetch(`${base}/api/backup/download/${encodeURIComponent(id)}`, { cache: "no-store" });
+          if (!response.ok) {
+            lastError = `Request failed (${response.status})`;
+            continue;
+          }
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = fileName;
+          link.click();
+          URL.revokeObjectURL(url);
+          return;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : lastError;
+        }
+      }
+      setBackupError(lastError);
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : "Failed to download backup.");
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -1078,7 +1221,7 @@ export default function SettingsPage() {
       <div className="grid gap-4 xl:grid-cols-[280px_1fr]">
         <aside className="surface p-3 shadow-sm">
           <div className="space-y-2">
-            {tabs.filter((item) => item.id !== "user" || isAdmin).map((item) => {
+            {tabs.filter((item) => (item.id !== "user" && item.id !== "backup") || isAdmin).map((item) => {
               const Icon = item.icon;
               return (
                 <button
@@ -1294,6 +1437,166 @@ export default function SettingsPage() {
 
           {tab === "license" ? (
             <LicensePanel />
+          ) : null}
+
+          {tab === "backup" ? (
+            <div className="space-y-4">
+              {backupError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{backupError}</div> : null}
+              {backupMessage ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{backupMessage}</div> : null}
+
+              <div className="rounded-lg border border-[--border] bg-[--card] p-3">
+                <h3 className="mb-3 text-sm font-semibold">Backup Schedule</h3>
+                {backupLoading || !backupSchedule ? (
+                  <p className="text-sm text-[--muted-foreground]">Loading...</p>
+                ) : (
+                  <>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="grid gap-1 text-xs text-[--muted-foreground]">
+                        <span className="text-[11px] font-semibold text-[#1f4f79]">Backup Location (server folder)</span>
+                        <input
+                          value={backupSchedule.backupLocation}
+                          onChange={(event) => setBackupSchedule((prev) => (prev ? { ...prev, backupLocation: event.target.value } : prev))}
+                          placeholder="D:\E_AttendanceBackup"
+                          className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="grid gap-1 text-xs text-[--muted-foreground]">
+                        <span className="text-[11px] font-semibold text-[#1f4f79]">Frequency</span>
+                        <select
+                          value={backupSchedule.frequency}
+                          onChange={(event) => setBackupSchedule((prev) => (prev ? { ...prev, frequency: event.target.value as BackupSchedule["frequency"] } : prev))}
+                          className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm"
+                        >
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="monthly">Monthly</option>
+                        </select>
+                      </label>
+                      <label className="grid gap-1 text-xs text-[--muted-foreground]">
+                        <span className="text-[11px] font-semibold text-[#1f4f79]">Run Time (server local time)</span>
+                        <input
+                          type="time"
+                          value={backupSchedule.runTime}
+                          onChange={(event) => setBackupSchedule((prev) => (prev ? { ...prev, runTime: event.target.value } : prev))}
+                          className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="grid gap-1 text-xs text-[--muted-foreground]">
+                        <span className="text-[11px] font-semibold text-[#1f4f79]">Keep Last N Backups</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={365}
+                          value={backupSchedule.retentionCount}
+                          onChange={(event) => setBackupSchedule((prev) => (prev ? { ...prev, retentionCount: Number.parseInt(event.target.value || "1", 10) } : prev))}
+                          className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="flex items-center gap-2 rounded-lg border border-[--input] px-3 py-2 text-sm text-[#1f4f79]">
+                        <input
+                          type="checkbox"
+                          checked={backupSchedule.enabled}
+                          onChange={(event) => setBackupSchedule((prev) => (prev ? { ...prev, enabled: event.target.checked } : prev))}
+                        />
+                        Enable automatic scheduled backups
+                      </label>
+                    </div>
+                    <p className="mt-2 text-xs text-[--muted-foreground]">
+                      Last run: {backupSchedule.lastRunUtc ? formatCalendarDateTime(backupSchedule.lastRunUtc, calendarType) : "Never"}
+                      {" | "}
+                      Next run: {backupSchedule.enabled && backupSchedule.nextRunUtc ? formatCalendarDateTime(backupSchedule.nextRunUtc, calendarType) : "Not scheduled"}
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void saveBackupSchedule()}
+                        disabled={backupSaving}
+                        className="inline-flex items-center gap-2 rounded-lg bg-[--primary] px-4 py-2 text-sm font-medium text-[--primary-foreground] disabled:opacity-70"
+                      >
+                        <Check className="h-4 w-4" />
+                        {backupSaving ? "Saving..." : "Save Settings"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void runBackupNow()}
+                        disabled={backupRunning}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[--border] bg-[--card] px-4 py-2 text-sm font-medium disabled:opacity-70"
+                      >
+                        <DatabaseBackup className="h-4 w-4" />
+                        {backupRunning ? "Running..." : "Run Backup Now"}
+                      </button>
+                    </div>
+                    <p className="mt-2 text-xs text-[--muted-foreground]">
+                      This backs up the full database (settings, employees, devices, attendance, license). Restoring a backup is a destructive operation and is only available from the E-Attendance tray app on the server, not from this web page.
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-[--border] bg-[--card] p-3">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold">Backup History</h3>
+                  <button type="button" onClick={() => void loadBackupData()} className="rounded-lg border border-[--border] bg-[--card] px-3 py-1.5 text-xs font-medium">
+                    Refresh
+                  </button>
+                </div>
+                <div className="overflow-x-auto rounded-lg border border-[--border]">
+                  <table className="min-w-full text-left text-sm">
+                    <thead className="bg-[#f7fbff] text-xs uppercase text-[--muted-foreground]">
+                      <tr>
+                        <th className="px-3 py-2">File</th>
+                        <th className="px-3 py-2">Size</th>
+                        <th className="px-3 py-2">Status</th>
+                        <th className="px-3 py-2">Trigger</th>
+                        <th className="px-3 py-2">Started</th>
+                        <th className="px-3 py-2">Finished</th>
+                        <th className="px-3 py-2">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {backupHistory.map((entry) => (
+                        <tr key={entry.id} className="border-t border-[--border]">
+                          <td className="px-3 py-2 font-medium">{entry.fileName || "-"}</td>
+                          <td className="px-3 py-2 text-xs text-[--muted-foreground]">{formatBackupSize(entry.fileSizeBytes)}</td>
+                          <td className="px-3 py-2">
+                            <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                              entry.status === "completed" ? "bg-emerald-100 text-emerald-800" : entry.status === "failed" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"
+                            }`}>
+                              {entry.status}
+                            </span>
+                            {entry.status === "failed" && entry.errorMessage ? (
+                              <div className="mt-1 text-[11px] text-red-700">{entry.errorMessage}</div>
+                            ) : null}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-[--muted-foreground]">{entry.trigger}</td>
+                          <td className="px-3 py-2 text-xs text-[--muted-foreground]">{formatCalendarDateTime(entry.startedAtUtc, calendarType)}</td>
+                          <td className="px-3 py-2 text-xs text-[--muted-foreground]">{entry.finishedAtUtc ? formatCalendarDateTime(entry.finishedAtUtc, calendarType) : "-"}</td>
+                          <td className="px-3 py-2">
+                            {entry.status === "completed" ? (
+                              <button
+                                type="button"
+                                onClick={() => void downloadBackup(entry.id, entry.fileName)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-[#c8dbf0] bg-white px-2 py-1 text-xs text-[#1f5c8f]"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                Download
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                      {backupHistory.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="px-3 py-4 text-center text-sm text-[--muted-foreground]">
+                            No backups yet.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           ) : null}
 
           {tab === "user" ? (
@@ -1573,7 +1876,7 @@ export default function SettingsPage() {
             </div>
           ) : null}
 
-          {validationIssues.length > 0 && tab !== "user" && tab !== "license" ? (
+          {validationIssues.length > 0 && tab !== "user" && tab !== "license" && tab !== "backup" ? (
             <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               {validationIssues[0]}
             </div>
@@ -1581,7 +1884,7 @@ export default function SettingsPage() {
 
           {actionMessage ? <div className={`mt-4 rounded-lg border px-3 py-2 text-sm ${messageClass}`}>{actionMessage}</div> : null}
 
-          {tab !== "license" ? (
+          {tab !== "license" && tab !== "backup" ? (
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-[--border] pt-4">
               <button
                 type="button"
@@ -1611,7 +1914,7 @@ export default function SettingsPage() {
             </div>
           ) : null}
 
-          {auditReport && tab !== "license" ? (
+          {auditReport && tab !== "license" && tab !== "backup" ? (
             <div className="mt-4 rounded-lg border border-[--border] bg-[--card] p-3">
               <div className="mb-2">
                 <h3 className="text-sm font-semibold">Security Audit Report</h3>

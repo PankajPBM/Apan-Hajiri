@@ -123,7 +123,9 @@ export type HolidayItem = {
 
 export type ShiftCalendarSettings = {
   weeklyOffDays: number[]; // 0=Sun .. 6=Sat
+  overtimeEnabled: boolean;
   weeklyOffWorkAsOvertime: boolean;
+  holidayWorkAsOvertime: boolean;
   holidays: HolidayItem[];
 };
 
@@ -293,6 +295,11 @@ async function shiftRequest<T>(path: string, init?: RequestInit): Promise<T> {
       });
 
       if (response.ok) {
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/json")) {
+          lastError = `Expected JSON response, received ${contentType || "HTML"}`;
+          continue;
+        }
         preferredApiBase = base;
         return (await response.json()) as T;
       }
@@ -1069,7 +1076,9 @@ export function saveBreakDefinitions(rows: BreakTimeDefinition[]) {
 export function defaultShiftCalendarSettings(): ShiftCalendarSettings {
   return {
     weeklyOffDays: [6],
+    overtimeEnabled: true,
     weeklyOffWorkAsOvertime: true,
+    holidayWorkAsOvertime: true,
     holidays: [],
   };
 }
@@ -1084,14 +1093,18 @@ export function readShiftCalendarSettings(): ShiftCalendarSettings {
   const weeklyOffDays = parsedWeeklyOffDays.length === 1 && parsedWeeklyOffDays[0] === 0
     ? [6]
     : parsedWeeklyOffDays;
+  const overtimeEnabled = asBool(raw.overtimeEnabled, true);
   const weeklyOffWorkAsOvertime = asBool(raw.weeklyOffWorkAsOvertime, true);
+  const holidayWorkAsOvertime = asBool(raw.holidayWorkAsOvertime, true);
   const holidaysRaw = Array.isArray(raw.holidays) ? raw.holidays : [];
 
   const holidays = holidaysRaw.map((row, index) => normalizeHolidayRow(row, index));
 
   const normalized: ShiftCalendarSettings = {
     weeklyOffDays,
+    overtimeEnabled,
     weeklyOffWorkAsOvertime,
+    holidayWorkAsOvertime,
     holidays,
   };
 
@@ -1106,7 +1119,9 @@ export function saveShiftCalendarSettings(settings: ShiftCalendarSettings) {
   if (!hasWindow()) return;
   const normalized: ShiftCalendarSettings = {
     weeklyOffDays: normalizeWeeklyOffDays(settings.weeklyOffDays),
+    overtimeEnabled: asBool(settings.overtimeEnabled, true),
     weeklyOffWorkAsOvertime: asBool(settings.weeklyOffWorkAsOvertime, true),
+    holidayWorkAsOvertime: asBool(settings.holidayWorkAsOvertime, true),
     holidays: (settings.holidays ?? []).map((row, index) => normalizeHolidayRow(row, index)),
   };
   window.localStorage.setItem(CALENDAR_KEY, JSON.stringify(normalized));
@@ -1191,6 +1206,51 @@ export async function saveShiftConfigToApi(snapshot: Partial<ShiftConfigSnapshot
   });
   return cacheShiftConfigSnapshot(saved ?? merged);
 }
+
+export async function ensureDefaultDepartmentShiftAssignments(
+  departments: Array<{ name: string }>,
+  currentSnapshot: ShiftConfigSnapshot
+): Promise<ShiftConfigSnapshot> {
+  let changed = false;
+  const nextAssignments = [...currentSnapshot.shiftAssignments];
+  const defaultShiftId =
+    currentSnapshot.shiftDefinitions.find((x) => x.isActive)?.id ??
+    currentSnapshot.shiftDefinitions[0]?.id ??
+    "general";
+
+  for (const dept of departments) {
+    const deptName = dept.name.trim();
+    if (!deptName) continue;
+
+    const existing = nextAssignments.find(
+      (a) => a.targetType === "department" && a.department.toLowerCase() === deptName.toLowerCase()
+    );
+
+    if (!existing) {
+      nextAssignments.push({
+        id: `assign-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        targetType: "department",
+        employeeCode: "",
+        employeeName: "",
+        department: deptName,
+        groupId: "",
+        groupName: "",
+        shiftId: defaultShiftId,
+        effectiveFrom: DEFAULT_SHIFT_EFFECTIVE_FROM,
+        effectiveTo: null,
+        isActive: true,
+      });
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    return await saveShiftConfigToApi({ ...currentSnapshot, shiftAssignments: nextAssignments });
+  }
+
+  return currentSnapshot;
+}
+
 
 export function parseTimeToMinutes(value: string): number {
   const [hRaw, mRaw] = (value || "").split(":");

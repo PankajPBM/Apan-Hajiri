@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Building2, CalendarDays, CheckSquare, Edit3, Plus, Search, Shield, Trash2, Users, X } from "lucide-react";
+import { Building2, CalendarDays, CheckSquare, Clock, Edit3, Filter, Info, Plus, RotateCcw, Search, Shield, Trash2, Users, X } from "lucide-react";
 import { resolveApiBases } from "@/lib/api-bases";
 import { fetchLicenseStatus } from "@/components/data/license-client";
 import {
@@ -14,7 +14,7 @@ import {
   ensureAccessControlDefaults,
 } from "@/components/data/access-control-store";
 
-type AccessSection = "time-period" | "groups" | "combination" | "privilege";
+type AccessSection = "time-period" | "groups" | "combination" | "privilege" | "duplicate-punch";
 type DepartmentRow = { id: string; name: string; code: string; parentId: string | null; areaName?: string; areaCode?: string };
 type DeviceRow = { serialNumber: string; name: string; area: string; department: string; status: string };
 type EmployeeRow = { id: string; employeeCode: string; fullName: string; area: string; department: string; groupId?: number; verifyMode?: number; timezoneProfile?: string };
@@ -33,6 +33,7 @@ const SECTION_TABS: Array<{ key: AccessSection; label: string; icon: React.Compo
   { key: "groups", label: "Access Group", icon: Users },
   { key: "combination", label: "Combination", icon: CheckSquare },
   { key: "privilege", label: "Privilege", icon: Shield },
+  { key: "duplicate-punch", label: "Device Duplicate Punch", icon: Clock },
 ];
 
 const VERIFY_OPTS: Array<{ value: AccessControlVerificationMode; label: string }> = [
@@ -82,13 +83,15 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function asDepts(p: unknown): DepartmentRow[] {
-  return unwrap(p).map((item,i)=>{ if(!item||typeof item!=="object") return null; const s=item as Record<string,unknown>; const name=readStr(s,["name","departmentName"]); if(!name) return null; return {id:readStr(s,["id"])||`d${i}`,code:readStr(s,["code","Code"])||`${i+1}`,name,parentId:null,areaName:readStr(s,["areaName","area"])||undefined,areaCode:readStr(s,["areaCode","AreaCode"])||undefined}; }).filter((x): x is DepartmentRow=>x!==null);
+  const rows: Array<DepartmentRow | null> = unwrap(p).map((item,i)=>{ if(!item||typeof item!=="object") return null; const s=item as Record<string,unknown>; const name=readStr(s,["name","departmentName"]); if(!name) return null; return {id:readStr(s,["id"])||`d${i}`,code:readStr(s,["code","Code"])||`${i+1}`,name,parentId:null,areaName:readStr(s,["areaName","area"])||undefined,areaCode:readStr(s,["areaCode","AreaCode"])||undefined}; });
+  return rows.filter((x): x is DepartmentRow=>x!==null);
 }
 function asDevices(p: unknown): DeviceRow[] {
   return unwrap(p).map(item=>{ const s=item&&typeof item==="object"?item as Record<string,unknown>:{}; return {serialNumber:readStr(s,["serialNumber","SerialNumber"]),name:readStr(s,["name","Name"]),area:readStr(s,["area","Area"])||"Default Area",department:readStr(s,["department","Department"])||"Default Department",status:readStr(s,["status","Status"])||"offline"}; });
 }
 function asEmps(p: unknown): EmployeeRow[] {
-  return unwrap(p).map((item,i)=>{ if(!item||typeof item!=="object") return null; const s=item as Record<string,unknown>; const fullName=readStr(s,["fullName","name"]); if(!fullName) return null; const dept=readStr(s,["department","departmentName"])||(Array.isArray(s.departments)?String(s.departments[0]??""):""); const area=readStr(s,["area","areaName"])||(Array.isArray(s.areas)?String(s.areas[0]??""):""); return {id:readStr(s,["id"])||`e${i}`,employeeCode:readStr(s,["employeeCode","code"])||`EMP${i}`,fullName,area:area||"Default Area",department:dept||"Default Department",groupId:typeof s.groupId==="number"?s.groupId:undefined,verifyMode:typeof s.verifyMode==="number"?s.verifyMode:undefined,timezoneProfile:typeof s.timezoneProfile==="string"?s.timezoneProfile:undefined}; }).filter((x): x is EmployeeRow=>x!==null);
+  const rows: Array<EmployeeRow | null> = unwrap(p).map((item,i)=>{ if(!item||typeof item!=="object") return null; const s=item as Record<string,unknown>; const fullName=readStr(s,["fullName","name"]); if(!fullName) return null; const dept=readStr(s,["department","departmentName"])||(Array.isArray(s.departments)?String(s.departments[0]??""):""); const area=readStr(s,["area","areaName"])||(Array.isArray(s.areas)?String(s.areas[0]??""):""); return {id:readStr(s,["id"])||`e${i}`,employeeCode:readStr(s,["employeeCode","code"])||`EMP${i}`,fullName,area:area||"Default Area",department:dept||"Default Department",groupId:typeof s.groupId==="number"?s.groupId:undefined,verifyMode:typeof s.verifyMode==="number"?s.verifyMode:undefined,timezoneProfile:typeof s.timezoneProfile==="string"?s.timezoneProfile:undefined}; });
+  return rows.filter((x): x is EmployeeRow=>x!==null);
 }
 
 // ── component ─────────────────────────────────────────────────────────────────
@@ -99,7 +102,7 @@ export default function AccessControlPage() {
   // NOTE: `sel` must be declared here (before any useEffect that lists it in a dependency array).
   // A hook's dependency array is evaluated during render top-to-bottom, so referencing `sel` in an
   // effect above its declaration throws "Cannot access 'sel' before initialization" (TDZ crash).
-  const sel = useMemo<AccessSection>(()=>["groups","combination","privilege"].includes(section)?section as AccessSection:"time-period",[section]);
+  const sel = useMemo<AccessSection>(()=>["groups","combination","privilege","duplicate-punch"].includes(section)?section as AccessSection:"time-period",[section]);
 
   const [snapshot, setSnapshot] = useState<AccessControlSnapshot>(()=>readAccessControlSnapshot());
   const [depts, setDepts] = useState<DepartmentRow[]>([]);
@@ -120,6 +123,53 @@ export default function AccessControlPage() {
   const [empPrivSaving, setEmpPrivSaving] = useState(false);
   const [loadingLicense, setLoadingLicense] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
+
+  const [dupPeriodMinutes, setDupPeriodMinutes] = useState<number>(() => snapshot.deviceDuplicatePunchPeriodMinutes ?? 3);
+  const [targetSerials, setTargetSerials] = useState<string[]>(() => snapshot.deviceSerials ?? []);
+  const [dupDevSearch, setDupDevSearch] = useState("");
+  const [showDupInfo, setShowDupInfo] = useState(false);
+  const [savingDupPeriod, setSavingDupPeriod] = useState(false);
+
+  useEffect(() => {
+    if (typeof snapshot.deviceDuplicatePunchPeriodMinutes === "number") {
+      setDupPeriodMinutes(snapshot.deviceDuplicatePunchPeriodMinutes);
+    }
+    if (Array.isArray(snapshot.deviceSerials)) {
+      setTargetSerials(snapshot.deviceSerials);
+    }
+  }, [snapshot.deviceDuplicatePunchPeriodMinutes, snapshot.deviceSerials]);
+
+  const filteredDevices = useMemo(() => {
+    return devs.filter((d) => {
+      if (areaFilter !== "All" && d.area !== areaFilter) return false;
+      if (dupDevSearch.trim()) {
+        const q = dupDevSearch.toLowerCase();
+        return d.serialNumber.toLowerCase().includes(q) || d.name.toLowerCase().includes(q);
+      }
+      return true;
+    });
+  }, [devs, areaFilter, dupDevSearch]);
+
+  const saveDupPeriod = useCallback(async () => {
+    setSavingDupPeriod(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const val = Math.max(0, Math.min(99, Number(dupPeriodMinutes) || 0));
+      const updated = {
+        ...snapshot,
+        deviceDuplicatePunchPeriodMinutes: val,
+        deviceSerials: targetSerials,
+      };
+      await saveAccessControlToApi(updated);
+      setSnapshot(updated);
+      setMsg(`Device Duplicate Punch Period saved as ${val} minute(s). Synchronization commands (SET OPTION AlarmReRec=${val} & ReCheckMin=${val}) queued for devices.`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to save Device Duplicate Punch Period.");
+    } finally {
+      setSavingDupPeriod(false);
+    }
+  }, [dupPeriodMinutes, targetSerials, snapshot]);
 
   const [selectedEmpIds, setSelectedEmpIds] = useState<string[]>([]);
   const [batchModalOpen, setBatchModalOpen] = useState(false);
@@ -286,8 +336,17 @@ export default function AccessControlPage() {
 
   const filt = useMemo(()=>{
     const q=search.toLowerCase();
-    // Area-only filtering (department is not used to scope access control).
-    const aOk=(area:string)=>area===areaFilter;
+    const aOk = (itemArea: string) => {
+      if (!areaFilter) return true;
+      const target = areaFilter.trim().toLowerCase();
+      const actual = (itemArea || "").trim().toLowerCase();
+      if (actual === target) return true;
+      const matchedArea = areas.find(a => a.name.toLowerCase() === target || a.code.toLowerCase() === target);
+      if (matchedArea) {
+        return actual === matchedArea.name.toLowerCase() || actual === matchedArea.code.toLowerCase();
+      }
+      return false;
+    };
     return {
       tp: snapshot.timePeriods.filter(x=>aOk(x.area)&&`${x.periodNo} ${x.name} ${x.area}`.toLowerCase().includes(q)),
       grp: snapshot.groups.filter(x=>aOk(x.area)&&`${x.groupNo} ${x.name} ${x.area}`.toLowerCase().includes(q)),
@@ -1160,6 +1219,160 @@ export default function AccessControlPage() {
                 </table>
               );
             })()}
+
+            {sel === "duplicate-punch" && (
+              <div className="p-4 space-y-4">
+                {/* Toolbar row matching section toolbar style */}
+                <div className="flex flex-wrap items-center gap-2 border-b border-[#e8f2fb] pb-4">
+                  <div className="flex items-center gap-1.5 rounded-lg bg-[#f0f7ff] px-3 py-1.5 border border-[#d5e8f7]">
+                    <Clock className="h-4 w-4 text-[#1a4a73]" />
+                    <span className="text-sm font-semibold text-[#1a4a73]">Duplicate Punch Period</span>
+                  </div>
+
+                  {/* Period input */}
+                  <div className="flex items-center gap-1.5 rounded-lg border border-[#c8ddf0] bg-white px-3 py-1.5">
+                    <input
+                      type="number"
+                      min={0}
+                      max={99}
+                      value={dupPeriodMinutes}
+                      onChange={(e) => setDupPeriodMinutes(Math.max(0, Math.min(99, parseInt(e.target.value) || 0)))}
+                      className="w-14 text-center text-sm font-bold text-[#0f3356] outline-none bg-transparent"
+                    />
+                    <span className="text-xs text-[#5a7a96]">min</span>
+                  </div>
+
+                  {/* Info (!) button — same style as other dashboards */}
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      onClick={() => setShowDupInfo((p) => !p)}
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-[#c8ddf0] bg-white text-xs font-bold text-[#1a4a73] hover:bg-[#eef6ff] transition"
+                    >
+                      i
+                    </button>
+                    {showDupInfo && (
+                      <div className="absolute left-0 top-8 z-20 w-72 rounded-lg border border-[#d5e8f7] bg-white p-3 shadow-lg text-xs text-[#2d5a7e] leading-relaxed">
+                        <p className="font-semibold text-[#0f3356] mb-1">Device Duplicate Punch Period</p>
+                        <p>Prevents repeat punches on the terminal within the set minutes. The device shows <span className="font-semibold text-orange-600">"Duplicate Punch"</span> and ignores the scan. Set to <strong>0</strong> to disable.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="ml-auto flex items-center gap-2">
+                    {/* Search */}
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#7a93ab]" />
+                      <input
+                        value={dupDevSearch}
+                        onChange={(e) => setDupDevSearch(e.target.value)}
+                        placeholder="Search…"
+                        className="h-8 w-40 rounded-lg border border-[#c8ddf0] bg-white pl-8 pr-3 text-xs outline-none focus:border-[#4a90c4]"
+                      />
+                    </div>
+
+                    {/* Save button */}
+                    <button
+                      type="button"
+                      disabled={savingDupPeriod}
+                      onClick={saveDupPeriod}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#1a4a73] px-3 text-sm font-semibold text-white hover:bg-[#15395c] disabled:opacity-50"
+                    >
+                      {savingDupPeriod ? "Saving..." : "Save & Push"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Device selection counter + select-all */}
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-[#5a7a96]">
+                    {targetSerials.length === 0
+                      ? <><span className="font-semibold text-[#1a4a73]">All devices</span> will receive this setting.</>
+                      : <><span className="font-semibold text-[#1a4a73]">{targetSerials.length}</span> device{targetSerials.length !== 1 ? "s" : ""} selected.</>
+                    }
+                    {" "}{filteredDevices.length} shown.
+                  </p>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setTargetSerials(filteredDevices.map((d) => d.serialNumber))}
+                      className="rounded border border-[#c8ddf0] bg-white px-2.5 py-1 text-xs font-semibold text-[#1a4a73] hover:bg-[#eef6ff]"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTargetSerials([])}
+                      className="rounded border border-[#c8ddf0] bg-white px-2.5 py-1 text-xs font-semibold text-[#1a4a73] hover:bg-[#eef6ff]"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                {/* Device table — same style as other section tables */}
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-[#e8f2fb] bg-[#f5faff] text-xs font-semibold uppercase tracking-wide text-[#4a7a9b]">
+                        <th className="w-10 px-4 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={filteredDevices.length > 0 && filteredDevices.every((d) => targetSerials.includes(d.serialNumber))}
+                            onChange={(e) => e.target.checked
+                              ? setTargetSerials((prev) => Array.from(new Set([...prev, ...filteredDevices.map((d) => d.serialNumber)])))
+                              : setTargetSerials((prev) => prev.filter((s) => !filteredDevices.some((d) => d.serialNumber === s)))
+                            }
+                            className="h-3.5 w-3.5 accent-[#1a4a73]"
+                          />
+                        </th>
+                        <th className="px-4 py-3 text-left">Device Name</th>
+                        <th className="px-4 py-3 text-left">Serial No</th>
+                        <th className="px-4 py-3 text-left">Area</th>
+                        <th className="px-4 py-3 text-left">Dup. Punch Period</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#eef5fc]">
+                      {filteredDevices.length === 0 ? (
+                        <tr><td colSpan={5} className="py-10 text-center text-[#7a93ab]">No devices found.</td></tr>
+                      ) : filteredDevices.map((dev) => {
+                        const isChk = targetSerials.includes(dev.serialNumber);
+                        const savedVal = snapshot.deviceDuplicatePunchPeriodMinutes ?? 0;
+                        const periodLabel = savedVal === 0 ? "Off" : `${savedVal} min`;
+                        const periodApplied = targetSerials.length === 0 || targetSerials.includes(dev.serialNumber);
+                        return (
+                          <tr
+                            key={dev.serialNumber}
+                            onClick={() => setTargetSerials((prev) => isChk ? prev.filter((s) => s !== dev.serialNumber) : [...prev, dev.serialNumber])}
+                            className={`cursor-pointer hover:bg-[#fafcff] ${isChk ? "bg-[#f4f9ff]" : ""}`}
+                          >
+                            <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={isChk}
+                                onChange={(e) => setTargetSerials((prev) => e.target.checked ? [...prev, dev.serialNumber] : prev.filter((s) => s !== dev.serialNumber))}
+                                className="h-3.5 w-3.5 accent-[#1a4a73]"
+                              />
+                            </td>
+                            <td className="px-4 py-3 font-medium text-[#0f3356]">{dev.name || "—"}</td>
+                            <td className="px-4 py-3 font-mono text-xs font-bold text-[#1a4a73]">{dev.serialNumber}</td>
+                            <td className="px-4 py-3 text-xs text-[#5a7a96]">{dev.area || "—"}</td>
+                            <td className="px-4 py-3">
+                              {periodApplied
+                                ? <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                    savedVal === 0 ? "bg-[#f0f4f8] text-[#7a93ab]" : "bg-[#dceeff] text-[#1a4a73]"
+                                  }`}>{periodLabel}</span>
+                                : <span className="text-xs text-[#9ab0c4]">—</span>
+                              }
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </div>
@@ -1167,17 +1380,33 @@ export default function AccessControlPage() {
 
       {/* ── Time Period Modal ── */}
       {modal?.kind==="time-period"&&(
-        <Modal title={tpForm.id?"Edit Time Period":"New Time Period"} onClose={closeModal} onSave={saveTp} saveLabel="Save">
+        <Modal
+          title={tpForm.id?"Edit Time Period":"New Time Period"}
+          onClose={closeModal}
+          onSave={saveTp}
+          saveLabel="Save"
+          onReset={() => {
+            const area = tpForm.area || firstArea;
+            setTpForm(c => ({
+              ...c,
+              periodNo: "1",
+              name: "Time Period 1",
+              remark: "Default",
+              days: createDays(),
+              deviceSerials: devs.filter(d => (d.area || "Default Area") === area).map(d => d.serialNumber)
+            }));
+          }}
+        >
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <F label="Area"><select value={tpForm.area} onChange={e=>{setTpForm(c=>({...c,area:e.target.value,department:"All"}));}} className={ic}>{areaOpts.filter(a=>a!=="All").map(a=><option key={a}>{a}</option>)}</select></F>
-              <F label="Period No"><input value={tpForm.periodNo} onChange={e=>setTpForm(c=>({...c,periodNo:e.target.value}))} placeholder="Auto" className={ic}/></F>
+              <F label="Period No (1–50)"><input value={tpForm.periodNo} onChange={e=>setTpForm(c=>({...c,periodNo:e.target.value}))} placeholder="Auto" className={ic}/></F>
               <F label="Name"><input value={tpForm.name} onChange={e=>setTpForm(c=>({...c,name:e.target.value}))} className={ic}/></F>
             </div>
             <div>
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-semibold text-[#1a4a73]">Day Schedule</span>
-                <button type="button" onClick={()=>setTpForm(c=>({...c,days:c.days.map(d=>({...d,startTime:"00:00:00",endTime:"23:59:00",isActive:true}))}))} className="text-xs text-[#1a4a73] hover:underline">Reset all to 00:00–23:59</button>
+                <button type="button" onClick={()=>setTpForm(c=>({...c,days:c.days.map(d=>({...d,startTime:"00:00:00",endTime:"23:59:00",isActive:true}))}))} className="text-xs text-[#1a4a73] hover:underline font-medium">Reset all to 00:00–23:59</button>
               </div>
               <div className="overflow-x-auto rounded-lg border border-[#d5e8f7]">
                 <table className="min-w-full text-sm">
@@ -1204,7 +1433,27 @@ export default function AccessControlPage() {
 
       {/* ── Access Group Modal ── */}
       {modal?.kind==="group"&&(
-        <Modal title={grpForm.id?"Edit Access Group":"New Access Group"} onClose={closeModal} onSave={saveGrp} saveLabel="Save">
+        <Modal
+          title={grpForm.id?"Edit Access Group":"New Access Group"}
+          onClose={closeModal}
+          onSave={saveGrp}
+          saveLabel="Save"
+          onReset={() => {
+            const area = grpForm.area || firstArea;
+            const areaTps = snapshot.timePeriods.filter(t => t.area === area);
+            const tp1Id = areaTps.find(t => t.periodNo === "1")?.id ?? areaTps[0]?.id ?? defaultTpId(snapshot.timePeriods);
+            setGrpForm(c => ({
+              ...c,
+              groupNo: "1",
+              name: "Access Group 1",
+              verificationMode: "0",
+              timePeriodIds: [tp1Id, "", ""],
+              includeHoliday: false,
+              remark: "Default",
+              deviceSerials: devs.filter(d => (d.area || "Default Area") === area).map(d => d.serialNumber)
+            }));
+          }}
+        >
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <F label="Area"><select value={grpForm.area} onChange={e=>{setGrpForm(c=>({...c,area:e.target.value,department:"All"}));}} className={ic}>{areaOpts.filter(a=>a!=="All").map(a=><option key={a}>{a}</option>)}</select></F>
@@ -1224,7 +1473,25 @@ export default function AccessControlPage() {
 
       {/* ── Combination Modal ── */}
       {modal?.kind==="combination"&&(
-        <Modal title={combForm.id?"Edit Combination":"New Combination"} onClose={closeModal} onSave={saveComb} saveLabel="Save">
+        <Modal
+          title={combForm.id?"Edit Combination":"New Combination"}
+          onClose={closeModal}
+          onSave={saveComb}
+          saveLabel="Save"
+          onReset={() => {
+            const area = combForm.area || firstArea;
+            const areaGrps = snapshot.groups.filter(g => g.area === area);
+            const grp1Id = areaGrps.find(g => g.groupNo === "1")?.id ?? areaGrps[0]?.id ?? defaultGrpId(snapshot.groups);
+            setCombForm(c => ({
+              ...c,
+              combinationNo: "1",
+              name: "Combination 1",
+              groupIds: [grp1Id, "", "", "", ""],
+              remark: "Default",
+              deviceSerials: devs.filter(d => (d.area || "Default Area") === area).map(d => d.serialNumber)
+            }));
+          }}
+        >
           <div className="space-y-4">
             {filt.comb.length>=10&&!combForm.id&&<div className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-700">⚠ Maximum 10 combinations per device.</div>}
             <div className="grid gap-3 sm:grid-cols-2">
@@ -1245,7 +1512,29 @@ export default function AccessControlPage() {
 
       {/* ── Privilege Modal ── */}
       {modal?.kind==="privilege"&&(
-        <Modal title={privForm.id?"Edit Privilege":"New Privilege"} onClose={closeModal} onSave={savePriv} saveLabel="Confirm">
+        <Modal
+          title={privForm.id?"Edit Privilege":"New Privilege"}
+          onClose={closeModal}
+          onSave={savePriv}
+          saveLabel="Confirm"
+          onReset={() => {
+            const area = privForm.area || firstArea;
+            const areaGrps = snapshot.groups.filter(g => g.area === area);
+            const areaTps = snapshot.timePeriods.filter(t => t.area === area);
+            const grp1Id = areaGrps.find(g => g.groupNo === "1")?.id ?? areaGrps[0]?.id ?? defaultGrpId(snapshot.groups);
+            const tp1Id = areaTps.find(t => t.periodNo === "1")?.id ?? areaTps[0]?.id ?? defaultTpId(snapshot.timePeriods);
+            setPrivForm(c => ({
+              ...c,
+              groupId: grp1Id,
+              verificationMode: "group",
+              verificationModeValue: "0",
+              timePeriodMode: "group",
+              timePeriodIds: [tp1Id, "", ""],
+              remark: "Default",
+              deviceSerials: devs.filter(d => (d.area || "Default Area") === area).map(d => d.serialNumber)
+            }));
+          }}
+        >
           <div className="space-y-4">
             {/* Filter + Group */}
             <div className="grid gap-3 sm:grid-cols-2">
@@ -1286,7 +1575,7 @@ export default function AccessControlPage() {
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <p className="text-xs font-bold uppercase tracking-wide text-[#1a4a73]">Select Employees ({privForm.employeeIds.length} selected)</p>
-                <button type="button" onClick={()=>{ if(privForm.employeeIds.length===privEmps.length) privEmps.forEach(e=>toggleEmp(e,false)); else privEmps.forEach(e=>toggleEmp(e,true)); }} className="text-xs text-[#1a4a73] hover:underline">{privForm.employeeIds.length===privEmps.length?"Deselect All":"Select All"}</button>
+                <button type="button" onClick={()=>{ if(privForm.employeeIds.length===privEmps.length) privEmps.forEach(e=>toggleEmp(e,false)); else privEmps.forEach(e=>toggleEmp(e,true)); }} className="text-xs text-[#1a4a73] hover:underline font-medium">{privForm.employeeIds.length===privEmps.length?"Deselect All":"Select All"}</button>
               </div>
               <div className="max-h-56 overflow-auto rounded-lg border border-[#d5e8f7]">
                 {privEmps.length===0?<p className="py-6 text-center text-sm text-[#7a93ab]">No employees in this area/department.</p>:(
@@ -1488,27 +1777,38 @@ function F({label,children,cls}:{label:string;children:React.ReactNode;cls?:stri
 }
 
 // ── Modal helper ──────────────────────────────────────────────────────────────
-function Modal({title,children,onClose,onSave,saveLabel}:{title:string;children:React.ReactNode;onClose:()=>void;onSave:()=>void;saveLabel:string}){
+function Modal({title,children,onClose,onSave,onReset,saveLabel}:{title:string;children:React.ReactNode;onClose:()=>void;onSave:()=>void;onReset?:()=>void;saveLabel:string}){
   useEffect(()=>{
     const h=(e:KeyboardEvent)=>{ if(e.key==="Escape") onClose(); };
     window.addEventListener("keydown",h);
     return ()=>window.removeEventListener("keydown",h);
   },[onClose]);
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-3">
-      <div className="flex min-h-full items-start justify-center py-4">
-        <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-          <div className="flex items-center justify-between border-b border-[#e8f2fb] px-5 py-4">
-            <h2 className="text-base font-bold text-[#0f3356]">{title}</h2>
-            <button type="button" onClick={onClose} className="rounded-lg border border-[#d5e8f7] p-1.5 text-[#5a7a96] hover:bg-[#f0f7ff]"><X className="h-4 w-4"/></button>
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 backdrop-blur-sm p-4 sm:p-6 grid place-items-center">
+      <div className="relative my-auto flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-[#d5e8f7]">
+        <div className="flex items-center justify-between border-b border-[#e8f2fb] px-5 py-3.5 bg-[#f8fbfe]">
+          <h2 className="text-base font-bold text-[#0f3356]">{title}</h2>
+          <div className="flex items-center gap-2">
+            {onReset && (
+              <button
+                type="button"
+                onClick={onReset}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#c8ddf0] bg-white px-3 py-1.5 text-xs font-semibold text-[#1a4a73] hover:bg-[#eef6ff] transition shadow-sm"
+              >
+                <RotateCcw className="h-3.5 w-3.5 text-[#1a4a73]" />
+                Reset to Default
+              </button>
+            )}
+            <button type="button" onClick={onClose} className="rounded-lg border border-[#d5e8f7] p-1.5 text-[#5a7a96] hover:bg-[#f0f7ff] transition"><X className="h-4 w-4"/></button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
-          <div className="flex items-center justify-end gap-2 border-t border-[#e8f2fb] px-5 py-3">
-            <button type="button" onClick={onClose} className="rounded-lg border border-[#c8ddf0] px-4 py-2 text-sm font-semibold text-[#2d5a7e] hover:bg-[#f0f7ff]">Cancel</button>
-            <button type="button" onClick={onSave} className="rounded-lg bg-[#1a4a73] px-5 py-2 text-sm font-semibold text-white hover:bg-[#15395c]">{saveLabel}</button>
-          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div className="flex items-center justify-end gap-2 border-t border-[#e8f2fb] px-5 py-3 bg-[#f8fbfe]">
+          <button type="button" onClick={onClose} className="rounded-lg border border-[#c8ddf0] px-4 py-2 text-sm font-semibold text-[#2d5a7e] hover:bg-[#f0f7ff] transition">Cancel</button>
+          <button type="button" onClick={onSave} className="rounded-lg bg-[#1a4a73] px-5 py-2 text-sm font-semibold text-white hover:bg-[#15395c] transition shadow-sm">{saveLabel}</button>
         </div>
       </div>
     </div>
   );
 }
+

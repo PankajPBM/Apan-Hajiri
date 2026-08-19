@@ -86,6 +86,9 @@ export default function SetupPage() {
   const [areas, setAreas] = useState<AreaRow[]>([]);
   const [departments, setDepartments] = useState<DepartmentRow[]>([]);
   const [positions, setPositions] = useState<PositionRow[]>([]);
+  const [creatingArea, setCreatingArea] = useState(false);
+  const [creatingDepartment, setCreatingDepartment] = useState(false);
+  const [creatingPosition, setCreatingPosition] = useState(false);
 
   const [openAdd, setOpenAdd] = useState<Record<SectionKey, boolean>>({ areas: false, departments: false, positions: false });
   const [areaForm, setAreaForm] = useState<AreaForm>({ code: "", name: "", remark: "" });
@@ -111,7 +114,7 @@ export default function SetupPage() {
     router.replace(`${pathname}?${q.toString()}` as Route);
   };
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (): Promise<SetupPayload | null> => {
     setLoading(true);
     const loadingTimer = setTimeout(() => setShowLoading(true), 180);
     setError(null);
@@ -120,8 +123,10 @@ export default function SetupPage() {
       setAreas(payload?.areas ?? []);
       setDepartments(payload?.departments ?? []);
       setPositions(payload?.positions ?? []);
+      return payload;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load setup data.");
+      return null;
     } finally {
       clearTimeout(loadingTimer);
       setLoading(false);
@@ -147,9 +152,12 @@ export default function SetupPage() {
       let ac = readAccessControlSnapshot();
       try { ac = await loadAccessControlFromApi(); } catch { /* ignore */ }
       
+      const devicesPayload = await requestJson<any[]>("/api/devices").catch(() => []);
+      const devices = Array.isArray(devicesPayload) ? devicesPayload : [];
+      
       await ensureAccessControlDefaults(
         payload.areas.map(a => ({ name: a.name, code: a.code })),
-        payload.departments.map(d => ({ name: d.name, areaName: d.areaName, areaCode: d.areaCode })),
+        devices.map(d => ({ serialNumber: String(d.serialNumber || d.sn || ""), area: String(d.location || d.area || "") })),
         ac
       );
     } catch (e) {
@@ -163,9 +171,11 @@ export default function SetupPage() {
   };
 
   async function createArea() {
+    if (creatingArea) return;
     const code = areaForm.code.trim();
     const name = areaForm.name.trim();
     if (!code || !name) return setError("Area ID and Area Name are required.");
+    setCreatingArea(true);
     try {
       await requestJson("/api/personnel/areas", { method: "POST", body: JSON.stringify({ code, name, remark: areaForm.remark.trim() }) });
       setAreaForm({ code: "", name: "", remark: "" });
@@ -173,7 +183,17 @@ export default function SetupPage() {
       await loadAll();
       void seedAccessControl();
     } catch (err) {
+      const refreshed = await loadAll();
+      const created = refreshed?.areas?.some((area) => area.code.trim().toLowerCase() === code.toLowerCase());
+      if (created) {
+        setAreaForm({ code: "", name: "", remark: "" });
+        setOpenAdd((prev) => ({ ...prev, areas: false }));
+        void seedAccessControl();
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to create area.");
+    } finally {
+      setCreatingArea(false);
     }
   }
 
@@ -196,9 +216,11 @@ export default function SetupPage() {
   }
 
   async function createDepartment() {
+    if (creatingDepartment) return;
     const code = deptForm.code.trim();
     const name = deptForm.name.trim();
     if (!code || !name) return setError("Department code and name are required.");
+    setCreatingDepartment(true);
     try {
       await requestJson("/api/personnel/departments", {
         method: "POST",
@@ -215,7 +237,17 @@ export default function SetupPage() {
       await loadAll();
       void seedAccessControl();
     } catch (err) {
+      const refreshed = await loadAll();
+      const created = refreshed?.departments?.some((department) => department.code.trim().toLowerCase() === code.toLowerCase());
+      if (created) {
+        setDeptForm({ code: "", name: "", areaCode: "1", superior: "", manager: "" });
+        setOpenAdd((prev) => ({ ...prev, departments: false }));
+        void seedAccessControl();
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to create department.");
+    } finally {
+      setCreatingDepartment(false);
     }
   }
 
@@ -246,9 +278,11 @@ export default function SetupPage() {
   }
 
   async function createPosition() {
+    if (creatingPosition) return;
     const code = positionForm.code.trim();
     const name = positionForm.name.trim();
     if (!code || !name) return setError("Position code and name are required.");
+    setCreatingPosition(true);
     try {
       await requestJson("/api/personnel/positions", {
         method: "POST",
@@ -258,7 +292,16 @@ export default function SetupPage() {
       setOpenAdd((prev) => ({ ...prev, positions: false }));
       await loadAll();
     } catch (err) {
+      const refreshed = await loadAll();
+      const created = refreshed?.positions?.some((position) => position.code.trim().toLowerCase() === code.toLowerCase());
+      if (created) {
+        setPositionForm({ code: "", name: "", department: "" });
+        setOpenAdd((prev) => ({ ...prev, positions: false }));
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to create position.");
+    } finally {
+      setCreatingPosition(false);
     }
   }
 
@@ -343,7 +386,7 @@ export default function SetupPage() {
                 <input value={areaForm.code} onChange={(e) => setAreaForm((p) => ({ ...p, code: e.target.value }))} placeholder="Area ID" className={inputClass} />
                 <input value={areaForm.name} onChange={(e) => setAreaForm((p) => ({ ...p, name: e.target.value }))} placeholder="Area Name" className={inputClass} />
                 <input value={areaForm.remark} onChange={(e) => setAreaForm((p) => ({ ...p, remark: e.target.value }))} placeholder="Remark" className={inputClass} />
-                <button type="button" onClick={() => void createArea()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1f5c8f] px-3 py-2 text-sm font-medium text-white"><Plus className="h-4 w-4" />Save Area</button>
+                <button type="button" disabled={creatingArea} onClick={() => void createArea()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1f5c8f] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"><Plus className="h-4 w-4" />{creatingArea ? "Saving..." : "Save Area"}</button>
               </div>
             </div>
           ) : null}
@@ -397,7 +440,7 @@ export default function SetupPage() {
                 <select value={deptForm.areaCode} onChange={(e) => setDeptForm((p) => ({ ...p, areaCode: e.target.value }))} className={inputClass}>{areaOptions.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}</select>
                 <input value={deptForm.superior} onChange={(e) => setDeptForm((p) => ({ ...p, superior: e.target.value }))} placeholder="Superior" className={inputClass} />
                 <input value={deptForm.manager} onChange={(e) => setDeptForm((p) => ({ ...p, manager: e.target.value }))} placeholder="Manager" className={inputClass} />
-                <button type="button" onClick={() => void createDepartment()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1f5c8f] px-3 py-2 text-sm font-medium text-white"><Plus className="h-4 w-4" />Save Department</button>
+                <button type="button" disabled={creatingDepartment} onClick={() => void createDepartment()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1f5c8f] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"><Plus className="h-4 w-4" />{creatingDepartment ? "Saving..." : "Save Department"}</button>
               </div>
             </div>
           ) : null}
@@ -445,7 +488,7 @@ export default function SetupPage() {
                 <input value={positionForm.code} onChange={(e) => setPositionForm((p) => ({ ...p, code: e.target.value }))} placeholder="Position Code" className={inputClass} />
                 <input value={positionForm.name} onChange={(e) => setPositionForm((p) => ({ ...p, name: e.target.value }))} placeholder="Position Name" className={inputClass} />
                 <select value={positionForm.department} onChange={(e) => setPositionForm((p) => ({ ...p, department: e.target.value }))} className={inputClass}><option value="">Department</option>{departmentNameOptions.map((d) => <option key={d} value={d}>{d}</option>)}</select>
-                <button type="button" onClick={() => void createPosition()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1f5c8f] px-3 py-2 text-sm font-medium text-white"><Plus className="h-4 w-4" />Save Position</button>
+                <button type="button" disabled={creatingPosition} onClick={() => void createPosition()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1f5c8f] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"><Plus className="h-4 w-4" />{creatingPosition ? "Saving..." : "Save Position"}</button>
               </div>
             </div>
           ) : null}

@@ -30,9 +30,9 @@
     <FrontendExportDir>..\e-attendance-next\out</FrontendExportDir>
     <!-- Ship only English satellite resources (no cs/de/fr/ja/... waste folders) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <Version>1.0.0</Version>
-    <FileVersion>1.0.0.0</FileVersion>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Version>1.1.11</Version>
+    <FileVersion>1.1.11.0</FileVersion>
+    <AssemblyVersion>1.1.11.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -48,24 +48,22 @@
     </Content>
   </ItemGroup>
 
-  <Target Name="SyncBundledFrontend" AfterTargets="Build;Publish" DependsOnTargets="BuildBundledFrontend" Condition="Exists('$(MSBuildProjectDirectory)\$(FrontendExportDir)\index.html')">
+  <Target Name="SyncBundledFrontend" AfterTargets="Build;Publish" Condition="Exists('$(MSBuildProjectDirectory)\$(FrontendExportDir)\index.html')">
     <ItemGroup>
       <BundledFrontendFiles Include="$(MSBuildProjectDirectory)\$(FrontendExportDir)\**\*" />
     </ItemGroup>
 
     <Message Importance="High" Text="Syncing bundled frontend from $(FrontendExportDir) to wwwroot and output directory." />
-    
+
+    <!-- Clean old stale static chunks in wwwroot before syncing new build -->
+    <RemoveDir Directories="$(MSBuildProjectDirectory)\wwwroot\_next" Condition="Exists('$(MSBuildProjectDirectory)\wwwroot\_next')" />
+    <RemoveDir Directories="$(TargetDir)\wwwroot\_next" Condition="'$(TargetDir)' != '' And Exists('$(TargetDir)\wwwroot\_next')" />
+
     <!-- Sync to source wwwroot for persistence -->
     <Copy SourceFiles="@(BundledFrontendFiles)" DestinationFiles="@(BundledFrontendFiles->'$(MSBuildProjectDirectory)\wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true" />
 
     <!-- Sync to output directory for immediate use by the running app -->
     <Copy SourceFiles="@(BundledFrontendFiles)" DestinationFiles="@(BundledFrontendFiles->'$(TargetDir)\wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true" Condition="'$(TargetDir)' != ''" />
-  </Target>
-
-  <Target Name="BuildBundledFrontend" BeforeTargets="SyncBundledFrontend" Condition="Exists('$(MSBuildProjectDirectory)\..\e-attendance-next\package.json')">
-    <Message Importance="High" Text="Building bundled frontend in e-attendance-next." />
-    <Exec Command="npm install" WorkingDirectory="$(MSBuildProjectDirectory)\..\e-attendance-next" />
-    <Exec Command="npm run build" WorkingDirectory="$(MSBuildProjectDirectory)\..\e-attendance-next" />
   </Target>
 
 </Project>

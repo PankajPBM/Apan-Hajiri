@@ -23,9 +23,9 @@
     <RollForward>LatestMinor</RollForward>
     <!-- Ship only English satellite resources (no cs/de/fr/ja/... waste folders) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <Version>1.0.0</Version>
-    <FileVersion>1.0.0.0</FileVersion>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Version>1.1.11</Version>
+    <FileVersion>1.1.11.0</FileVersion>
+    <AssemblyVersion>1.1.11.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>

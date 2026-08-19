@@ -147,7 +147,7 @@ const accessControlSubItems: NavItem[] = [
 ];
 
 const afterShiftNavItems: NavItem[] = [
-  { href: "/attendance" as Route, label: "Transactions", icon: ClipboardCheck, matchPath: "/attendance" as Route, feature: "transactions" },
+  { href: "/transactions" as Route, label: "Transactions", icon: ClipboardCheck, matchPath: "/transactions" as Route, feature: "transactions" },
   { href: "/leaves" as Route, label: "Leaves and Holiday", icon: CalendarOff, matchPath: "/leaves" as Route, feature: "leaves" },
   { href: "/reports" as Route, label: "Reports", icon: BarChart3, matchPath: "/reports" as Route, feature: "reports" },
   { href: "/logs" as Route, label: "Logs", icon: FileText, matchPath: "/logs" as Route, feature: "logs" },
