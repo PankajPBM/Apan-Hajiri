@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Building2, Check, Users, UsersRound } from "lucide-react";
 import { resolveApiBases } from "@/lib/api-bases";
@@ -202,6 +202,35 @@ export default function AssignPage() {
   const defaultShiftId = useMemo(
     () => shiftPlans.find((x) => x.isActive)?.id ?? shiftPlans[0]?.id ?? "",
     [shiftPlans],
+  );
+
+  const resolveShiftPlan = useCallback(
+    (shiftIdOrName: string): ShiftPlanDefinition | null => {
+      const norm = (shiftIdOrName || "").trim().toLowerCase();
+      if (!norm) return null;
+      const byId = shiftPlans.find((p) => p.id.toLowerCase() === norm);
+      if (byId) return byId;
+      const byName = shiftPlans.find((p) => p.name.trim().toLowerCase() === norm);
+      if (byName) return byName;
+      if (norm === "general" || norm === "default") {
+        return shiftPlans.find((p) => p.id === "default-shift-plan") ?? shiftPlans[0] ?? null;
+      }
+      return null;
+    },
+    [shiftPlans],
+  );
+
+  const resolveShiftName = useCallback(
+    (shiftIdOrName: string): string => {
+      const plan = resolveShiftPlan(shiftIdOrName);
+      if (plan) return plan.name;
+      const def = shiftDefinitions.find(
+        (d) => d.id.toLowerCase() === shiftIdOrName.toLowerCase() || d.name.toLowerCase() === shiftIdOrName.toLowerCase()
+      );
+      if (def) return def.name;
+      return shiftIdOrName || "Not Assigned";
+    },
+    [resolveShiftPlan, shiftDefinitions],
   );
 
   const activeEmployees = useMemo(
@@ -518,13 +547,14 @@ export default function AssignPage() {
 
   const handleEditAssignment = (row: ShiftAssignment) => {
     setActiveTab(row.targetType);
+    const resolvedPlanId = resolveShiftPlan(row.shiftId)?.id ?? row.shiftId;
     setAssignmentForm({
       id: row.id,
       targetType: row.targetType,
       department: row.targetType === "department" ? (row.department || "all") : "all",
       employeeCode: row.targetType === "employee" ? row.employeeCode : "",
       groupId: row.targetType === "group" ? row.groupId : "",
-      shiftId: row.shiftId,
+      shiftId: resolvedPlanId,
       effectiveFrom: row.effectiveFrom,
       effectiveTo: row.effectiveTo ?? "",
       isActive: row.isActive,
@@ -604,12 +634,11 @@ export default function AssignPage() {
   );
 
   const previewRows = useMemo(() => {
-    const shiftPlanMap = new Map(shiftPlans.map((s) => [s.id, s]));
     const timetableMap = new Map(timetables.map((t) => [t.id, t]));
     const dayOfWeek = new Date(`${previewDate}T00:00:00`).getDay();
     const dayOfMonth = new Date(`${previewDate}T00:00:00`).getDate();
 
-    const resolveTimetableLabel = (plan: typeof shiftPlans[0] | null) => {
+    const resolveTimetableLabel = (plan: ShiftPlanDefinition | null) => {
       if (!plan) return "-";
       let timetableId: string | null = null;
       if (plan.cycleType === "daily") timetableId = plan.dailyTimetableId ?? null;
@@ -648,7 +677,7 @@ export default function AssignPage() {
             return pri(b) - pri(a) || b.effectiveFrom.localeCompare(a.effectiveFrom);
           });
         const assignment = active[0];
-        const plan = assignment ? (shiftPlanMap.get(assignment.shiftId) ?? null) : null;
+        const plan = assignment ? resolveShiftPlan(assignment.shiftId) : null;
         const holiday = isHoliday(previewDate, e.department, shiftCalendar);
         const label = holiday ? `Holiday${holiday.name ? ` (${holiday.name})` : ""}` : plan ? plan.name : "Not Assigned";
         return {
@@ -662,16 +691,15 @@ export default function AssignPage() {
         };
       })
       .sort((a, b) => a.employeeCode.localeCompare(b.employeeCode, undefined, { numeric: true }));
-  }, [employees, previewDate, shiftAssignments, shiftPlans, timetables, shiftCalendar, shiftGroups]);
+  }, [employees, previewDate, shiftAssignments, shiftPlans, timetables, shiftCalendar, shiftGroups, resolveShiftPlan]);
 
   const previewByDept = useMemo(() => {
-    const shiftPlanMap = new Map(shiftPlans.map((s) => [s.id, s]));
     const timetableMap = new Map(timetables.map((t) => [t.id, t]));
     const dayOfWeek = new Date(`${previewDate}T00:00:00`).getDay();
     const dayOfMonth = new Date(`${previewDate}T00:00:00`).getDate();
 
     const resolveTimetableLabel = (planId: string) => {
-      const plan = shiftPlanMap.get(planId);
+      const plan = resolveShiftPlan(planId);
       if (!plan) return "-";
       let timetableId: string | null = null;
       if (plan.cycleType === "daily") timetableId = plan.dailyTimetableId ?? null;
@@ -694,7 +722,7 @@ export default function AssignPage() {
       )
       .map((a) => ({
         department: a.department?.trim() || "All Departments",
-        shiftName: shiftPlanMap.get(a.shiftId)?.name ?? a.shiftId,
+        shiftName: resolveShiftName(a.shiftId),
         timetableLabel: resolveTimetableLabel(a.shiftId),
         effectiveFrom: a.effectiveFrom,
         effectiveTo: a.effectiveTo,
@@ -709,7 +737,7 @@ export default function AssignPage() {
       map.set(key, list);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [shiftAssignments, shiftPlans, timetables, previewDate]);
+  }, [shiftAssignments, shiftPlans, timetables, previewDate, resolveShiftPlan, resolveShiftName]);
 
   const previewByGroup = useMemo(() => {
     return shiftGroups
@@ -1205,7 +1233,7 @@ export default function AssignPage() {
               </thead>
               <tbody>
                 {assignmentRows.map((row) => {
-                  const shiftName = shiftById.get(row.shiftId)?.name ?? row.shiftId;
+                  const shiftName = resolveShiftName(row.shiftId);
                   const targetTypeLabel = formatTargetTypeLabel(row.targetType);
                   const targetLabel =
                     row.targetType === "department"

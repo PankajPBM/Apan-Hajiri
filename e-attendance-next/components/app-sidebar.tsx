@@ -83,6 +83,14 @@ const shiftSubItems: NavItem[] = [
     matchQuery: { key: "tab", value: "setup" },
     feature: "shift",
   },
+  {
+    href: { pathname: "/shifts" as Route, query: { tab: "overtime" } },
+    label: "OT",
+    icon: CalendarClock,
+    matchPath: "/shifts" as Route,
+    matchQuery: { key: "tab", value: "overtime" },
+    feature: "shift",
+  },
 ];
 
 const scheduleSubItems: NavItem[] = [
@@ -144,6 +152,14 @@ const accessControlSubItems: NavItem[] = [
     matchQuery: { key: "section", value: "privilege" },
     feature: "assign",
   },
+  {
+    href: { pathname: "/access-control" as Route, query: { section: "duplicate-punch" } },
+    label: "Device Duplicate Punch",
+    icon: Clock,
+    matchPath: "/access-control" as Route,
+    matchQuery: { key: "section", value: "duplicate-punch" },
+    feature: "assign",
+  },
 ];
 
 const afterShiftNavItems: NavItem[] = [
@@ -157,7 +173,7 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const tab = searchParams.get("tab");
-  const activeTab = tab === "timetable" ? "timetable" : tab === "break" ? "break" : "setup";
+  const activeTab = tab === "timetable" ? "timetable" : tab === "break" ? "break" : tab === "overtime" ? "overtime" : "setup";
   const accessSection = searchParams.get("section");
   const legacyShifts = pathname === "/shifts" || pathname.startsWith("/shifts/");
   const isShiftRoute = pathname === "/shift" || pathname.startsWith("/shift/");
@@ -181,14 +197,34 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
   const scheduleGroupActive = isAssignRoute;
   const accessControlActive = isAccessControlRoute;
 
-  const [shiftOpen, setShiftOpen] = useState(shiftGroupActive);
-  const [scheduleOpen, setScheduleOpen] = useState(scheduleGroupActive);
-  const [accessControlOpen, setAccessControlOpen] = useState(accessControlActive);
+  type MenuGroup = "shift" | "schedule" | "accessControl";
+  const initialOpenGroup: MenuGroup | null =
+    accessControlActive ? "accessControl" :
+    scheduleGroupActive ? "schedule" :
+    shiftGroupActive ? "shift" : null;
+
+  const [openGroup, setOpenGroup] = useState<MenuGroup | null>(initialOpenGroup);
+
+  const shiftOpen = openGroup === "shift";
+  const scheduleOpen = openGroup === "schedule";
+  const accessControlOpen = openGroup === "accessControl";
+
+  const toggleGroup = (group: MenuGroup) => {
+    if (collapsed) return;
+    setOpenGroup((prev) => (prev === group ? null : group));
+  };
+
   const [isLocked, setIsLocked] = useState(false);
 
-  useEffect(() => { if (shiftGroupActive) setShiftOpen(true); }, [shiftGroupActive]);
-  useEffect(() => { if (scheduleGroupActive) setScheduleOpen(true); }, [scheduleGroupActive]);
-  useEffect(() => { if (accessControlActive) setAccessControlOpen(true); }, [accessControlActive]);
+  useEffect(() => {
+    if (accessControlActive) {
+      setOpenGroup("accessControl");
+    } else if (scheduleGroupActive) {
+      setOpenGroup("schedule");
+    } else if (shiftGroupActive) {
+      setOpenGroup("shift");
+    }
+  }, [accessControlActive, scheduleGroupActive, shiftGroupActive]);
 
   useEffect(() => {
     let active = true;
@@ -220,20 +256,22 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
         ["--sidebar-fg" as string]: sidebarFg,
       }}
     >
-      <div className="flex h-[4.5rem] min-h-[4.5rem] items-center gap-3 border-b border-white/20 px-4 py-3">
-        {branding.logoUrl ? (
-          <div className="grid h-9 w-9 place-items-center overflow-hidden rounded-full bg-white/90 shadow-[0_14px_22px_-16px_rgba(56,189,248,0.95)]">
-            <img src={branding.logoUrl} alt={branding.systemTitle} className="h-full w-full object-cover" />
-          </div>
-        ) : (
-          <div className="grid h-9 w-9 place-items-center rounded-full bg-[linear-gradient(145deg,#38bdf8,#2563eb)] font-bold text-white shadow-[0_14px_22px_-16px_rgba(56,189,248,0.95)]">
-            PB
-          </div>
-        )}
+      <div className="flex h-[4.8rem] min-h-[4.8rem] items-center gap-3 border-b border-white/20 px-3.5 py-2.5">
+        <div className={`grid ${collapsed ? "h-10 w-10" : "h-12 w-12"} shrink-0 place-items-center transition-all duration-200`}>
+          <img
+            src={branding.logoUrl || "/apan_logo.png"}
+            alt={branding.systemTitle || "Apan Hajiri"}
+            className="h-full w-full object-contain filter drop-shadow-[0_3px_8px_rgba(0,0,0,0.35)]"
+          />
+        </div>
         {!collapsed && (
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-white">{branding.organizationName}</div>
-            <div className="truncate text-xs text-[color:var(--sidebar-fg)]/75">Attendance Console</div>
+            <div className="truncate text-lg font-bold text-white font-nepali tracking-wide leading-tight">
+              {branding.organizationName || "अपन हाजिरी"}
+            </div>
+            <div className="truncate text-xs text-[color:var(--sidebar-fg)]/80 font-medium">
+              {branding.systemTitle || "Apan Hajiri Console"}
+            </div>
           </div>
         )}
         <button
@@ -282,7 +320,7 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
           <div className="space-y-1">
             <button
               type="button"
-              onClick={() => { if (!collapsed) setShiftOpen((prev) => !prev); }}
+              onClick={() => toggleGroup("shift")}
               className={`group flex w-full items-center rounded-xl px-3 py-2.5 text-left text-[0.95rem] font-semibold tracking-[0.01em] transition ${
                 shiftGroupActive
                   ? "border border-white/30 bg-white/18 text-white shadow-[0_12px_20px_-16px_rgba(8,31,61,0.9)]"
@@ -309,7 +347,10 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
                     active = (isTimetableRoute && searchParams.get("section") === "break") || (legacyShifts && searchParams.get("tab") === "break");
                   }
                   if (item.label === "Shifts") {
-                    active = isShiftRoute || (legacyShifts && activeTab === "setup");
+                    active = (isShiftRoute && tab !== "overtime") || (legacyShifts && activeTab === "setup");
+                  }
+                  if (item.label === "OT") {
+                    active = legacyShifts && activeTab === "overtime";
                   }
                   const Icon = item.icon;
                   return (
@@ -338,7 +379,7 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
           <div className="space-y-1">
             <button
               type="button"
-              onClick={() => { if (!collapsed) setScheduleOpen((prev) => !prev); }}
+              onClick={() => toggleGroup("schedule")}
               className={`group flex w-full items-center rounded-xl px-3 py-2.5 text-left text-[0.95rem] font-semibold tracking-[0.01em] transition ${
                 scheduleGroupActive
                   ? "border border-white/30 bg-white/18 text-white shadow-[0_12px_20px_-16px_rgba(8,31,61,0.9)]"
@@ -387,7 +428,7 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
           <div className="space-y-1">
             <button
               type="button"
-              onClick={() => { if (!collapsed) setAccessControlOpen((prev) => !prev); }}
+              onClick={() => toggleGroup("accessControl")}
               className={`group flex w-full items-center rounded-xl px-3 py-2.5 text-left text-[0.95rem] font-semibold tracking-[0.01em] transition ${
                 accessControlActive
                   ? "border border-white/30 bg-white/18 text-white shadow-[0_12px_20px_-16px_rgba(8,31,61,0.9)]"

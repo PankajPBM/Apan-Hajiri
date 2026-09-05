@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowRightLeft, Camera, ChevronDown, ChevronLeft, ChevronRight, Eye, Fingerprint, FolderOpen, KeyRound, Pencil, Plus, RotateCcw, ScanFace, Search, Settings2, Trash2, User, UserPlus, X } from "lucide-react";
+import { ArrowRightLeft, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, CreditCard, Eye, Fingerprint, FolderOpen, Hand, KeyRound, Pencil, Plus, RotateCcw, ScanFace, Search, Settings2, Trash2, User, UserPlus, X } from "lucide-react";
 import { type Employee } from "@/components/data/mock-data";
 import { BsDateField } from "@/components/date/dual-date-input";
 import { resolveApiBases } from "@/lib/api-bases";
@@ -111,13 +111,91 @@ type ManagedDeviceOption = {
   id: string;
   serialNumber: string;
   name: string;
+  model?: string;
   isOnline?: boolean;
   supportsVisibleLightFace?: boolean;
   supportsInfraredFace?: boolean;
   supportsFingerprint?: boolean;
+  faceFunOn?: boolean;
+  fingerFunOn?: boolean;
+  visiLightFunOn?: boolean;
   faceAlgorithmVersion?: string;
   fingerprintAlgorithmVersion?: string;
 };
+
+function deviceSupportsFace(device: ManagedDeviceOption): boolean {
+  if (device.supportsVisibleLightFace || device.supportsInfraredFace || device.faceFunOn || device.visiLightFunOn) {
+    return true;
+  }
+  if (device.faceAlgorithmVersion && device.faceAlgorithmVersion.trim() !== "" && device.faceAlgorithmVersion !== "0") {
+    return true;
+  }
+  const desc = `${device.model ?? ""} ${device.name ?? ""}`.toLowerCase();
+  if (desc.includes("face") || desc.includes("senseface") || desc.includes("speedface") || desc.includes("uface") || desc.includes("mb")) {
+    return true;
+  }
+  return false;
+}
+
+function deviceSupportsFingerprint(device: ManagedDeviceOption): boolean {
+  if (device.supportsFingerprint || device.fingerFunOn) {
+    return true;
+  }
+  if (device.fingerprintAlgorithmVersion && device.fingerprintAlgorithmVersion.trim() !== "" && device.fingerprintAlgorithmVersion !== "0") {
+    return true;
+  }
+  const desc = `${device.model ?? ""} ${device.name ?? ""}`.toLowerCase();
+  if (desc.includes("fp") || desc.includes("finger") || desc.includes("k40") || desc.includes("k50") || desc.includes("inbio") || desc.includes("speedface") || desc.includes("mb")) {
+    return true;
+  }
+  return false;
+}
+
+const FINGER_NAMES: Record<number, string> = {
+  0: "Left Little",
+  1: "Left Ring",
+  2: "Left Middle",
+  3: "Left Index",
+  4: "Left Thumb",
+  5: "Right Thumb",
+  6: "Right Index",
+  7: "Right Middle",
+  8: "Right Ring",
+  9: "Right Little",
+};
+
+function parseEnrolledFingerIndices(fingerprintTemplatesJson?: string): number[] {
+  if (!fingerprintTemplatesJson) return [];
+  try {
+    const parsed = JSON.parse(fingerprintTemplatesJson);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((x: any) => (typeof x?.FingerIndex === "number" ? x.FingerIndex : Number.parseInt(x?.FingerIndex, 10)))
+        .filter((n: number) => Number.isFinite(n) && n >= 0 && n <= 9);
+    }
+  } catch {
+    // legacy or non-JSON
+  }
+  return [];
+}
+
+function removeFingerprintFromJson(fingerprintTemplatesJson?: string, fingerIndexToRemove?: number): string {
+  if (!fingerprintTemplatesJson || fingerIndexToRemove == null) return "";
+  try {
+    const parsed = JSON.parse(fingerprintTemplatesJson);
+    if (Array.isArray(parsed)) {
+      const filtered = parsed.filter((x: any) => {
+        const fid = typeof x?.FingerIndex === "number" ? x.FingerIndex : Number.parseInt(x?.FingerIndex, 10);
+        return fid !== fingerIndexToRemove;
+      });
+      return filtered.length > 0 ? JSON.stringify(filtered) : "";
+    }
+  } catch {
+    // fallback
+  }
+  return "";
+}
+
 type DeviceCommandRow = {
   id: string;
   commandText: string;
@@ -464,6 +542,32 @@ export default function EmployeesPage() {
   const [colPrefs, setColPrefs] = useState<Record<string, boolean>>(DEFAULT_COLUMN_PREFS);
   const [colMenuOpen, setColMenuOpen] = useState(false);
 
+  // Software confirmation modal state
+  type SoftwareConfirmModal = {
+    isOpen: boolean;
+    title: string;
+    message: string;
+    detail?: string;
+    confirmLabel?: string;
+    confirmVariant?: "danger" | "primary" | "warning";
+    onConfirm: () => Promise<void> | void;
+    busy?: boolean;
+  };
+  const [confirmModal, setConfirmModal] = useState<SoftwareConfirmModal | null>(null);
+
+  // Row delete dropdown menu state
+  type RowDeleteMenuState = {
+    employee: EmployeeRow;
+    x: number;
+    y: number;
+  };
+  const [rowDeleteMenu, setRowDeleteMenu] = useState<RowDeleteMenuState | null>(null);
+
+  // Bulk biometric delete dropdown menu state
+  const [bulkBioMenuOpen, setBulkBioMenuOpen] = useState(false);
+  const [bulkBioMenuPos, setBulkBioMenuPos] = useState<{ left: number; top: number } | null>(null);
+  const bulkBioButtonRef = useRef<HTMLButtonElement | null>(null);
+
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(EMP_COLUMN_PREFS_KEY);
@@ -509,7 +613,7 @@ export default function EmployeesPage() {
   const [departmentRows, setDepartmentRows] = useState<PersonnelDepartmentRow[]>([]);
   const [positionRows, setPositionRows] = useState<PersonnelPositionRow[]>([]);
   const [remoteDevicePickerOpen, setRemoteDevicePickerOpen] = useState(false);
-  const [pendingRemoteToggle, setPendingRemoteToggle] = useState<"face" | "fp" | null>(null);
+  const [pendingRemoteToggle, setPendingRemoteToggle] = useState<"face" | "fp" | "card" | null>(null);
   const [enrollSaving, setEnrollSaving] = useState(false);
   const [enrollNudging, setEnrollNudging] = useState(false);
   const [enrollSession, setEnrollSession] = useState<{ serial: string; pin: string; startedAtMs: number; running: boolean } | null>(null);
@@ -535,12 +639,23 @@ export default function EmployeesPage() {
     gender: "Male" as "Male" | "Female" | "Other",
     dob: "",
     password: "",
+    isActive: true,
     remoteEnrollDeviceSerial: "",
     remoteEnrollFace: false,
     remoteEnrollFp: false,
     remoteFpIndex: "0",
     remoteFaceType: "9",
   });
+  const [fpOverwrite, setFpOverwrite] = useState(false);
+  const [fpDeletingIndex, setFpDeletingIndex] = useState<number | null>(null);
+
+  const currentEmployeeExtra = editingEmployeeId ? employeeExtras[editingEmployeeId] : undefined;
+  const currentEnrolledFingers = useMemo(() => {
+    return parseEnrolledFingerIndices(currentEmployeeExtra?.fingerprintTemplates);
+  }, [currentEmployeeExtra?.fingerprintTemplates]);
+  const chosenFp = Number.parseInt(addForm.remoteFpIndex, 10) || 0;
+  const isChosenFpEnrolled = currentEnrolledFingers.includes(chosenFp);
+
   const browseInputRef = useRef<HTMLInputElement | null>(null);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
   const cameraCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -637,12 +752,43 @@ export default function EmployeesPage() {
     if (cmd.includes("ENROLL_BIO")) {
       return "Face";
     }
+    if (cmd.includes("ENROLL_MF") || cmd.includes("CARD")) {
+      return "Card";
+    }
     return "Enroll";
   };
 
-  const returnCodeClass = (code: string) => {
+  const enrollReturnCodeMessage = (code: string, label: string) => {
     if (code === "0") {
+      if (label === "Card") {
+        return "Device ready — Swipe RFID card on device";
+      }
+      if (label === "Finger print enrolled" || label === "FP") {
+        return "Device ready — Place finger on sensor";
+      }
+      if (label === "Face") {
+        return "Device ready — Look at camera";
+      }
+      return "Device ready for enrollment";
+    }
+    if (code === "4") {
+      return "Enrollment failed — Please retry";
+    }
+    if (code === "5") {
+      return "Timed out — No card/biometric swiped";
+    }
+    if (code === "6") {
+      return "Enrollment cancelled on device";
+    }
+    return returnCodeMessage(code);
+  };
+
+  const returnCodeClass = (code: string, message?: string) => {
+    if (message?.includes("detected") || message?.includes("auto-filled") || message?.includes("Success")) {
       return "bg-[#e7f7ef] text-[#1f7a45] border-[#bfe7cf]";
+    }
+    if (code === "0") {
+      return "bg-[#eaf4ff] text-[#1b5585] border-[#b9d6f3]";
     }
     if (code === "-1" || code === "-3" || code === "4" || code === "5") {
       return "bg-[#fff1f1] text-[#a33737] border-[#f3c6c6]";
@@ -735,7 +881,7 @@ export default function EmployeesPage() {
           faceCount: raw.faceCount ?? raw.FaceCount ?? 0,
           photoCount: raw.photoCount ?? raw.PhotoCount ?? 0,
           verifyMode: raw.verifyMode ?? raw.VerifyMode,
-          groupId: raw.groupId ?? raw.GroupId,
+          groupId: !(raw.isActive ?? raw.IsActive ?? true) ? 0 : (raw.groupId ?? raw.GroupId ?? 1),
           timezoneProfile: raw.timezoneProfile ?? raw.TimezoneProfile ?? "",
           validFrom: raw.validFrom ?? raw.ValidFrom ?? "",
           validTo: raw.validTo ?? raw.ValidTo ?? "",
@@ -812,7 +958,7 @@ export default function EmployeesPage() {
             faceCount: item.faceCount ?? local?.faceCount ?? 0,
             photoCount: item.photoCount ?? local?.photoCount ?? 0,
             verifyMode: item.verifyMode ?? local?.verifyMode ?? 0,
-            groupId: item.groupId ?? local?.groupId,
+            groupId: !item.isActive ? 0 : (item.groupId ?? local?.groupId ?? 1),
             timezoneProfile: item.timezoneProfile ?? local?.timezoneProfile ?? "",
             validFrom: item.validFrom ?? local?.validFrom ?? "",
             validTo: item.validTo ?? local?.validTo ?? "",
@@ -1038,7 +1184,8 @@ export default function EmployeesPage() {
       const text = row.commandText.trim().toUpperCase();
       const enrollCommand =
         text.includes("ENROLL_FP") ||
-        text.includes("ENROLL_BIO");
+        text.includes("ENROLL_BIO") ||
+        text.includes("ENROLL_MF");
       if (!enrollCommand) {
         return false;
       }
@@ -1048,12 +1195,13 @@ export default function EmployeesPage() {
     const normalized = relevant.map((row) => {
       const meta = parseReplyMeta(row.replyText);
       const status = row.status ?? (row.replyText ? "replied" : row.sentUtc ? "sent" : "pending");
+      const label = detectEnrollLabel(row.commandText);
       return {
         id: row.id,
-        label: detectEnrollLabel(row.commandText),
+        label,
         status,
         returnCode: meta.returnCode,
-        returnMessage: returnCodeMessage(meta.returnCode),
+        returnMessage: enrollReturnCodeMessage(meta.returnCode, label),
         updatedAt: row.replyText ? new Date().toLocaleTimeString() : "",
         rawReply: meta.raw,
       } as EnrollLiveItem;
@@ -1066,9 +1214,9 @@ export default function EmployeesPage() {
     }
   };
 
-  const pollEnrollmentStatusByCommandId = async (commandId: string) => {
+  const pollEnrollmentStatusByCommandId = async (commandId: string, label: string = "Device") => {
     const startedAt = Date.now();
-    const timeoutMs = 30000;
+    const timeoutMs = 45000;
     while (Date.now() - startedAt < timeoutMs) {
       try {
         const row = await requestJson<{
@@ -1085,7 +1233,7 @@ export default function EmployeesPage() {
           setEnrollLiveItems([
             {
               id: `status-${Date.now()}`,
-              label: "Face",
+              label,
               status: "replied",
               returnCode: codeText,
               returnMessage: row.failed ? (row.errorMessage || "Enrollment failed") : "Success",
@@ -1094,6 +1242,9 @@ export default function EmployeesPage() {
             },
           ]);
           setEnrollSession((prev) => (prev ? { ...prev, running: false } : prev));
+          if (!row.failed) {
+            await loadEmployees();
+          }
           return;
         }
       } catch {
@@ -1618,12 +1769,14 @@ export default function EmployeesPage() {
       gender: "Male",
       dob: "",
       password: "",
+      isActive: true,
       remoteEnrollDeviceSerial: "",
       remoteEnrollFace: false,
       remoteEnrollFp: false,
       remoteFpIndex: "0",
       remoteFaceType: "9",
     });
+    setFpOverwrite(false);
     setPendingRemoteToggle(null);
     setRemoteDevicePickerOpen(false);
     setEnrollSession(null);
@@ -1834,6 +1987,8 @@ export default function EmployeesPage() {
     setEditingEmployeeId(employee.id);
     const effectiveAreaFilterKey = primaryAreaFilterKey || areaSelectionOptions[0]?.filterKey || "";
     toggleAssignmentAreaFilter(effectiveAreaFilterKey);
+    const enrolledFpIndices = parseEnrolledFingerIndices(extra?.fingerprintTemplates);
+    const firstFreeFp = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].find((i) => !enrolledFpIndices.includes(i)) ?? 0;
     setAddForm({
       userId: employee.code,
       firstName,
@@ -1843,19 +1998,21 @@ export default function EmployeesPage() {
       position: employee.position || "",
       privilege: privilegeOption,
       verifyMode: extra?.verifyMode ?? 0,
-      groupId: extra?.groupId ?? 1,
+      groupId: employee.status !== "active" ? 0 : (extra?.groupId ?? 1),
       cardNumber: extra?.cardNumber ?? "",
       pictureDataUrl: extra?.pictureDataUrl ?? (employee.avatar.startsWith("data:") ? employee.avatar : ""),
       mobileNumber: extra?.mobileNumber ?? (employee.phone === "-" ? "" : employee.phone),
       gender: extra?.gender ?? "Male",
       dob: extra?.dob ?? "",
       password: extra?.password ?? "",
+      isActive: employee.status === "active",
       remoteEnrollDeviceSerial: "",
       remoteEnrollFace: false,
       remoteEnrollFp: false,
-      remoteFpIndex: "0",
+      remoteFpIndex: String(firstFreeFp),
       remoteFaceType: "9",
     });
+    setFpOverwrite(false);
     setPendingRemoteToggle(null);
     setRemoteDevicePickerOpen(false);
     setEnrollSession(null);
@@ -1960,7 +2117,23 @@ export default function EmployeesPage() {
   }
 
   function applyRemoteToggle(toggle: "face" | "fp", checked: boolean) {
-    if (checked && !addForm.remoteEnrollDeviceSerial) {
+    if (!checked) {
+      if (toggle === "face") setAddForm((prev) => ({ ...prev, remoteEnrollFace: false }));
+      if (toggle === "fp") setAddForm((prev) => ({ ...prev, remoteEnrollFp: false }));
+      return;
+    }
+
+    const currentSelectedSerial = addForm.remoteEnrollDeviceSerial.trim();
+    const currentDevice = managedDevices.find((d) => d.serialNumber === currentSelectedSerial);
+    const supports = currentDevice
+      ? toggle === "face"
+        ? deviceSupportsFace(currentDevice)
+        : toggle === "fp"
+          ? deviceSupportsFingerprint(currentDevice)
+          : true
+      : false;
+
+    if (!currentDevice || !supports) {
       pickRemoteDeviceFor(toggle);
       return;
     }
@@ -1968,18 +2141,21 @@ export default function EmployeesPage() {
     if (toggle === "face") {
       setAddForm((prev) => ({
         ...prev,
-        remoteEnrollFace: checked,
-        // Keep enrollment mode explicit: selecting face disables FP.
-        remoteEnrollFp: checked ? false : prev.remoteEnrollFp,
+        remoteEnrollFace: true,
+        remoteEnrollFp: false,
       }));
       return;
     }
     if (toggle === "fp") {
+      const extra = editingEmployeeId ? employeeExtras[editingEmployeeId] : undefined;
+      const enrolledFpIndices = parseEnrolledFingerIndices(extra?.fingerprintTemplates);
+      const firstFreeFp = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].find((i) => !enrolledFpIndices.includes(i)) ?? 0;
+      setFpOverwrite(false);
       setAddForm((prev) => ({
         ...prev,
-        remoteEnrollFp: checked,
-        // Keep enrollment mode explicit: selecting FP disables face.
-        remoteEnrollFace: checked ? false : prev.remoteEnrollFace,
+        remoteEnrollFp: true,
+        remoteEnrollFace: false,
+        remoteFpIndex: String(firstFreeFp),
       }));
       return;
     }
@@ -1992,8 +2168,13 @@ export default function EmployeesPage() {
         next.remoteEnrollFace = true;
         next.remoteEnrollFp = false;
       } else if (pendingRemoteToggle === "fp") {
+        const extra = editingEmployeeId ? employeeExtras[editingEmployeeId] : undefined;
+        const enrolledFpIndices = parseEnrolledFingerIndices(extra?.fingerprintTemplates);
+        const firstFreeFp = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].find((i) => !enrolledFpIndices.includes(i)) ?? 0;
+        setFpOverwrite(false);
         next.remoteEnrollFp = true;
         next.remoteEnrollFace = false;
+        next.remoteFpIndex = String(firstFreeFp);
       }
       return next;
     });
@@ -2020,8 +2201,18 @@ export default function EmployeesPage() {
     const faceSelected = addForm.remoteEnrollFace;
     const fpSelected = addForm.remoteEnrollFp;
     if (!(faceSelected || fpSelected)) {
-      setAddError("Select at least one option: Face or FP.");
+      setAddError("Select an option: Face or FP.");
       return;
+    }
+    if (selectedDevice) {
+      if (faceSelected && !deviceSupportsFace(selectedDevice)) {
+        setAddError(`Selected device (${selectedDevice.name || selectedDevice.serialNumber}) does not support Face enrollment.`);
+        return;
+      }
+      if (fpSelected && !deviceSupportsFingerprint(selectedDevice)) {
+        setAddError(`Selected device (${selectedDevice.name || selectedDevice.serialNumber}) does not support Fingerprint enrollment.`);
+        return;
+      }
     }
     const mode: "face" | "fp" = faceSelected ? "face" : "fp";
     const effectiveFaceType = addForm.remoteFaceType === "2" ? "2" : addForm.remoteFaceType === "9" ? "9" : "";
@@ -2034,7 +2225,6 @@ export default function EmployeesPage() {
       setAddError("Select face type first: Visible light or Infrared.");
       return;
     }
-    // Do not block by cached capability flags in UI; device response is authoritative.
 
     setAddError(null);
     setEnrollSaving(true);
@@ -2095,7 +2285,7 @@ export default function EmployeesPage() {
             }
             const firstQueuedId = result.commandId ?? result.syncLogIds?.[0];
             if (firstQueuedId) {
-              await pollEnrollmentStatusByCommandId(String(firstQueuedId));
+              await pollEnrollmentStatusByCommandId(String(firstQueuedId), "Face");
             } else {
               await loadEnrollLiveStatus(session);
             }
@@ -2107,6 +2297,7 @@ export default function EmployeesPage() {
           throw err;
         }
       } else {
+        const fpIdx = Number.parseInt(addForm.remoteFpIndex, 10) || 0;
         let result: RemoteEnrollQueueResult;
         try {
           result = await requestJson<RemoteEnrollQueueResult>("/api/fpenrollment/enroll", {
@@ -2116,23 +2307,22 @@ export default function EmployeesPage() {
               userId: code,
               userName: resolvedFullName,
               cardNo: resolvedCardNo,
-              fingerIndex: Number.parseInt(addForm.remoteFpIndex, 10) || 0,
+              fingerIndex: fpIdx,
               retry: 3,
-              overwrite: true,
+              overwrite: isChosenFpEnrolled ? fpOverwrite : true,
               verifyMode: addForm.verifyMode,
             }),
           });
         } catch {
-          // Backward-compatible fallback for older API builds.
           await clearPendingCommands(session.serial);
           await enqueueRemoteEnrollment(code, resolvedFullName, mode, effectiveFaceType as "2" | "9", resolvedCardNo);
           result = {
             success: true,
             mode: "queued",
-            message: "Fingerprint enrollment queued. Place finger on the device sensor.",
+            message: `Fingerprint enrollment queued for Finger ${fpIdx} (${FINGER_NAMES[fpIdx] ?? fpIdx}). Place finger on device sensor 3 times.`,
             preProvisionedUser: true,
             queuedCount: 3,
-            queuedSteps: ["CHECK", "DATA UPDATE USERINFO", `ENROLL_FP(FID=${Number.parseInt(addForm.remoteFpIndex, 10) || 0})`],
+            queuedSteps: ["CHECK", "DATA UPDATE USERINFO", `ENROLL_FP(FID=${fpIdx})`],
           };
         }
         const summary = queueSummaryText(result);
@@ -2149,7 +2339,12 @@ export default function EmployeesPage() {
             },
           ]);
         }
-        await loadEnrollLiveStatus(session);
+        const firstQueuedId = result.commandId ?? result.syncLogIds?.[0];
+        if (firstQueuedId) {
+          await pollEnrollmentStatusByCommandId(String(firstQueuedId), "FP");
+        } else {
+          await loadEnrollLiveStatus(session);
+        }
       }
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to queue remote enrollment.");
@@ -2157,6 +2352,53 @@ export default function EmployeesPage() {
     } finally {
       setEnrollSaving(false);
     }
+  }
+
+  async function onDeleteFingerprint(fid: number) {
+    const code = addForm.userId.trim();
+    if (!code) return;
+    const fingerName = FINGER_NAMES[fid] ?? String(fid);
+    const empName = `${addForm.firstName.trim()} ${addForm.lastName.trim()}`.trim() || code;
+
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Fingerprint",
+      message: `Are you sure you want to delete Finger ${fid} (${fingerName}) for ${empName}?`,
+      detail: "This will remove the fingerprint template from the database and dispatch a delete command to connected devices.",
+      confirmLabel: "Delete Fingerprint",
+      confirmVariant: "danger",
+      onConfirm: async () => {
+        setConfirmModal(null);
+        setFpDeletingIndex(fid);
+        try {
+          const serial = addForm.remoteEnrollDeviceSerial.trim();
+          await requestJson(`/api/fpenrollment/delete?userId=${encodeURIComponent(code)}&fingerIndex=${fid}&deviceSerial=${encodeURIComponent(serial)}`, {
+            method: "POST",
+          });
+          if (editingEmployeeId) {
+            setEmployeeExtras((prev) => {
+              const old = prev[editingEmployeeId];
+              if (!old) return prev;
+              const updatedTemplates = removeFingerprintFromJson(old.fingerprintTemplates, fid);
+              const updatedCount = Math.max(0, (old.fingerprintCount ?? 1) - 1);
+              return {
+                ...prev,
+                [editingEmployeeId]: {
+                  ...old,
+                  fingerprintTemplates: updatedTemplates,
+                  fingerprintCount: updatedCount,
+                },
+              };
+            });
+          }
+          await loadEmployees();
+        } catch (err) {
+          setAddError(err instanceof Error ? err.message : "Failed to delete fingerprint.");
+        } finally {
+          setFpDeletingIndex(null);
+        }
+      },
+    });
   }
 
   function stopCameraStream() {
@@ -2960,6 +3202,7 @@ export default function EmployeesPage() {
     setAddError(null);
     setAddSaving(true);
     try {
+      const effectiveGroupId = !addForm.isActive ? 0 : (Number.isFinite(addForm.groupId) ? (addForm.groupId ?? 1) : 1);
       if (targetEmployeeId) {
         const current = employeeRows.find((item) => item.id === targetEmployeeId);
         await requestJson<{ success: boolean }>(`/api/personnel/employees/${targetEmployeeId}`, {
@@ -2970,10 +3213,10 @@ export default function EmployeesPage() {
             department: departmentName,
             departmentCodes: selectedDepartmentCodes,
             position: positionName,
-            isActive: (current?.status ?? "active") === "active",
+            isActive: addForm.isActive,
             privilege: addForm.privilege,
             verifyMode: addForm.verifyMode,
-            groupId: addForm.groupId,
+            groupId: effectiveGroupId,
             cardNumber: addForm.cardNumber,
             pictureDataUrl: addForm.pictureDataUrl,
             mobileNumber: addForm.mobileNumber,
@@ -2999,30 +3242,37 @@ export default function EmployeesPage() {
                   position: positionName,
                   designation: addForm.privilege,
                   phone: addForm.mobileNumber.trim() || "-",
+                  status: addForm.isActive ? "active" : "inactive",
                   avatar: addForm.pictureDataUrl || item.avatar,
                 }
               : item,
           ),
         );
-        setEmployeeExtras((prev) => ({
-          ...prev,
-          [targetEmployeeId]: {
-            privilege: addForm.privilege,
-            verifyMode: addForm.verifyMode,
-            groupId: addForm.groupId,
-            cardNumber: addForm.cardNumber.trim(),
-            pictureDataUrl: addForm.pictureDataUrl,
-            mobileNumber: addForm.mobileNumber.trim(),
-            gender: addForm.gender,
-            dob: addForm.dob,
-            password: addForm.password,
-          },
-        }));
+        setEmployeeExtras((prev) => {
+          const old = prev[targetEmployeeId];
+          return {
+            ...prev,
+            [targetEmployeeId]: {
+              ...old,
+              privilege: addForm.privilege,
+              verifyMode: addForm.verifyMode,
+              groupId: effectiveGroupId,
+              cardNumber: addForm.cardNumber.trim(),
+              pictureDataUrl: addForm.pictureDataUrl,
+              mobileNumber: addForm.mobileNumber.trim(),
+              gender: addForm.gender,
+              dob: addForm.dob,
+              password: addForm.password,
+            },
+          };
+        });
         const cache = readProfileCache();
+        const oldCache = cache[code];
         cache[code] = {
+          ...oldCache,
           privilege: addForm.privilege,
           verifyMode: addForm.verifyMode,
-          groupId: addForm.groupId,
+          groupId: effectiveGroupId,
           cardNumber: addForm.cardNumber.trim(),
           pictureDataUrl: addForm.pictureDataUrl,
           mobileNumber: addForm.mobileNumber.trim(),
@@ -3052,9 +3302,10 @@ export default function EmployeesPage() {
               department: departmentName,
               departmentCodes: selectedDepartmentCodes,
               position: positionName,
+              isActive: addForm.isActive,
               privilege: addForm.privilege,
               verifyMode: addForm.verifyMode,
-              groupId: addForm.groupId ?? 1,
+              groupId: effectiveGroupId,
               cardNumber: addForm.cardNumber,
               pictureDataUrl: addForm.pictureDataUrl,
               mobileNumber: addForm.mobileNumber,
@@ -3079,7 +3330,7 @@ export default function EmployeesPage() {
           position: created.position || positionName,
           designation: addForm.privilege,
           phone: addForm.mobileNumber.trim() || "-",
-          status: "active",
+          status: addForm.isActive ? "active" : "inactive",
           avatar: addForm.pictureDataUrl || "",
         };
 
@@ -3129,6 +3380,16 @@ export default function EmployeesPage() {
       body: JSON.stringify({ ids, isActive }),
     });
     setEmployeeRows((prev) => prev.map((item) => (ids.includes(item.id) ? { ...item, status: isActive ? "active" : "inactive" } : item)));
+    setEmployeeExtras((prev) => {
+      const next = { ...prev };
+      for (const id of ids) {
+        if (next[id]) {
+          next[id] = { ...next[id], groupId: isActive ? (next[id].groupId && next[id].groupId > 0 ? next[id].groupId : 1) : 0 };
+        }
+      }
+      return next;
+    });
+    void loadEmployees({ page, search, status });
   }
 
   async function applyVerifyMode(ids: string[], verifyMode: number) {
@@ -3285,16 +3546,166 @@ export default function EmployeesPage() {
     setSelectedEmployeeIds((prev) => prev.filter((id) => !uniqueIds.includes(id)));
   }
 
-  async function deleteSingleEmployee(employee: EmployeeRow) {
+  async function deleteCredential(
+    employee: EmployeeRow,
+    credentialType: "fp" | "face" | "card" | "palm" | "password" | "user",
+  ) {
     try {
-      const ok = typeof window !== "undefined" ? window.confirm(`Delete ${employee.name}?`) : true;
-      if (!ok) {
-        return;
+      await requestJson<{ success: boolean; message?: string }>("/api/personnel/employees/credential/delete", {
+        method: "POST",
+        body: JSON.stringify({
+          employeeId: employee.id,
+          employeeCode: employee.code,
+          credentialType,
+        }),
+      });
+
+      if (credentialType === "user") {
+        setEmployeeRows((prev) => prev.filter((item) => item.id !== employee.id));
+        setSelectedEmployeeIds((prev) => prev.filter((id) => id !== employee.id));
+        setEmployeeExtras((prev) => {
+          const next = { ...prev };
+          delete next[employee.id];
+          return next;
+        });
+      } else {
+        setEmployeeExtras((prev) => {
+          const old = prev[employee.id];
+          if (!old) return prev;
+          const updated = { ...old };
+          if (credentialType === "fp") {
+            updated.fingerprintTemplates = "";
+            updated.fingerprintCount = 0;
+          } else if (credentialType === "face") {
+            updated.faceTemplateVisible = "";
+            updated.faceTemplateInfrared = "";
+            updated.faceCount = 0;
+          } else if (credentialType === "card") {
+            updated.cardNumber = "";
+          } else if (credentialType === "password") {
+            updated.password = "";
+          }
+          return { ...prev, [employee.id]: updated };
+        });
+
+        const cache = readProfileCache();
+        const oldCache = cache[employee.code];
+        if (oldCache) {
+          const updatedCache = { ...oldCache };
+          if (credentialType === "fp") {
+            updatedCache.fingerprintTemplates = "";
+            updatedCache.fingerprintCount = 0;
+          } else if (credentialType === "face") {
+            updatedCache.faceTemplateVisible = "";
+            updatedCache.faceTemplateInfrared = "";
+            updatedCache.faceCount = 0;
+          } else if (credentialType === "card") {
+            updatedCache.cardNumber = "";
+          } else if (credentialType === "password") {
+            updatedCache.password = "";
+          }
+          cache[employee.code] = updatedCache;
+          writeProfileCache(cache);
+        }
       }
-      await deleteEmployees([employee.id]);
+
+      await loadEmployees();
     } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Failed to delete employee.");
+      setAddError(err instanceof Error ? err.message : "Failed to delete credential.");
     }
+  }
+
+  async function deleteBatchCredentials(
+    ids: string[],
+    credentialType: "fp" | "face" | "card" | "palm" | "password" | "all-biometrics",
+  ) {
+    if (ids.length === 0) return;
+    try {
+      await requestJson<{ success: boolean; message?: string }>("/api/personnel/employees/credential/delete", {
+        method: "POST",
+        body: JSON.stringify({
+          employeeIds: ids,
+          credentialType,
+        }),
+      });
+
+      // Update employeeExtras and cache for all selected employees
+      setEmployeeExtras((prev) => {
+        const next = { ...prev };
+        for (const id of ids) {
+          const old = next[id];
+          if (!old) continue;
+          const updated = { ...old };
+          if (credentialType === "fp" || credentialType === "all-biometrics") {
+            updated.fingerprintTemplates = "";
+            updated.fingerprintCount = 0;
+          }
+          if (credentialType === "face" || credentialType === "all-biometrics") {
+            updated.faceTemplateVisible = "";
+            updated.faceTemplateInfrared = "";
+            updated.faceCount = 0;
+          }
+          if (credentialType === "card" || credentialType === "all-biometrics") {
+            updated.cardNumber = "";
+          }
+          if (credentialType === "password" || credentialType === "all-biometrics") {
+            updated.password = "";
+          }
+          next[id] = updated;
+        }
+        return next;
+      });
+
+      const cache = readProfileCache();
+      for (const emp of employeeRows) {
+        if (ids.includes(emp.id)) {
+          const oldCache = cache[emp.code];
+          if (oldCache) {
+            const updatedCache = { ...oldCache };
+            if (credentialType === "fp" || credentialType === "all-biometrics") {
+              updatedCache.fingerprintTemplates = "";
+              updatedCache.fingerprintCount = 0;
+            }
+            if (credentialType === "face" || credentialType === "all-biometrics") {
+              updatedCache.faceTemplateVisible = "";
+              updatedCache.faceTemplateInfrared = "";
+              updatedCache.faceCount = 0;
+            }
+            if (credentialType === "card" || credentialType === "all-biometrics") {
+              updatedCache.cardNumber = "";
+            }
+            if (credentialType === "password" || credentialType === "all-biometrics") {
+              updatedCache.password = "";
+            }
+            cache[emp.code] = updatedCache;
+          }
+        }
+      }
+      writeProfileCache(cache);
+
+      await loadEmployees();
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Failed to delete batch credentials.");
+    }
+  }
+
+  function confirmDeleteEmployee(employee: EmployeeRow) {
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Employee",
+      message: `Are you sure you want to delete ${employee.name} (ID: ${employee.code})?`,
+      detail: "This action cannot be undone. All profile data, history, and biometric credentials will be removed from system and devices.",
+      confirmLabel: "Delete Employee",
+      confirmVariant: "danger",
+      onConfirm: async () => {
+        await deleteCredential(employee, "user");
+        setConfirmModal(null);
+      },
+    });
+  }
+
+  async function deleteSingleEmployee(employee: EmployeeRow) {
+    confirmDeleteEmployee(employee);
   }
 
   function toggleEmployeeSelection(id: string, checked: boolean) {
@@ -3333,22 +3744,38 @@ export default function EmployeesPage() {
         return;
       }
       if (action === "activate") {
-        await applyActiveState([employee.id], true);
+        setConfirmModal({
+          isOpen: true,
+          title: "Activate Employee",
+          message: `Are you sure you want to activate ${employee.name}?`,
+          confirmLabel: "Activate",
+          confirmVariant: "primary",
+          onConfirm: async () => {
+            await applyActiveState([employee.id], true);
+            setConfirmModal(null);
+          },
+        });
         return;
       }
       if (action === "deactivate") {
-        await applyActiveState([employee.id], false);
+        setConfirmModal({
+          isOpen: true,
+          title: "Deactivate Employee",
+          message: `Are you sure you want to deactivate ${employee.name}?`,
+          confirmLabel: "Deactivate",
+          confirmVariant: "warning",
+          onConfirm: async () => {
+            await applyActiveState([employee.id], false);
+            setConfirmModal(null);
+          },
+        });
         return;
       }
       if (action === "transfer") {
         openTransferModal([employee.id]);
         return;
       }
-      const ok = typeof window !== "undefined" ? window.confirm(`Delete ${employee.name}?`) : true;
-      if (!ok) {
-        return;
-      }
-      await deleteEmployees([employee.id]);
+      confirmDeleteEmployee(employee);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Action failed.");
     }
@@ -3586,7 +4013,20 @@ export default function EmployeesPage() {
               <button
                 type="button"
                 disabled={selectedEmployeeIds.length === 0}
-                onClick={() => void applyActiveState(selectedEmployeeIds, true)}
+                onClick={() => {
+                  if (selectedEmployeeIds.length === 0) return;
+                  setConfirmModal({
+                    isOpen: true,
+                    title: "Activate Selected Employees",
+                    message: `Are you sure you want to activate ${selectedEmployeeIds.length} selected employee(s)?`,
+                    confirmLabel: `Activate (${selectedEmployeeIds.length})`,
+                    confirmVariant: "primary",
+                    onConfirm: async () => {
+                      await applyActiveState(selectedEmployeeIds, true);
+                      setConfirmModal(null);
+                    },
+                  });
+                }}
                 className="rounded-full border border-[#bcd3f0] bg-white px-3 py-2 text-xs font-semibold text-[#1a4a73] transition duration-200 hover:-translate-y-0.5 hover:border-[#8eb9e3] hover:bg-[#e1efff] disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-sm"
               >
                 Activate Selected
@@ -3594,15 +4034,75 @@ export default function EmployeesPage() {
               <button
                 type="button"
                 disabled={selectedEmployeeIds.length === 0}
-                onClick={() => void applyActiveState(selectedEmployeeIds, false)}
+                onClick={() => {
+                  if (selectedEmployeeIds.length === 0) return;
+                  setConfirmModal({
+                    isOpen: true,
+                    title: "Deactivate Selected Employees",
+                    message: `Are you sure you want to deactivate ${selectedEmployeeIds.length} selected employee(s)?`,
+                    confirmLabel: `Deactivate (${selectedEmployeeIds.length})`,
+                    confirmVariant: "warning",
+                    onConfirm: async () => {
+                      await applyActiveState(selectedEmployeeIds, false);
+                      setConfirmModal(null);
+                    },
+                  });
+                }}
                 className="rounded-full border border-[#bcd3f0] bg-white px-3 py-2 text-xs font-semibold text-[#1a4a73] transition duration-200 hover:-translate-y-0.5 hover:border-[#8eb9e3] hover:bg-[#e1efff] disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-sm"
               >
                 Deactivate Selected
               </button>
               <button
+                ref={bulkBioButtonRef}
                 type="button"
                 disabled={selectedEmployeeIds.length === 0}
-                onClick={() => void deleteEmployees(selectedEmployeeIds)}
+                onClick={() => {
+                  if (selectedEmployeeIds.length === 0) return;
+                  setBulkBioMenuOpen((prev) => {
+                    const next = !prev;
+                    if (next && bulkBioButtonRef.current) {
+                      const rect = bulkBioButtonRef.current.getBoundingClientRect();
+                      const menuWidth = 260;
+                      const menuHeight = 260;
+                      let left = rect.left;
+                      if (left + menuWidth > window.innerWidth - 12) {
+                        left = Math.max(12, window.innerWidth - menuWidth - 12);
+                      }
+                      let top = rect.bottom + 6;
+                      if (top + menuHeight > window.innerHeight - 12) {
+                        top = Math.max(12, rect.top - menuHeight - 6);
+                      }
+                      setBulkBioMenuPos({ left, top });
+                    } else {
+                      setBulkBioMenuPos(null);
+                    }
+                    return next;
+                  });
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[#fbd3b6] bg-white px-3 py-2 text-xs font-semibold text-[#b45309] transition duration-200 hover:-translate-y-0.5 hover:border-[#f6ad55] hover:bg-[#fff7ed] disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-sm"
+              >
+                <Fingerprint className="h-3.5 w-3.5 text-[#b45309]" />
+                <span>Delete Biometrics</span>
+                <ChevronDown className="h-3.5 w-3.5 text-[#b45309]" />
+              </button>
+              <button
+                type="button"
+                disabled={selectedEmployeeIds.length === 0}
+                onClick={() => {
+                  if (selectedEmployeeIds.length === 0) return;
+                  setConfirmModal({
+                    isOpen: true,
+                    title: "Delete Selected Employees",
+                    message: `Are you sure you want to delete ${selectedEmployeeIds.length} selected employee(s)?`,
+                    detail: "This action cannot be undone. All selected employee profiles, biometric templates, and device assignments will be permanently removed.",
+                    confirmLabel: `Delete (${selectedEmployeeIds.length})`,
+                    confirmVariant: "danger",
+                    onConfirm: async () => {
+                      await deleteEmployees(selectedEmployeeIds);
+                      setConfirmModal(null);
+                    },
+                  });
+                }}
                 className="rounded-full border border-[#f0caca] bg-white px-3 py-2 text-xs font-semibold text-[#8d2f2f] transition duration-200 hover:-translate-y-0.5 hover:border-[#e8a3a3] hover:bg-[#fff0f0] disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-sm"
               >
                 Delete Selected
@@ -3936,8 +4436,28 @@ export default function EmployeesPage() {
                       <button type="button" onClick={() => openTransferModal([employee.id])} className="rounded-md border border-[#c9dcf2] bg-white p-1.5 text-[#1a4a73] hover:bg-[#eef6ff]" title="Transfer">
                         <ArrowRightLeft className="h-4 w-4" />
                       </button>
-                      <button type="button" onClick={() => void deleteSingleEmployee(employee)} className="rounded-md border border-[#f0caca] bg-white p-1.5 text-[#8d2f2f] hover:bg-[#fff0f0]" title="Delete">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          setRowDeleteMenu((prev) => {
+                            if (prev?.employee.id === employee.id) return null;
+                            const menuHeight = 280;
+                            const spaceBelow = window.innerHeight - rect.bottom;
+                            const top = spaceBelow < menuHeight ? Math.max(10, rect.top - menuHeight - 4) : rect.bottom + 6;
+                            return {
+                              employee,
+                              x: Math.min(window.innerWidth - 250, Math.max(10, rect.right - 230)),
+                              y: top,
+                            };
+                          });
+                        }}
+                        className="inline-flex items-center gap-0.5 rounded-md border border-[#f0caca] bg-white px-1.5 py-1.5 text-[#8d2f2f] transition hover:bg-[#fff0f0]"
+                        title="Delete Options (FP, Face, Card, Palm, Password, User)"
+                      >
                         <Trash2 className="h-4 w-4" />
+                        <ChevronDown className="h-3 w-3 opacity-60" />
                       </button>
                     </div>
                   </td>
@@ -4133,13 +4653,22 @@ export default function EmployeesPage() {
                       <span className="text-xs font-semibold uppercase tracking-wide text-[#1e4f78]">Access Group</span>
                       <select
                         value={addForm.groupId}
-                        onChange={(event) => setAddForm((prev) => ({ ...prev, groupId: Number.parseInt(event.target.value, 10) || 1 }))}
+                        onChange={(event) => {
+                          const parsed = Number.parseInt(event.target.value, 10);
+                          const grp = Number.isFinite(parsed) ? parsed : 1;
+                          setAddForm((prev) => ({
+                            ...prev,
+                            groupId: grp,
+                            isActive: grp === 0 ? false : prev.isActive,
+                          }));
+                        }}
                         className="w-full rounded-xl border border-[#b9d2f0] bg-white px-4 py-2.5 text-sm text-[#1e4162] outline-none ring-[#8db6df] focus:ring-2"
                       >
+                        <option value={0}>0 - No Access Group (Inactive / Locked)</option>
                         {accessGroups.length > 0 ? (
                           <>
                             {/* Ensure current value is always an option */}
-                            {!accessGroups.some(g => Number(g.groupNo) === addForm.groupId) && (
+                            {!accessGroups.some(g => Number(g.groupNo) === addForm.groupId) && addForm.groupId !== 0 && (
                               <option value={addForm.groupId}>{addForm.groupId} - Group {addForm.groupId}</option>
                             )}
                             {accessGroups.map(g => (
@@ -4147,7 +4676,7 @@ export default function EmployeesPage() {
                             ))}
                           </>
                         ) : (
-                          <option value={addForm.groupId}>{addForm.groupId} - Group {addForm.groupId}</option>
+                          addForm.groupId !== 0 && <option value={addForm.groupId}>{addForm.groupId} - Group {addForm.groupId}</option>
                         )}
                       </select>
                     </label>
@@ -4191,6 +4720,24 @@ export default function EmployeesPage() {
                     <label className="grid gap-1 text-sm text-[#1e4162]">
                       <span className="text-xs font-semibold uppercase tracking-wide text-[#1e4f78]">DOB</span>
                   <BsDateField value={addForm.dob} onChange={(nextDob) => setAddForm((prev) => ({ ...prev, dob: nextDob }))} className="w-full" />
+                    </label>
+                    <label className="grid gap-1 text-sm text-[#1e4162]">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-[#1e4f78]">Status</span>
+                      <select
+                        value={addForm.isActive ? "active" : "inactive"}
+                        onChange={(event) => {
+                          const isAct = event.target.value === "active";
+                          setAddForm((prev) => ({
+                            ...prev,
+                            isActive: isAct,
+                            groupId: !isAct ? 0 : (prev.groupId === 0 ? 1 : prev.groupId),
+                          }));
+                        }}
+                        className="w-full rounded-xl border border-[#b9d2f0] bg-white px-4 py-2.5 text-sm text-[#1e4162] outline-none ring-[#8db6df] focus:ring-2"
+                      >
+                        <option value="active">Active (Access Allowed)</option>
+                        <option value="inactive">Inactive (Access Expired / Locked)</option>
+                      </select>
                     </label>
                   </div>
                 </div>
@@ -4243,16 +4790,29 @@ export default function EmployeesPage() {
                     </summary>
                     <p className="mb-2 text-[11px] text-[#5f7f9f]">Select option to choose device</p>
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <p className="min-w-0 break-all text-[11px] text-[#5f7f9f]">Device: {addForm.remoteEnrollDeviceSerial || "Not selected"}</p>
-                    {addForm.remoteEnrollDeviceSerial ? (
+                    <div className="min-w-0">
+                      <p className="min-w-0 break-all text-[11px] text-[#5f7f9f]">
+                        Device: <span className="font-semibold text-[#1a4a73]">{addForm.remoteEnrollDeviceSerial || "Not selected"}</span>
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => setAddForm((prev) => ({ ...prev, remoteEnrollDeviceSerial: "" }))}
-                        className="rounded-full border border-[#b9d2f0] bg-white px-2 py-0.5 text-[10px] text-[#1a4a73]"
+                        onClick={() => pickRemoteDeviceFor(addForm.remoteEnrollFp ? "fp" : "face")}
+                        className="rounded-full border border-[#b9d2f0] bg-white px-2.5 py-0.5 text-[10px] font-medium text-[#1a4a73] hover:bg-[#eef6ff]"
                       >
-                        Clear
+                        {addForm.remoteEnrollDeviceSerial ? "Change" : "Select Device"}
                       </button>
-                    ) : null}
+                      {addForm.remoteEnrollDeviceSerial ? (
+                        <button
+                          type="button"
+                          onClick={() => setAddForm((prev) => ({ ...prev, remoteEnrollDeviceSerial: "" }))}
+                          className="rounded-full border border-[#f0c2c2] bg-white px-2 py-0.5 text-[10px] text-[#a13b3b] hover:bg-[#fff5f5]"
+                        >
+                          Clear
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="grid gap-2">
                     <label className="inline-flex items-center gap-2 rounded-full border border-[#c7dbf2] bg-white px-3 py-2 text-xs text-[#1a4a73]">
@@ -4277,28 +4837,97 @@ export default function EmployeesPage() {
                     ) : null}
                     <label className="inline-flex items-center gap-2 rounded-full border border-[#c7dbf2] bg-white px-3 py-2 text-xs text-[#1a4a73]">
                       <input type="checkbox" checked={addForm.remoteEnrollFp} onChange={(event) => applyRemoteToggle("fp", event.target.checked)} />
-                      FP
+                      FP (Fingerprint)
                     </label>
                     {addForm.remoteEnrollFp ? (
-                      <label className="grid gap-1 text-xs text-[#1a4a73]">
-                        <span className="font-semibold text-[#1e4f78]">Finger Index</span>
-                        <select
-                          value={addForm.remoteFpIndex}
-                          onChange={(event) => setAddForm((prev) => ({ ...prev, remoteFpIndex: event.target.value }))}
-                          className="rounded-full border border-[#b9d2f0] bg-white px-3 py-2 text-xs text-[#1e4162] outline-none ring-[#8db6df] focus:ring-2"
-                        >
-                          <option value="0">0 - Left Little</option>
-                          <option value="1">1 - Left Ring</option>
-                          <option value="2">2 - Left Middle</option>
-                          <option value="3">3 - Left Index</option>
-                          <option value="4">4 - Left Thumb</option>
-                          <option value="5">5 - Right Thumb</option>
-                          <option value="6">6 - Right Index</option>
-                          <option value="7">7 - Right Middle</option>
-                          <option value="8">8 - Right Ring</option>
-                          <option value="9">9 - Right Little</option>
-                        </select>
-                      </label>
+                      <div className="grid gap-2.5 rounded-xl border border-[#b9d2f0] bg-[#f8fbff] p-3">
+                        {currentEnrolledFingers.length > 0 ? (
+                          <div className="rounded-lg border border-[#c7dbf2] bg-white p-2 text-xs text-[#1e4f78]">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="font-semibold text-[#1e4f78]">Enrolled Fingerprints ({currentEnrolledFingers.length}/10)</span>
+                              <span className="text-[10px] text-[#5b7fa3]">Max 10 fingers</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {currentEnrolledFingers.map((fid) => (
+                                <span
+                                  key={fid}
+                                  className="inline-flex items-center gap-1 rounded-full border border-[#b9d2f0] bg-[#eef5fc] px-2.5 py-0.5 text-[11px] font-medium text-[#1e4162] shadow-sm"
+                                >
+                                  <span>{fid}: {FINGER_NAMES[fid] ?? fid}</span>
+                                  <button
+                                    type="button"
+                                    title={`Delete finger ${fid} from device & software`}
+                                    disabled={fpDeletingIndex === fid}
+                                    onClick={() => void onDeleteFingerprint(fid)}
+                                    className="text-red-400 hover:text-red-700 font-bold ml-1 text-xs disabled:opacity-50"
+                                  >
+                                    {fpDeletingIndex === fid ? "..." : "×"}
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <label className="grid gap-1 text-xs text-[#1a4a73]">
+                          <span className="font-semibold text-[#1e4f78]">Finger to Enroll (0–9)</span>
+                          <select
+                            value={addForm.remoteFpIndex}
+                            onChange={(event) => {
+                              const newFid = event.target.value;
+                              setAddForm((prev) => ({ ...prev, remoteFpIndex: newFid }));
+                              setFpOverwrite(false);
+                            }}
+                            className="rounded-full border border-[#b9d2f0] bg-white px-3 py-2 text-xs text-[#1e4162] outline-none ring-[#8db6df] focus:ring-2"
+                          >
+                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => {
+                              const isEnrolled = currentEnrolledFingers.includes(i);
+                              return (
+                                <option key={i} value={String(i)}>
+                                  {i} - {FINGER_NAMES[i]} {isEnrolled ? "✓ (Already Enrolled)" : ""}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </label>
+
+                        {isChosenFpEnrolled ? (
+                          <div className="rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900">
+                            <div className="flex items-center gap-1.5 font-semibold text-amber-900">
+                              <span>⚠️</span>
+                              <span>Finger {chosenFp} ({FINGER_NAMES[chosenFp] ?? chosenFp}) is already enrolled.</span>
+                            </div>
+                            <p className="mt-1 text-[11px] text-amber-800 leading-relaxed">
+                              This employee already has a fingerprint saved on this finger. You can overwrite it or select another finger to add up to 10 fingerprints.
+                            </p>
+                            <div className="mt-2.5 flex flex-wrap items-center gap-3">
+                              <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs font-medium text-amber-900">
+                                <input
+                                  type="radio"
+                                  name="fpOverwriteChoice"
+                                  checked={fpOverwrite}
+                                  onChange={() => setFpOverwrite(true)}
+                                  className="text-[#1b5585]"
+                                />
+                                Overwrite this finger
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextFree = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].find((i) => !currentEnrolledFingers.includes(i));
+                                  if (nextFree !== undefined) {
+                                    setAddForm((prev) => ({ ...prev, remoteFpIndex: String(nextFree) }));
+                                    setFpOverwrite(false);
+                                  }
+                                }}
+                                className="rounded-full bg-white border border-amber-300 px-2.5 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 shadow-sm"
+                              >
+                                Select another finger →
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
                     <button
                       type="button"
@@ -4308,60 +4937,41 @@ export default function EmployeesPage() {
                     >
                       {enrollSaving ? "Enrolling..." : "Enroll in Device"}
                     </button>
-                    {(enrollSession || enrollLiveItems.length > 0) ? (
-                      <div className="mt-2 rounded-xl border border-[#c7dbf2] bg-white p-2">
-                        <div className="mb-1 flex items-center justify-between">
-                          <p className="text-[11px] font-semibold text-[#1e4f78]">Real-time Enrollment</p>
-                          <div className="flex items-center gap-2">
-                            {enrollSession ? (
-                              <button
-                                type="button"
-                                disabled={enrollNudging || enrollSaving}
-                                onClick={async () => {
-                                  if (!enrollSession) {
-                                    return;
-                                  }
-                                  setEnrollNudging(true);
-                                  try {
-                                    await forcePollNow(enrollSession.serial);
-                                    await loadEnrollLiveStatus(enrollSession);
-                                  } catch (err) {
-                                    setAddError(err instanceof Error ? err.message : "Failed to nudge device polling.");
-                                  } finally {
-                                    setEnrollNudging(false);
-                                  }
-                                }}
-                                className="rounded-full border border-[#b9d2f0] bg-white px-2 py-1 text-[10px] text-[#1a4a73] disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {enrollNudging ? "Nudging..." : "Force Poll Now"}
-                              </button>
-                            ) : null}
-                            <span className={`text-[10px] ${enrollSession?.running ? "text-[#2b7a48]" : "text-[#5f7f9f]"}`}>
-                              {enrollSession?.running ? "Live" : "Idle"}
+                      {(enrollSession || enrollLiveItems.length > 0) ? (
+                      <div className="mt-2 rounded-xl border border-[#c7dbf2] bg-white p-2.5">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-[11px] font-semibold text-[#1e4f78]">Device Enrollment Status</p>
+                          {enrollSession?.running ? (
+                            <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-[#2b7a48]">
+                              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#2b7a48]" />
+                              Listening for device...
                             </span>
-                          </div>
+                          ) : null}
                         </div>
                         {enrollLiveItems.length === 0 ? (
                           <p className="text-[11px] text-[#5f7f9f]">Waiting for device response...</p>
                         ) : (
-                          <div className="max-h-[220px] space-y-1 overflow-y-auto pr-1">
+                          <div className="max-h-[220px] space-y-1.5 overflow-y-auto pr-1">
                             {enrollLiveItems.map((item) => (
-                              <div key={item.id} className="rounded-lg border border-[#e1ecf8] bg-[#f9fcff] px-2 py-1.5">
+                              <div key={item.id} className="rounded-lg border border-[#e1ecf8] bg-[#f9fcff] px-2.5 py-2">
                                 <div className="flex items-center justify-between text-[11px]">
                                   <span className="font-semibold text-[#1e4162]">{item.label}</span>
-                                  <span className={item.status === "replied" ? "text-[#2b7a48]" : item.status === "sent" ? "text-[#a36b19]" : "text-[#5f7f9f]"}>
-                                    {item.status}
+                                  <span className={item.status === "replied" ? "text-[#1b5585] font-medium" : item.status === "sent" ? "text-[#a36b19]" : "text-[#5f7f9f]"}>
+                                    {item.status === "replied" ? (item.returnCode === "0" ? "Prompt Active" : "Replied") : item.status}
                                   </span>
                                 </div>
                                 {item.returnCode ? (
-                                  <div className="mt-1 flex items-center justify-between gap-2">
-                                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${returnCodeClass(item.returnCode)}`}>
+                                  <div className="mt-1.5 flex items-center justify-between gap-2">
+                                    <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-medium ${returnCodeClass(item.returnCode, item.returnMessage)}`}>
                                       {item.returnMessage || "Device replied"}
                                     </span>
                                   </div>
                                 ) : null}
                                 {!item.returnCode && item.returnMessage ? (
-                                  <p className="mt-1 text-[10px] text-[#1a4a73]">{item.returnMessage}</p>
+                                  <div className="mt-1.5 flex items-center gap-2">
+                                    <span className="inline-block h-2 w-2 animate-ping rounded-full bg-[#1b5585]" />
+                                    <p className="text-[11px] font-medium text-[#1a4a73]">{item.returnMessage}</p>
+                                  </div>
                                 ) : null}
                               </div>
                             ))}
@@ -4630,34 +5240,103 @@ export default function EmployeesPage() {
         </div>
       ) : null}
 
-      {drawerOpen && remoteDevicePickerOpen ? (
-        <div className="fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4" onClick={() => { setRemoteDevicePickerOpen(false); setPendingRemoteToggle(null); }}>
-          <div className="w-full max-w-lg rounded-2xl border border-[#d8e6f4] bg-white p-4 shadow-[0_20px_40px_-16px_rgba(10,40,70,0.6)]" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-[#0f3857]">Select Enrollment Device</h3>
-              <button type="button" onClick={() => { setRemoteDevicePickerOpen(false); setPendingRemoteToggle(null); }} className="rounded-full border border-[#d8e6f4] p-1.5 text-[#4f7697]">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="max-h-[300px] space-y-2 overflow-y-auto pr-1">
-              {managedDevices.length === 0 ? <p className="text-sm text-[#5f7f9f]">No devices available.</p> : null}
-              {managedDevices.map((device) => (
-                <button
-                  key={device.id}
-                  type="button"
-                  onClick={() => chooseRemoteDevice(device.serialNumber)}
-                  className="flex w-full items-center justify-between rounded-xl border border-[#c7dbf2] bg-[#f7fbff] px-3 py-2 text-left hover:bg-[#eaf4ff]"
-                >
-                  <span className="text-sm font-medium text-[#1a4a73]">{device.serialNumber}</span>
-                  <span className={`text-xs ${device.isOnline === false ? "text-[#b13f3f]" : "text-[#2b7a48]"}`}>
-                    {device.isOnline === false ? "Offline" : "Online"}
-                  </span>
+      {drawerOpen && remoteDevicePickerOpen ? (() => {
+        const targetType = pendingRemoteToggle ?? (addForm.remoteEnrollFace ? "face" : addForm.remoteEnrollFp ? "fp" : null);
+        const filteredDevices = targetType === "face"
+          ? managedDevices.filter(deviceSupportsFace)
+          : targetType === "fp"
+            ? managedDevices.filter(deviceSupportsFingerprint)
+            : managedDevices;
+
+        const modalTitle = targetType === "face"
+          ? "Select Device for Face Enrollment"
+          : targetType === "fp"
+            ? "Select Device for Fingerprint Enrollment"
+            : "Select Enrollment Device";
+
+        const subtitle = targetType === "face"
+          ? "Only listing devices with facial recognition hardware"
+          : targetType === "fp"
+            ? "Only listing devices with fingerprint sensor hardware"
+            : "Select a biometric terminal";
+
+        const emptyMessage = targetType === "face"
+          ? "No devices found that support Face enrollment."
+          : targetType === "fp"
+            ? "No devices found that support Fingerprint enrollment."
+            : "No devices available.";
+
+        return (
+          <div className="fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4" onClick={() => { setRemoteDevicePickerOpen(false); setPendingRemoteToggle(null); }}>
+            <div className="w-full max-w-lg rounded-2xl border border-[#d8e6f4] bg-white p-4 shadow-[0_20px_40px_-16px_rgba(10,40,70,0.6)]" onClick={(event) => event.stopPropagation()}>
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-semibold text-[#0f3857]">{modalTitle}</h3>
+                  <p className="text-[11px] text-[#5f7f9f]">{subtitle}</p>
+                </div>
+                <button type="button" onClick={() => { setRemoteDevicePickerOpen(false); setPendingRemoteToggle(null); }} className="rounded-full border border-[#d8e6f4] p-1.5 text-[#4f7697] hover:bg-[#eef6ff]">
+                  <X className="h-4 w-4" />
                 </button>
-              ))}
+              </div>
+              <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
+                {filteredDevices.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-[#c7dbf2] bg-[#f8fbff] p-4 text-center">
+                    <p className="text-sm font-medium text-[#1e4f78]">{emptyMessage}</p>
+                    <p className="mt-1 text-xs text-[#5f7f9f]">Please check that your terminal is registered and supports this biometric feature.</p>
+                  </div>
+                ) : null}
+                {filteredDevices.map((device) => {
+                  const hasFace = deviceSupportsFace(device);
+                  const hasFp = deviceSupportsFingerprint(device);
+                  const isCurrent = addForm.remoteEnrollDeviceSerial === device.serialNumber;
+
+                  return (
+                    <button
+                      key={device.id}
+                      type="button"
+                      onClick={() => chooseRemoteDevice(device.serialNumber)}
+                      className={`flex w-full items-center justify-between rounded-xl border p-3 text-left transition duration-150 ${
+                        isCurrent
+                          ? "border-[#1b5585] bg-[#eef7ff] shadow-sm"
+                          : "border-[#c7dbf2] bg-[#f7fbff] hover:border-[#8bb6df] hover:bg-[#eaf4ff]"
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1 pr-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-[#0f3857] truncate">{device.name || device.model || device.serialNumber}</span>
+                          {device.name && device.name !== device.serialNumber ? (
+                            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">{device.serialNumber}</span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {hasFace ? (
+                            <span className="rounded-full bg-[#e0f2fe] px-2 py-0.5 text-[10px] font-medium text-[#0369a1]">
+                              Face {device.faceAlgorithmVersion ? `v${device.faceAlgorithmVersion}` : ""}
+                            </span>
+                          ) : null}
+                          {hasFp ? (
+                            <span className="rounded-full bg-[#fef3c7] px-2 py-0.5 text-[10px] font-medium text-[#92400e]">
+                              Fingerprint {device.fingerprintAlgorithmVersion ? `v${device.fingerprintAlgorithmVersion}` : ""}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        device.isOnline === false
+                          ? "bg-red-50 text-red-700 border border-red-200"
+                          : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      }`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${device.isOnline === false ? "bg-red-500" : "bg-emerald-500"}`} />
+                        {device.isOnline === false ? "Offline" : "Online"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        );
+      })() : null}
 
       {exportModalOpen ? (
         <div className="fixed inset-0 z-[70] grid place-items-center bg-black/40 p-4" onClick={() => setExportModalOpen(false)}>
@@ -4720,6 +5399,402 @@ export default function EmployeesPage() {
           </div>
         </div>
       ) : null}
+      {/* Software Confirmation Modal */}
+      {confirmModal && confirmModal.isOpen ? (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-[rgba(10,30,52,0.55)] p-4 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => {
+            if (!confirmModal.busy) setConfirmModal(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-[#cbe0f5] bg-gradient-to-b from-white to-[#f6faff] p-6 shadow-[0_25px_50px_-12px_rgba(10,40,70,0.45)] animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
+                  confirmModal.confirmVariant === "danger"
+                    ? "border border-[#f8c8c8] bg-[#fdf0f0] text-[#cf3030]"
+                    : confirmModal.confirmVariant === "warning"
+                      ? "border border-[#fed7aa] bg-[#fff7ed] text-[#d97706]"
+                      : "border border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]"
+                }`}
+              >
+                {confirmModal.confirmVariant === "danger" ? (
+                  <Trash2 className="h-5 w-5" />
+                ) : confirmModal.confirmVariant === "warning" ? (
+                  <RotateCcw className="h-5 w-5" />
+                ) : (
+                  <Check className="h-5 w-5" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-bold text-[#0f3456]">{confirmModal.title}</h3>
+                <p className="mt-1 text-sm font-medium leading-relaxed text-[#406282]">{confirmModal.message}</p>
+                {confirmModal.detail ? (
+                  <p className="mt-2 rounded-lg border border-[#e2edf8] bg-[#eef6ff] p-2.5 text-xs text-[#52789f] leading-relaxed">
+                    {confirmModal.detail}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2 border-t border-[#e2edf8] pt-4">
+              <button
+                type="button"
+                disabled={confirmModal.busy}
+                onClick={() => setConfirmModal(null)}
+                className="rounded-xl border border-[#cbe0f5] bg-white px-4 py-2 text-xs font-semibold text-[#30587d] transition hover:bg-[#f0f6ff] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={confirmModal.busy}
+                onClick={async () => {
+                  setConfirmModal((prev) => (prev ? { ...prev, busy: true } : prev));
+                  try {
+                    await confirmModal.onConfirm();
+                  } finally {
+                    setConfirmModal(null);
+                  }
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white shadow transition duration-150 disabled:opacity-50 ${
+                  confirmModal.confirmVariant === "danger"
+                    ? "bg-[#cf3030] hover:bg-[#b02222]"
+                    : confirmModal.confirmVariant === "warning"
+                      ? "bg-[#d97706] hover:bg-[#b45309]"
+                      : "bg-[#1d4ed8] hover:bg-[#1e40af]"
+                }`}
+              >
+                {confirmModal.busy ? "Processing…" : (confirmModal.confirmLabel || "Confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Row Delete Dropdown Menu */}
+      {rowDeleteMenu && typeof document !== "undefined"
+        ? createPortal(
+            <>
+              <div
+                className="fixed inset-0 z-[80]"
+                onClick={() => setRowDeleteMenu(null)}
+              />
+              <div
+                className="w-60 overflow-hidden rounded-2xl border border-[#c8def4] bg-white p-1.5 shadow-[0_20px_35px_-10px_rgba(10,40,70,0.4)] animate-in fade-in zoom-in-95 duration-100"
+                style={{ position: "fixed", left: rowDeleteMenu.x, top: rowDeleteMenu.y, zIndex: 9990 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="border-b border-[#e5f0fb] px-3 py-1.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#6a8ea8]">Delete Options</p>
+                  <p className="truncate text-xs font-semibold text-[#184670]">{rowDeleteMenu.employee.name}</p>
+                </div>
+                <div className="py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emp = rowDeleteMenu.employee;
+                      setRowDeleteMenu(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete Fingerprints",
+                        message: `Are you sure you want to delete all fingerprints for ${emp.name} (ID: ${emp.code})?`,
+                        detail: "All enrolled fingerprint templates will be removed from PostgreSQL and deleted from connected devices.",
+                        confirmLabel: "Delete FP",
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteCredential(emp, "fp");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-[#1c4870] transition hover:bg-[#eef6ff]"
+                  >
+                    <Fingerprint className="h-4 w-4 text-[#356ea0]" />
+                    <span>Delete FP</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emp = rowDeleteMenu.employee;
+                      setRowDeleteMenu(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete Face Template",
+                        message: `Are you sure you want to delete face templates for ${emp.name} (ID: ${emp.code})?`,
+                        detail: "Visible light and infrared face templates and photos will be removed from database and devices.",
+                        confirmLabel: "Delete Face",
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteCredential(emp, "face");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-[#1c4870] transition hover:bg-[#eef6ff]"
+                  >
+                    <ScanFace className="h-4 w-4 text-[#356ea0]" />
+                    <span>Delete Face Template</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emp = rowDeleteMenu.employee;
+                      setRowDeleteMenu(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete Card",
+                        message: `Are you sure you want to clear the RFID card for ${emp.name} (ID: ${emp.code})?`,
+                        detail: "The assigned card number will be removed and updated as empty on connected devices.",
+                        confirmLabel: "Delete Card",
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteCredential(emp, "card");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-[#1c4870] transition hover:bg-[#eef6ff]"
+                  >
+                    <CreditCard className="h-4 w-4 text-[#356ea0]" />
+                    <span>Delete Card</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emp = rowDeleteMenu.employee;
+                      setRowDeleteMenu(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete Palm",
+                        message: `Are you sure you want to delete palm templates for ${emp.name} (ID: ${emp.code})?`,
+                        detail: "Palm templates will be removed from the database and deleted from connected devices.",
+                        confirmLabel: "Delete Palm",
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteCredential(emp, "palm");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-[#1c4870] transition hover:bg-[#eef6ff]"
+                  >
+                    <Hand className="h-4 w-4 text-[#356ea0]" />
+                    <span>Delete Palm</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emp = rowDeleteMenu.employee;
+                      setRowDeleteMenu(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete Password",
+                        message: `Are you sure you want to clear the password for ${emp.name} (ID: ${emp.code})?`,
+                        detail: "The employee device password will be cleared in the database and cleared on connected devices.",
+                        confirmLabel: "Delete Password",
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteCredential(emp, "password");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-[#1c4870] transition hover:bg-[#eef6ff]"
+                  >
+                    <KeyRound className="h-4 w-4 text-[#356ea0]" />
+                    <span>Delete Password</span>
+                  </button>
+                </div>
+
+                <div className="border-t border-[#f0caca] pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emp = rowDeleteMenu.employee;
+                      setRowDeleteMenu(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete User",
+                        message: `Are you sure you want to permanently delete employee ${emp.name} (ID: ${emp.code})?`,
+                        detail: "This action cannot be undone. All profile data, history, and biometric credentials will be removed.",
+                        confirmLabel: "Delete User",
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteCredential(emp, "user");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-semibold text-[#cf3030] transition hover:bg-[#fff0f0]"
+                  >
+                    <Trash2 className="h-4 w-4 text-[#cf3030]" />
+                    <span>Delete User</span>
+                  </button>
+                </div>
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
+
+      {/* Bulk Biometrics Delete Dropdown Menu */}
+      {bulkBioMenuOpen && bulkBioMenuPos && typeof document !== "undefined"
+        ? createPortal(
+            <>
+              <div
+                className="fixed inset-0 z-[80]"
+                onClick={() => {
+                  setBulkBioMenuOpen(false);
+                  setBulkBioMenuPos(null);
+                }}
+              />
+              <div
+                className="w-64 overflow-hidden rounded-2xl border border-[#c8def4] bg-white p-1.5 shadow-[0_20px_35px_-10px_rgba(10,40,70,0.4)] animate-in fade-in zoom-in-95 duration-100"
+                style={{ position: "fixed", left: bulkBioMenuPos.left, top: bulkBioMenuPos.top, zIndex: 9990 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="border-b border-[#e5f0fb] px-3 py-1.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#6a8ea8]">Batch Biometrics Removal</p>
+                  <p className="truncate text-xs font-semibold text-[#184670]">
+                    {selectedEmployeeIds.length} employee{selectedEmployeeIds.length > 1 ? "s" : ""} selected
+                  </p>
+                </div>
+                <div className="py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkBioMenuOpen(false);
+                      setBulkBioMenuPos(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete Fingerprints for Selected",
+                        message: `Are you sure you want to delete all fingerprints for ${selectedEmployeeIds.length} selected employee(s)?`,
+                        detail: "All enrolled fingerprint templates for the selected employees will be cleared from PostgreSQL and deleted from connected devices.",
+                        confirmLabel: `Delete FP (${selectedEmployeeIds.length})`,
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteBatchCredentials(selectedEmployeeIds, "fp");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-[#1c4870] transition hover:bg-[#eef6ff]"
+                  >
+                    <Fingerprint className="h-4 w-4 text-[#356ea0]" />
+                    <span>Delete FP for Selected</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkBioMenuOpen(false);
+                      setBulkBioMenuPos(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete Face Templates for Selected",
+                        message: `Are you sure you want to delete face templates for ${selectedEmployeeIds.length} selected employee(s)?`,
+                        detail: "Face templates (visible light and infrared) and facial photos for the selected employees will be cleared from PostgreSQL and deleted from connected devices.",
+                        confirmLabel: `Delete Face (${selectedEmployeeIds.length})`,
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteBatchCredentials(selectedEmployeeIds, "face");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-[#1c4870] transition hover:bg-[#eef6ff]"
+                  >
+                    <ScanFace className="h-4 w-4 text-[#356ea0]" />
+                    <span>Delete Face for Selected</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkBioMenuOpen(false);
+                      setBulkBioMenuPos(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete RFID Cards for Selected",
+                        message: `Are you sure you want to clear RFID cards for ${selectedEmployeeIds.length} selected employee(s)?`,
+                        detail: "Assigned RFID card numbers will be cleared in PostgreSQL and updated as empty on connected terminals.",
+                        confirmLabel: `Delete Cards (${selectedEmployeeIds.length})`,
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteBatchCredentials(selectedEmployeeIds, "card");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-[#1c4870] transition hover:bg-[#eef6ff]"
+                  >
+                    <CreditCard className="h-4 w-4 text-[#356ea0]" />
+                    <span>Delete Card for Selected</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkBioMenuOpen(false);
+                      setBulkBioMenuPos(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete Passwords for Selected",
+                        message: `Are you sure you want to clear device passwords for ${selectedEmployeeIds.length} selected employee(s)?`,
+                        detail: "Terminal pin passwords will be cleared in PostgreSQL and updated on connected devices.",
+                        confirmLabel: `Delete Passwords (${selectedEmployeeIds.length})`,
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteBatchCredentials(selectedEmployeeIds, "password");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-[#1c4870] transition hover:bg-[#eef6ff]"
+                  >
+                    <KeyRound className="h-4 w-4 text-[#356ea0]" />
+                    <span>Delete Password for Selected</span>
+                  </button>
+                </div>
+
+                <div className="border-t border-[#f0caca] pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkBioMenuOpen(false);
+                      setBulkBioMenuPos(null);
+                      setConfirmModal({
+                        isOpen: true,
+                        title: "Delete ALL Biometrics for Selected",
+                        message: `Are you sure you want to wipe ALL biometrics for ${selectedEmployeeIds.length} selected employee(s)?`,
+                        detail: "This will remove fingerprints, face templates, cards, and device passwords for all selected employees, but keeps their employee profiles and history intact.",
+                        confirmLabel: `Wipe All Biometrics (${selectedEmployeeIds.length})`,
+                        confirmVariant: "danger",
+                        onConfirm: async () => {
+                          await deleteBatchCredentials(selectedEmployeeIds, "all-biometrics");
+                          setConfirmModal(null);
+                        },
+                      });
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-semibold text-[#cf3030] transition hover:bg-[#fff0f0]"
+                  >
+                    <Trash2 className="h-4 w-4 text-[#cf3030]" />
+                    <span>Delete All Biometrics</span>
+                  </button>
+                </div>
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

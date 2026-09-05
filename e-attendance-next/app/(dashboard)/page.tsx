@@ -42,6 +42,7 @@ import {
 } from "@/components/data/shift-store";
 import { useCalendarPreference } from "@/components/date/calendar-context";
 import { formatCalendarDate } from "@/components/date/date-display";
+import { useBrandingSettings } from "@/components/data/app-settings";
 import { resolveApiBases } from "@/lib/api-bases";
 import { LeaveApplicationModal } from "@/components/modal/leave-application-modal";
 
@@ -450,6 +451,7 @@ function writeDashboardCache(payload: DashboardCache) {
 }
 
 export default function DashboardPage() {
+  const branding = useBrandingSettings();
   const { calendarType } = useCalendarPreference();
   const todayLabel = formatCalendarDate(new Date(), calendarType);
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
@@ -625,9 +627,22 @@ export default function DashboardPage() {
     <div className="dashboard-page w-full space-y-3">
       <section className="relative overflow-hidden rounded-2xl border border-[#cfe4ff] bg-gradient-to-br from-[#eef7ff] via-white to-[#e8f6ff] p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-[#1d4ed8] via-[#2563eb] to-[#0284c7] text-white"><Fingerprint className="h-4 w-4" /></div>
-            <h1 className="text-lg font-bold tracking-tight text-[#0d334d]">E-Attendance</h1>
+          <div className="flex items-center gap-4">
+            <div className="grid h-16 w-16 sm:h-18 sm:w-18 shrink-0 place-items-center">
+              <img
+                src={branding.logoUrl || "/apan_logo.png"}
+                alt={branding.systemTitle || "अपन हाजिरी"}
+                className="h-full w-full object-contain filter drop-shadow-[0_4px_12px_rgba(37,99,235,0.22)]"
+              />
+            </div>
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d334d] font-nepali leading-tight">
+                {branding.organizationName || "अपन हाजिरी"}
+              </h1>
+              <p className="text-xs font-semibold text-[#527494] tracking-wide mt-0.5">
+                {branding.systemTitle || "Apan Hajiri Console"}
+              </p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             <button type="button" onClick={() => void loadDashboard(true)} className="rounded-full border border-[#bfdbfe] bg-white px-3 py-1.5 text-xs font-semibold text-[#1d446b] transition hover:bg-[#f0f9ff]">

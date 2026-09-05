@@ -29,6 +29,7 @@ import {
 import { clearAuthToken, saveAuthToken } from "@/lib/auth-fetch";
 import {
   activateLicenseFiles,
+  fetchAppVersion,
   fetchLicenseStatus,
   type LicenseStatusResponse,
 } from "@/components/data/license-client";
@@ -69,6 +70,13 @@ export default function LoginPage() {
   const [licenseKeyFile, setLicenseKeyFile] = useState<File | null>(null);
   const [loadingLicense, setLoadingLicense] = useState(false);
   const [activatingLicense, setActivatingLicense] = useState(false);
+  const [appVersion, setAppVersion] = useState(SOFTWARE_VERSION);
+
+  useEffect(() => {
+    fetchAppVersion().then((v) => {
+      if (v) setAppVersion(v);
+    }).catch(() => {});
+  }, []);
 
   // --- Lockout state ---
   const LOCKOUT_KEY = "login_lockout";
@@ -271,9 +279,10 @@ export default function LoginPage() {
               <span className="absolute bottom-0 right-0 h-36 w-36 rounded-full bg-blue-200/20 blur-3xl" />
 
               <div className="relative flex h-full flex-col">
-                <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-50">
+                <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[11px] font-semibold tracking-wide text-cyan-50">
                   <Sparkles className="size-3.5" />
-                  E-Attendance
+                  <span className="font-nepali text-sm font-bold">अपन हाजिरी</span>
+                  <span className="text-[11px] opacity-80 uppercase tracking-widest">(Apan Hajiri)</span>
                 </div>
 
                 <h1 className="mt-5 text-3xl font-semibold tracking-[-0.03em] text-white sm:text-[2.25rem]">
@@ -297,7 +306,7 @@ export default function LoginPage() {
 
                 <div className="mt-6 rounded-[24px] border border-white/16 bg-white/10 px-4 py-4 backdrop-blur-sm">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/82">Version</p>
-                  <p className="mt-2 text-lg font-semibold text-white">{SOFTWARE_VERSION}</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{appVersion}</p>
                   <p className="mt-1 text-sm text-cyan-50/80">{DEVELOPER_NAME}</p>
                 </div>
               </div>
@@ -313,13 +322,13 @@ export default function LoginPage() {
                     <ShieldCheck className="size-3.5 text-[#2563eb]" />
                     Secure Access
                   </div>
-                  <div className="mx-auto mt-4 grid h-16 w-16 place-items-center rounded-[22px] overflow-hidden shadow-[0_24px_38px_-20px_rgba(37,99,235,0.75)]">
-                    <img src="/E_Att.ico" alt="E-Attendance" className="h-full w-full object-contain" />
+                  <div className="mx-auto mt-4 grid h-16 w-16 place-items-center">
+                    <img src="/apan_logo.png" alt="अपन हाजिरी" className="h-full w-full object-contain filter drop-shadow-md" />
                   </div>
-                  <h2 className="mt-4 text-[1.9rem] font-semibold tracking-[-0.03em] text-[#0f172a] sm:text-[2.1rem]">
-                    Welcome back
+                  <h2 className="mt-4 text-[1.9rem] font-bold tracking-tight text-[#0f172a] sm:text-[2.1rem] font-nepali">
+                    अपन हाजिरी
                   </h2>
-                  <p className="mt-2 text-sm leading-6 text-[#60748a]">Sign in to continue.</p>
+                  <p className="mt-1 text-sm font-medium text-[#60748a]">Apan Hajiri - Sign in to continue</p>
                 </div>
 
                 {showLicenseBlock ? (
@@ -524,7 +533,7 @@ export default function LoginPage() {
                       </div>
                       <div className="rounded-2xl border border-[#dce8f5] bg-[linear-gradient(140deg,#ffffff,#f2fffa)] p-4">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#7a93aa]">Version</p>
-                        <p className="mt-1 text-sm font-semibold text-[#0f5b8a]">{SOFTWARE_VERSION}</p>
+                        <p className="mt-1 text-sm font-semibold text-[#0f5b8a]">{appVersion}</p>
                       </div>
                       <div className="rounded-2xl border border-[#dce8f5] bg-[linear-gradient(140deg,#ffffff,#fffbea)] p-4 sm:col-span-2">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#7a93aa]">Support</p>

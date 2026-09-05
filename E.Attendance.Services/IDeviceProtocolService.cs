@@ -13,6 +13,7 @@ public interface IDeviceProtocolService
     string CreateWhitelistCommand(string idNumber, string name, int gender, int nation, DateTime startDate, DateTime endDate);
     string CreateRemoteUnlockCommand();
     string CreateRemoteEnrollCommand(string pin, int type, int retry, int overwrite, string? cardNo);
+    string CreateDeleteUserCommand(string pin);
     string CreateRebootCommand();
     
     IReadOnlyList<(SyncType type, string command)> CreateBulkSyncCommands(

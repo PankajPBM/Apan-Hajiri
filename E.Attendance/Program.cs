@@ -1,5 +1,7 @@
 namespace E.Attendance;
 
+using E.Attendance.Core.Logging;
+
 internal static class Program
 {
     private static Mutex? _singleInstanceMutex;
@@ -11,6 +13,15 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        AppDomain.CurrentDomain.UnhandledException += static (sender, e) =>
+        {
+            AppEventLogger.LogFatal("ServiceController", "Unhandled fatal exception occurred in Service Controller.", e.ExceptionObject as Exception);
+        };
+        Application.ThreadException += static (sender, e) =>
+        {
+            AppEventLogger.LogError("ServiceController", "Unhandled UI thread exception in Service Controller.", null, e.Exception);
+        };
+
         var args = Environment.GetCommandLineArgs()
             .Skip(1)
             .ToArray();
@@ -31,20 +42,22 @@ internal static class Program
 
         if (runDbBootstrap)
         {
+            AppEventLogger.LogInfo("ServiceController", "Invoked with --db-bootstrap.");
             Environment.ExitCode = RunDatabaseBootstrap();
             return;
         }
 
         if (runSetPorts)
         {
-            Environment.ExitCode = TryParseSetPortsArguments(args, out var apiPort, out var webPort)
-                ? RunSetPorts(apiPort, webPort)
-                : 1;
+            var parsed = TryParseSetPortsArguments(args, out var apiPort, out var webPort);
+            AppEventLogger.LogInfo("ServiceController", $"Invoked with --set-ports (ApiPort={apiPort}, WebPort={webPort}, Success={parsed}).");
+            Environment.ExitCode = parsed ? RunSetPorts(apiPort, webPort) : 1;
             return;
         }
 
         if (runInstallServices)
         {
+            AppEventLogger.LogInfo("ServiceController", "Invoked with --install-services.");
             Environment.ExitCode = RunInstallServices();
             return;
         }
@@ -52,6 +65,7 @@ internal static class Program
         _singleInstanceMutex = new Mutex(true, "E_ATTENDANCE_SERVICE_CONTROLLER_SINGLE_INSTANCE", out var createdNew);
         if (!createdNew)
         {
+            AppEventLogger.LogInfo("ServiceController", "Another instance is already running; opening dashboard shortcut.");
             TryOpenDashboardShortcut();
             return;
         }
@@ -62,10 +76,12 @@ internal static class Program
         {
             try
             {
+                AppEventLogger.LogInfo("ServiceController", $"Starting ServiceController UI (OpenDashboardOnStartup={openDashboardOnStartup}).");
                 Application.Run(new ServiceControllerContext(openDashboardOnStartup));
             }
             catch (System.IO.FileNotFoundException ex) when (ex.Message.Contains("System.ServiceProcess"))
             {
+                AppEventLogger.LogError("ServiceController", "Missing System.ServiceProcess runtime component.", null, ex);
                 MessageBox.Show(
                     "Service Controller requires .NET Desktop Runtime components.\n\n" +
                     "Please install .NET Desktop Runtime 10.0 or later from:\n" +
@@ -77,6 +93,7 @@ internal static class Program
             }
             catch (Exception ex)
             {
+                AppEventLogger.LogError("ServiceController", "Failed to initialize E-Attendance Service Controller.", null, ex);
                 MessageBox.Show(
                     "Failed to initialize E-Attendance Service Controller.\n\n" +
                     "Error: " + ex.Message,
@@ -103,11 +120,13 @@ internal static class Program
             {
                 var manager = new WebServiceManager();
                 manager.EnsureDefaults();
-                _ = manager.EnsurePostgreSqlReadyWithReport();
+                var report = manager.EnsurePostgreSqlReadyWithReport();
+                AppEventLogger.LogInfo("ServiceController", $"Database bootstrap attempt {attempt} completed successfully.");
                 return 0;
             }
-            catch
+            catch (Exception ex)
             {
+                AppEventLogger.LogError("ServiceController", $"Database bootstrap attempt {attempt}/{maxAttempts} failed.", null, ex);
                 if (attempt >= maxAttempts)
                 {
                     break;
@@ -127,10 +146,12 @@ internal static class Program
             var manager = new WebServiceManager();
             manager.EnsureDefaults();
             manager.SavePorts(apiPort, webPort);
+            AppEventLogger.LogInfo("ServiceController", $"Ports saved successfully: API={apiPort}, Web={webPort}");
             return 0;
         }
-        catch
+        catch (Exception ex)
         {
+            AppEventLogger.LogError("ServiceController", $"Failed to save ports (API={apiPort}, Web={webPort})", null, ex);
             return 1;
         }
     }
@@ -144,11 +165,20 @@ internal static class Program
         {
             var manager = new WebServiceManager();
             manager.EnsureDefaults();
-            var (ok, _) = manager.InstallWindowsServices();
+            var (ok, message) = manager.InstallWindowsServices();
+            if (ok)
+            {
+                AppEventLogger.LogInfo("ServiceController", $"Windows services installed successfully: {message}");
+            }
+            else
+            {
+                AppEventLogger.LogWarning("ServiceController", $"Windows services install returned warning: {message}");
+            }
             return ok ? 0 : 1;
         }
-        catch
+        catch (Exception ex)
         {
+            AppEventLogger.LogError("ServiceController", "Exception while installing Windows services.", null, ex);
             return 1;
         }
     }

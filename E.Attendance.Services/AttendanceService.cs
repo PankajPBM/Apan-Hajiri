@@ -1186,7 +1186,28 @@ public sealed class AttendanceService : IAttendanceService
 
     public AttendanceRecord AddAttendanceFromDevice(string employeeCode, DateTime timestamp, int status, int verify, string? workcode, string? deviceSerialNumber)
     {
-        var employee = GetOrCreateEmployee(employeeCode);
+        var normalizedCode = employeeCode?.Trim() ?? string.Empty;
+        var employee = string.IsNullOrWhiteSpace(normalizedCode)
+            ? null
+            : _repository.GetEmployees().FirstOrDefault(e =>
+                string.Equals(e.EmployeeCode, normalizedCode, StringComparison.OrdinalIgnoreCase));
+
+        if (employee is null || !employee.IsActive)
+        {
+            // Do not auto-create employee or record punches for unknown/inactive employees
+            return new AttendanceRecord
+            {
+                EmployeeId = employee?.Id ?? Guid.Empty,
+                EmployeeCode = normalizedCode,
+                Timestamp = timestamp,
+                Status = AttendanceStatus.Unknown,
+                StatusCode = status,
+                VerifyMode = verify,
+                Workcode = workcode,
+                DeviceSerialNumber = deviceSerialNumber
+            };
+        }
+
         var device = string.IsNullOrWhiteSpace(deviceSerialNumber) ? null : _repository.FindDeviceBySerial(deviceSerialNumber);
 
         var record = new AttendanceRecord

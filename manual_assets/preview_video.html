@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apan Hajiri — AI Video Storyboard & Narration Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0a0f1d;
+      --card-bg: #111827;
+      --card-border: #1e293b;
+      --accent: #0ea5e9;
+      --accent-glow: rgba(14, 165, 233, 0.3);
+      --accent-green: #10b981;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: #0f172a;
+      border-bottom: 1px solid var(--card-border);
+      padding: 14px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, #0284c7, #10b981);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Outfit', sans-serif;
+      font-weight: 800;
+      color: white;
+    }
+    .brand-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+    .brand-sub {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .stats-badge {
+      background: rgba(14, 165, 233, 0.12);
+      border: 1px solid var(--accent);
+      color: #38bdf8;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 20px;
+    }
+    .container {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 24px;
+      max-width: 1540px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px;
+      flex: 1;
+    }
+    /* Video Player Canvas */
+    .player-section {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .screen-wrapper {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.6), 0 0 0 1px var(--card-border);
+    }
+    .slide-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #090d16;
+      transition: transform 12s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.5s ease;
+    }
+    .slide-img.animating {
+      transform: scale(1.06) translateY(-1%);
+    }
+    .lower-third {
+      position: absolute;
+      left: 24px;
+      top: 24px;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 10px 18px;
+      border-radius: 8px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    }
+    .scene-pill {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: #38bdf8;
+      text-transform: uppercase;
+    }
+    .scene-title-overlay {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+    .subtitles-box {
+      position: absolute;
+      bottom: 20px;
+      left: 30px;
+      right: 30px;
+      background: rgba(0, 0, 0, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      padding: 14px 22px;
+      text-align: center;
+      font-size: 1.02rem;
+      line-height: 1.5;
+      color: #ffffff;
+      font-weight: 500;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    }
+    /* Controls Bar */
+    .controls-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 18px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .progress-bar-wrap {
+      width: 100%;
+      height: 6px;
+      background: #1e293b;
+      border-radius: 4px;
+      cursor: pointer;
+      position: relative;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #0284c7, #10b981);
+      border-radius: 4px;
+      width: 0%;
+      transition: width 0.2s linear;
+    }
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .btn-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .ctrl-btn {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: white;
+      padding: 10px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+    .ctrl-btn:hover {
+      background: #334155;
+      border-color: #475569;
+    }
+    .ctrl-btn.primary {
+      background: #0284c7;
+      border-color: #0ea5e9;
+    }
+    .ctrl-btn.primary:hover {
+      background: #0369a1;
+    }
+    .ctrl-btn.playing {
+      background: #e11d48;
+      border-color: #f43f5e;
+    }
+    .time-readout {
+      font-family: monospace;
+      font-size: 0.95rem;
+      color: var(--text-muted);
+    }
+    .voice-select {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: white;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    /* Sidebar Scenes List */
+    .scenes-sidebar {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      height: calc(100vh - 120px);
+    }
+    .sidebar-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--card-border);
+      font-family: 'Outfit', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .scenes-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .scene-item {
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #0f172a;
+      border: 1px solid transparent;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: all 0.2s ease;
+    }
+    .scene-item:hover {
+      background: #1e293b;
+      border-color: #334155;
+    }
+    .scene-item.active {
+      background: rgba(14, 165, 233, 0.15);
+      border-color: var(--accent);
+    }
+    .item-top {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .scene-item.active .item-top {
+      color: #38bdf8;
+    }
+    .item-title {
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+    .item-img-tag {
+      font-size: 0.72rem;
+      color: #64748b;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="brand-logo">AH</div>
+      <div>
+        <div class="brand-title">Apan Hajiri — Video & Narration Preview</div>
+        <div class="brand-sub">Interactive 13-Scene Production Storyboard & Speech Player</div>
+      </div>
+    </div>
+    <div class="stats-badge">13 Scenes • Total 11m 30s • 11 Assets</div>
+  </header>
+
+  <div class="container">
+    <div class="player-section">
+      <div class="screen-wrapper">
+        <img id="mainImage" class="slide-img" src="" alt="Scene Preview">
+        <div class="lower-third">
+          <div id="scenePill" class="scene-pill">SCENE 1</div>
+          <div id="sceneTitleOverlay" class="scene-title-overlay">Introduction & Brand Hook</div>
+        </div>
+        <div id="subtitlesBox" class="subtitles-box">Loading narration script...</div>
+      </div>
+
+      <div class="controls-card">
+        <div class="progress-bar-wrap" id="progressWrap">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+        <div class="control-row">
+          <div class="btn-group">
+            <button id="prevBtn" class="ctrl-btn">⏮ Prev</button>
+            <button id="playBtn" class="ctrl-btn primary">▶ Play Video / Voice</button>
+            <button id="nextBtn" class="ctrl-btn">Next ⏭</button>
+          </div>
+          <div class="time-readout" id="timeReadout">00:00 / 11:30</div>
+          <div class="btn-group">
+            <select id="voiceSelect" class="voice-select" title="Voice Selection">
+              <option value="">Default System Voice</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="scenes-sidebar">
+      <div class="sidebar-header">
+        <span>StoryBoard Timeline</span>
+        <span style="font-size:0.8rem; color:#94a3b8;">13 Modules</span>
+      </div>
+      <div class="scenes-list" id="scenesList"></div>
+    </div>
+  </div>
+
+  <script>
+    const scenes = [
+      {
+        scene: 1,
+        title: "Introduction & Brand Hook",
+        duration: 45,
+        image: "Login Dashboard.png",
+        narration: "Welcome to Apan Hajiri — the enterprise-grade, high-performance attendance and access control management ecosystem designed specifically for institutions, corporations, educational establishments, and industrial enterprises. Powered by an ultra-fast PostgreSQL database engine and built with seamless hardware integration for biometric and facial recognition devices, Apan Hajiri eliminates ghost attendance, simplifies complex multi-shift rosters, and introduces native dual calendar synchronization for both the Western Gregorian and Nepali Bikram Sambat calendars."
+      },
+      {
+        scene: 2,
+        title: "The Command Center — Real-Time Dashboard",
+        duration: 55,
+        image: "Dashboard.png",
+        narration: "Upon entering the platform, administrators are greeted by the centralized Command Center. The Dashboard provides instant situational awareness across your entire organization: First, dynamic KPI cards present today's attendance numbers in real time — tallying staff members who are on time, those utilizing grace periods, employees on approved leave, and unexcused absences. Second, the live Device Health Monitor continuously tracks every biometric terminal across your network. You can instantly observe connection latency, IP addresses, and operational states, ensuring you are notified the moment any terminal requires attention. Third, intuitive analytical charts visualize department-level trends, allowing HR managers to spot attendance patterns and staffing shortages at a single glance."
+      },
+      {
+        scene: 3,
+        title: "Organizational Setup & Area Mapping",
+        duration: 50,
+        image: "Setup.png",
+        narration: "Before enrolling staff, Apan Hajiri empowers you to construct a precise digital twin of your organization. Inside the Setup module, you have complete control over: Company and branch identities, allowing multiple locations to operate within a unified database. Multi-tier Department structures with specialized sub-departments for laser-accurate reporting. Job designations and positions that streamline permission assignments. And physical Area mapping, which links individual doors, turnstiles, and gates to specific biometric terminals. This flexible architecture guarantees that whether you operate a single retail outlet or a distributed multi-city campus, your organizational policies are enforced automatically."
+      },
+      {
+        scene: 4,
+        title: "Biometric Hardware & Device Communication",
+        duration: 65,
+        image: "Devices.png",
+        narration: "The operational backbone of Apan Hajiri is its industrial-grade Device Management engine. Designed for high-throughput biometric terminals, facial recognition scanners, and RFID card readers, the system supports both direct TCP/IP polling and instant Cloud PUSH protocols. Key engineering highlights include: Native 13-character safe command identifiers, preventing buffer overruns and guaranteeing flawless compatibility with both modern and legacy ZKTeco firmware. One-click bidirectional synchronization: push employee names, card numbers, fingerprint templates, and facial vectors straight to the terminals, or pull transactions on demand. And complete remote terminal maintenance: synchronize internal clocks with server time, reboot hardware, and clear memory buffers without stepping away from your desk."
+      },
+      {
+        scene: 5,
+        title: "Workforce Directory & Biometric Profiles",
+        duration: 55,
+        image: "Employees.png",
+        narration: "Managing personnel records in Apan Hajiri is fast, secure, and intuitive. Each comprehensive employee profile maintains: Personal credentials, employee badge ID, and device enrollment PIN. Assigned department, reporting hierarchy, and default shift assignment. And biometric enrollment tracking — verifying at a glance whether the employee has registered their RFID card, fingerprint templates, or facial recognition profile. Onboarding an entire workforce is effortless. Using the built-in Excel bulk import tool, hundreds of personnel records can be ingested, validated, and mapped into the system within seconds."
+      },
+      {
+        scene: 6,
+        title: "Shifts, Timetables, Breaks & Grace Periods",
+        duration: 65,
+        image: "Shift and Timetable.png",
+        narration: "Accurate payroll and fair attendance require scheduling flexibility. Apan Hajiri's Shift engine accommodates even the most intricate operational demands. Within this module, administrators configure: First, granular Timetables: define check-in and check-out windows, allowable late grace periods in minutes, early exit tolerances, and minimum work hours required for half-day credit. Second, sophisticated Break Management: configure lunch and tea breaks as either automatically deducted intervals or punch-validated periods. And third, versatile Shift patterns: create Standard Day shifts, overnight shifts that cross the midnight threshold, weekend rotations, or rotational factory schedules without calculation discrepancies."
+      },
+      {
+        scene: 7,
+        title: "Schedule Assignment & Shift Rosters",
+        duration: 50,
+        image: "Shift and Timetable.png",
+        narration: "Once your timetables are established, assigning them to your staff is seamless. Apan Hajiri allows flexible roster mapping: Assign master default shifts across entire branches or departments in one click. Create specialized shift groups for weekend, security, or night-shift teams. Or assign custom shift schedules to individual personnel with defined start and end dates. Need to accommodate a temporary shift swap or emergency roster change? Adjustments can be made immediately without disrupting recurring schedule templates."
+      },
+      {
+        scene: 8,
+        title: "Access Control, Time Periods & Multi-Group Unlock",
+        duration: 60,
+        image: "Acess Control - Time Period.png",
+        narration: "Beyond time tracking, Apan Hajiri functions as a robust physical security command center. The Access Control system delivers enterprise-grade perimeter security: First, Time Periods: configure up to 50 weekly schedules down to the minute, determining exactly when doors are unlocked, when card access is permitted, and when doors remain secured. Second, Access Groups: bind time periods to specific doors and assign them to authorized personnel groups. And third, Multi-Group Unlock Combinations: for high-security environments like server rooms, vaults, or labs, require dual-custody verification — where two or more authorized individuals from distinct groups must present their credentials within a set timeframe before access is granted."
+      },
+      {
+        scene: 9,
+        title: "Live Punch Transactions & Paired In/Out Processing",
+        duration: 55,
+        image: "Transactions.png",
+        narration: "The Transactions module provides instant transparency into every physical event occurring across your enterprise. Every punch is cataloged with full contextual data: employee name, device location, exact timestamp, and authentication method. Apan Hajiri's intelligent processing engine automatically resolves multiple punches throughout the day, pairing morning check-ins and evening check-outs against the employee's assigned timetable. Should a staff member forget their badge or attend an off-site client meeting, supervisors can insert manual attendance entries complete with mandatory audit remarks for absolute compliance."
+      },
+      {
+        scene: 10,
+        title: "Leaves, Holidays & Nepali Bikram Sambat (BS) Calendar",
+        duration: 60,
+        image: "Leaves and Holiday - Nep calender.png",
+        narration: "A defining capability of Apan Hajiri is its native, bidirectional dual calendar engine. Built specifically to serve organizations operating in Nepal and international environments, the system features full support for the Nepali Bikram Sambat calendar alongside the Western Gregorian calendar. Administrators can configure: Official gazetted and national public holidays across Bikram Sambat years 2081, 2082, and 2083, ensuring holidays are never marked as unexcused absences. Custom leave quotas, including paid annual, sick, casual, maternity, and unpaid leaves. And comprehensive leave application workflows, allowing managers to approve or reject leave requests with real-time balance calculations."
+      },
+      {
+        scene: 11,
+        title: "Enterprise Reports, Analytics & Data Export",
+        duration: 55,
+        image: "Reports.png",
+        narration: "Transform raw punch records into actionable payroll intelligence with Apan Hajiri's comprehensive Reporting suite. With a few clicks, generate: Daily Attendance Summaries displaying punctuality across departments. Detailed Monthly Timesheets itemizing total regular hours, overtime, weekend shifts, and late deductions. And exception audit logs highlighting anomalies before payroll processing. All reports can be filtered by date range, branch, or designation, and exported instantly into beautifully styled PDF documents or structured Excel spreadsheets ready for direct payroll integration."
+      },
+      {
+        scene: 12,
+        title: "Desktop Service Controller, Fix Services & Backup Management",
+        duration: 50,
+        image: "Settings.png",
+        narration: "Behind the web application sits the Apan Hajiri Service Controller — a dedicated Windows desktop application ensuring flawless system uptime. From this administrative dashboard, you can: Start, stop, and monitor the core API and Web services with a single master power toggle. Modify network ports with automatic Windows Firewall configuration. Execute one-click automated database backups or restore from existing snapshots. And utilize the intelligent 'Fix Services' utility: a guarded recovery tool that terminates orphaned processes, reinstalls Windows background services with automatic recovery policies, and restarts the environment cleanly in case of system reboots or network changes."
+      },
+      {
+        scene: 13,
+        title: "Summary, Enterprise Support & Call to Action",
+        duration: 25,
+        image: "Login Dashboard.png",
+        narration: "Streamline your workforce management, secure your facilities, and eliminate payroll headaches today with Apan Hajiri. Whether you are deploying for a single corporate office or a nationwide institution, our engineering team is here to support your transition. Contact us today to schedule your live demonstration or deployment. Thank you for watching!"
+      }
+    ];
+
+    let currentIndex = 0;
+    let isPlaying = false;
+    let synth = window.speechSynthesis;
+    let currentUtterance = null;
+
+    const mainImage = document.getElementById('mainImage');
+    const scenePill = document.getElementById('scenePill');
+    const sceneTitleOverlay = document.getElementById('sceneTitleOverlay');
+    const subtitlesBox = document.getElementById('subtitlesBox');
+    const playBtn = document.getElementById('playBtn');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const scenesList = document.getElementById('scenesList');
+    const voiceSelect = document.getElementById('voiceSelect');
+    const progressFill = document.getElementById('progressFill');
+    const timeReadout = document.getElementById('timeReadout');
+
+    function populateVoices() {
+      if (!synth) return;
+      const voices = synth.getVoices();
+      voiceSelect.innerHTML = '<option value="">Default System Voice</option>';
+      voices.forEach((v, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = `${v.name} (${v.lang})`;
+        if (v.name.includes("Natural") || v.name.includes("Guy") || v.name.includes("David") || v.name.includes("George")) {
+          opt.selected = true;
+        }
+        voiceSelect.appendChild(opt);
+      });
+    }
+
+    if (speechSynthesis.onvoiceschanged !== undefined) {
+      speechSynthesis.onvoiceschanged = populateVoices;
+    }
+    populateVoices();
+
+    function renderSidebar() {
+      scenesList.innerHTML = '';
+      scenes.forEach((s, idx) => {
+        const div = document.createElement('div');
+        div.className = `scene-item ${idx === currentIndex ? 'active' : ''}`;
+        div.innerHTML = `
+          <div class="item-top">
+            <span>SCENE ${s.scene}</span>
+            <span>${s.duration}s</span>
+          </div>
+          <div class="item-title">${s.title}</div>
+          <div class="item-img-tag">📸 ${s.image}</div>
+        `;
+        div.onclick = () => {
+          stopPlayback();
+          loadScene(idx);
+        };
+        scenesList.appendChild(div);
+      });
+    }
+
+    function loadScene(index) {
+      currentIndex = index;
+      const s = scenes[currentIndex];
+      mainImage.src = encodeURI(s.image);
+      scenePill.textContent = `SCENE ${s.scene} (${s.duration}s)`;
+      sceneTitleOverlay.textContent = s.title;
+      subtitlesBox.textContent = `"${s.narration}"`;
+      
+      mainImage.classList.remove('animating');
+      void mainImage.offsetWidth; // trigger reflow
+      mainImage.classList.add('animating');
+
+      renderSidebar();
+      updateProgress();
+    }
+
+    function updateProgress() {
+      const totalSec = scenes.reduce((acc, cur) => acc + cur.duration, 0);
+      let elapsedSec = 0;
+      for (let i = 0; i < currentIndex; i++) {
+        elapsedSec += scenes[i].duration;
+      }
+      const pct = (elapsedSec / totalSec) * 100;
+      progressFill.style.width = `${pct}%`;
+      
+      const m1 = Math.floor(elapsedSec / 60).toString().padStart(2, '0');
+      const s1 = (elapsedSec % 60).toString().padStart(2, '0');
+      const m2 = Math.floor(totalSec / 60).toString().padStart(2, '0');
+      const s2 = (totalSec % 60).toString().padStart(2, '0');
+      timeReadout.textContent = `${m1}:${s1} / ${m2}:${s2}`;
+    }
+
+    function playSceneSpeech() {
+      if (!synth) return;
+      synth.cancel();
+      const s = scenes[currentIndex];
+      currentUtterance = new SpeechSynthesisUtterance(s.narration);
+      currentUtterance.rate = 1.0;
+      currentUtterance.pitch = 1.0;
+
+      const selectedIdx = voiceSelect.value;
+      if (selectedIdx !== "") {
+        const voices = synth.getVoices();
+        if (voices[selectedIdx]) currentUtterance.voice = voices[selectedIdx];
+      }
+
+      currentUtterance.onend = () => {
+        if (isPlaying) {
+          if (currentIndex < scenes.length - 1) {
+            loadScene(currentIndex + 1);
+            playSceneSpeech();
+          } else {
+            stopPlayback();
+          }
+        }
+      };
+
+      currentUtterance.onerror = () => {
+        stopPlayback();
+      };
+
+      synth.speak(currentUtterance);
+    }
+
+    function startPlayback() {
+      isPlaying = true;
+      playBtn.textContent = '⏸ Pause';
+      playBtn.classList.add('playing');
+      playSceneSpeech();
+    }
+
+    function stopPlayback() {
+      isPlaying = false;
+      if (synth) synth.cancel();
+      playBtn.textContent = '▶ Play Video / Voice';
+      playBtn.classList.remove('playing');
+    }
+
+    playBtn.onclick = () => {
+      if (isPlaying) {
+        stopPlayback();
+      } else {
+        startPlayback();
+      }
+    };
+
+    prevBtn.onclick = () => {
+      stopPlayback();
+      if (currentIndex > 0) loadScene(currentIndex - 1);
+    };
+
+    nextBtn.onclick = () => {
+      stopPlayback();
+      if (currentIndex < scenes.length - 1) loadScene(currentIndex + 1);
+    };
+
+    // Initialize
+    loadScene(0);
+  </script>
+</body>
+</html>

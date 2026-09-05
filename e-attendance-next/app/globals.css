@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Mukta:wght@400;500;600;700;800&family=Poppins:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 :root {
@@ -20,8 +21,9 @@
   --warning-bg: #f59e0b10;
   --error: #ef4444;
   --error-bg: #ef444410;
-  --font-ui: "Segoe UI Variable Display", "Segoe UI", "Trebuchet MS", "Noto Sans", sans-serif;
-  --font-body: "Segoe UI Variable Text", "Segoe UI", "Noto Sans", sans-serif;
+  --font-nepali: "Mukta", "Poppins", "Segoe UI", sans-serif;
+  --font-ui: "Mukta", "Segoe UI Variable Display", "Segoe UI", "Trebuchet MS", "Noto Sans", sans-serif;
+  --font-body: "Mukta", "Segoe UI Variable Text", "Segoe UI", "Noto Sans", sans-serif;
 
   --background: var(--bg-soft);
   --foreground: var(--text-primary);
@@ -787,3 +789,9 @@ textarea {
   background: radial-gradient(circle at 36% 34%, rgba(153, 246, 228, 0.88) 0%, rgba(15, 118, 110, 0.62) 72%);
   animation: login-float 12s ease-in-out infinite;
 }
+
+.font-nepali {
+  font-family: var(--font-nepali);
+  letter-spacing: 0.01em;
+}
+

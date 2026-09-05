@@ -169,8 +169,8 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
     public Employee AddEmployee(Employee employee)
     {
         var sql = $"""
-            INSERT INTO Employees (Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive, AreaId)
-            VALUES ({SqlUuid("$id")}, $code, $name, $area, $dept, $deptId, $departmentsJson, $position, $card, $password, $mobile, $gender, $privilege, $verifyMode, $faceVisible, $faceInfra, $photo, $fingerprints, {SqlTs("$createdAt")}, {SqlTs("$syncedAt")}, $active, $areaId)
+            INSERT INTO Employees (Id, EmployeeCode, FullName, Area, Department, DepartmentId, DepartmentsJson, Position, CardNumber, Password, MobileNumber, Gender, Privilege, VerifyMode, FaceTemplateVisible, FaceTemplateInfrared, ProfilePhoto, FingerprintTemplates, CreatedAt, SyncedAt, IsActive, AreaId, Status)
+            VALUES ({SqlUuid("$id")}, $code, $name, $area, $dept, $deptId, $departmentsJson, $position, $card, $password, $mobile, $gender, $privilege, $verifyMode, $faceVisible, $faceInfra, $photo, $fingerprints, {SqlTs("$createdAt")}, {SqlTs("$syncedAt")}, $active, $areaId, $status)
             """;
 
         Execute(sql, command =>
@@ -197,6 +197,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$syncedAt", employee.SyncedAt.HasValue ? employee.SyncedAt.Value.ToString("O") : (object)DBNull.Value);
             command.Parameters.AddWithValue("$active", employee.IsActive ? 1 : 0);
             command.Parameters.AddWithValue("$areaId", employee.AreaId > 0 ? employee.AreaId : 1);
+            command.Parameters.AddWithValue("$status", employee.IsActive ? "active" : "inactive");
         });
 
         return employee;
@@ -225,7 +226,8 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
                 ProfilePhoto = $photo,
                 FingerprintTemplates = $fingerprints,
                 SyncedAt = {SqlTs("$syncedAt")},
-                IsActive = $active
+                IsActive = $active,
+                Status = $status
             WHERE Id = {SqlUuid("$id")}
             """;
 
@@ -252,6 +254,7 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
             command.Parameters.AddWithValue("$fingerprints", employee.FingerprintTemplates ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("$syncedAt", employee.SyncedAt.HasValue ? employee.SyncedAt.Value.ToString("O") : (object)DBNull.Value);
             command.Parameters.AddWithValue("$active", employee.IsActive ? 1 : 0);
+            command.Parameters.AddWithValue("$status", employee.IsActive ? "active" : "inactive");
         });
 
         return rows > 0;

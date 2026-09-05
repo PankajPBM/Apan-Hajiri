@@ -244,6 +244,8 @@ public sealed class DeviceProtocolService : IDeviceProtocolService
         return $"SET OPTION DateTime={seconds}";
     }
 
+    public string CreateDeleteUserCommand(string pin) => $"DATA DELETE USERINFO PIN={pin.Trim()}";
+
     public string CreateRebootCommand() => "REBOOT";
 
     public IReadOnlyList<(SyncType type, string command)> CreateBulkSyncCommands(
@@ -292,11 +294,16 @@ public sealed class DeviceProtocolService : IDeviceProtocolService
             commands.Add((SyncType.AccessControl, CreateAccUnLockCombCommand(comb.Id, groupIds)));
         }
 
-        // 5. Sync Employees
+        // 5. Sync Employees: Active users enrolled with biometrics; Inactive users removed from device
         foreach (var employee in employees.Where(e => e.IsActive))
         {
             commands.Add((SyncType.UserInfo, CreateUserInfoCommand(employee, device)));
             commands.AddRange(CreateEmployeeBiometricSyncCommands(employee, device));
+        }
+
+        foreach (var employee in employees.Where(e => !e.IsActive))
+        {
+            commands.Add((SyncType.UserInfo, CreateDeleteUserCommand(employee.EmployeeCode)));
         }
 
         return commands;

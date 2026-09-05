@@ -17,7 +17,7 @@ import {
 type AccessSection = "time-period" | "groups" | "combination" | "privilege" | "duplicate-punch";
 type DepartmentRow = { id: string; name: string; code: string; parentId: string | null; areaName?: string; areaCode?: string };
 type DeviceRow = { serialNumber: string; name: string; area: string; department: string; status: string };
-type EmployeeRow = { id: string; employeeCode: string; fullName: string; area: string; department: string; groupId?: number; verifyMode?: number; timezoneProfile?: string };
+type EmployeeRow = { id: string; employeeCode: string; fullName: string; area: string; department: string; isActive?: boolean; groupId?: number; verifyMode?: number; timezoneProfile?: string };
 
 // Per-employee privilege edit form
 type EmpPrivForm = { empId: string; empCode: string; empName: string; groupId: string; verifyMode: string; timePeriodMode: "group"|"manual"; timePeriodIds: [string,string,string] };
@@ -90,7 +90,28 @@ function asDevices(p: unknown): DeviceRow[] {
   return unwrap(p).map(item=>{ const s=item&&typeof item==="object"?item as Record<string,unknown>:{}; return {serialNumber:readStr(s,["serialNumber","SerialNumber"]),name:readStr(s,["name","Name"]),area:readStr(s,["area","Area"])||"Default Area",department:readStr(s,["department","Department"])||"Default Department",status:readStr(s,["status","Status"])||"offline"}; });
 }
 function asEmps(p: unknown): EmployeeRow[] {
-  const rows: Array<EmployeeRow | null> = unwrap(p).map((item,i)=>{ if(!item||typeof item!=="object") return null; const s=item as Record<string,unknown>; const fullName=readStr(s,["fullName","name"]); if(!fullName) return null; const dept=readStr(s,["department","departmentName"])||(Array.isArray(s.departments)?String(s.departments[0]??""):""); const area=readStr(s,["area","areaName"])||(Array.isArray(s.areas)?String(s.areas[0]??""):""); return {id:readStr(s,["id"])||`e${i}`,employeeCode:readStr(s,["employeeCode","code"])||`EMP${i}`,fullName,area:area||"Default Area",department:dept||"Default Department",groupId:typeof s.groupId==="number"?s.groupId:undefined,verifyMode:typeof s.verifyMode==="number"?s.verifyMode:undefined,timezoneProfile:typeof s.timezoneProfile==="string"?s.timezoneProfile:undefined}; });
+  const rows: Array<EmployeeRow | null> = unwrap(p).map((item,i)=>{
+    if(!item||typeof item!=="object") return null;
+    const s=item as Record<string,unknown>;
+    const fullName=readStr(s,["fullName","name"]);
+    if(!fullName) return null;
+    const dept=readStr(s,["department","departmentName"])||(Array.isArray(s.departments)?String(s.departments[0]??""):"");
+    const area=readStr(s,["area","areaName"])||(Array.isArray(s.areas)?String(s.areas[0]??""):"");
+    const isActive = s.isActive !== undefined ? Boolean(s.isActive) : s.IsActive !== undefined ? Boolean(s.IsActive) : true;
+    const rawGrp = typeof s.groupId === "number" ? s.groupId : undefined;
+    const effectiveGrp = !isActive ? 0 : (rawGrp ?? 1);
+    return {
+      id:readStr(s,["id"])||`e${i}`,
+      employeeCode:readStr(s,["employeeCode","code"])||`EMP${i}`,
+      fullName,
+      area:area||"Default Area",
+      department:dept||"Default Department",
+      isActive,
+      groupId: effectiveGrp,
+      verifyMode:typeof s.verifyMode==="number"?s.verifyMode:undefined,
+      timezoneProfile:typeof s.timezoneProfile==="string"?s.timezoneProfile:undefined
+    };
+  });
   return rows.filter((x): x is EmployeeRow=>x!==null);
 }
 
@@ -452,8 +473,8 @@ export default function AccessControlPage() {
         valA = (a.fullName || "").trim().split(/\s+/).slice(1).join(" ") || "";
         valB = (b.fullName || "").trim().split(/\s+/).slice(1).join(" ") || "";
       } else if (sortField === "groupId") {
-        valA = a.groupId ?? 1;
-        valB = b.groupId ?? 1;
+        valA = !a.isActive ? 0 : (a.groupId ?? 1);
+        valB = !b.isActive ? 0 : (b.groupId ?? 1);
         return sortAsc ? valA - valB : valB - valA;
       } else if (sortField === "verifyMode") {
         valA = a.verifyMode ?? -1;
@@ -515,7 +536,8 @@ export default function AccessControlPage() {
   const closeModal = useCallback(()=>setModal(null),[]);
 
   const openEmpPriv = useCallback((emp: EmployeeRow)=>{
-    const grp = snapshot.groups.find(g=>Number(g.groupNo)===(emp.groupId??1));
+    const effectiveGrp = !emp.isActive ? 0 : (emp.groupId ?? 1);
+    const grp = snapshot.groups.find(g=>Number(g.groupNo)===effectiveGrp);
     const tpMode = emp.timezoneProfile && emp.timezoneProfile !== "0000000000000000" ? "manual" : "group";
     // Parse personal time period slots from timezoneProfile (digits 5-8, 9-12, 13-16)
     const tz = emp.timezoneProfile ?? "0000000000000000";
@@ -527,7 +549,7 @@ export default function AccessControlPage() {
       empId: emp.id,
       empCode: emp.employeeCode,
       empName: emp.fullName,
-      groupId: String(emp.groupId ?? 1),
+      groupId: String(effectiveGrp),
       verifyMode: String(emp.verifyMode??-1),
       timePeriodMode: tpMode,
       timePeriodIds: [tpByNo(slot1), tpByNo(slot2), tpByNo(slot3)],
@@ -538,7 +560,7 @@ export default function AccessControlPage() {
   const saveEmpPriv = useCallback(async()=>{
     setEmpPrivSaving(true); setMsg(null); setErr(null);
     try {
-      const grpNo = Number(empPrivForm.groupId) || 1;
+      const grpNo = Number.isFinite(Number(empPrivForm.groupId)) ? Number(empPrivForm.groupId) : 1;
       // Build timezoneProfile: 0000 + tp1(4) + tp2(4) + tp3(4) + 0000
       let tz = "0000000000000000";
       if(empPrivForm.timePeriodMode==="manual"){
@@ -558,7 +580,7 @@ export default function AccessControlPage() {
           department: emp.department,
           departmentCodes: [],
           position: "",
-          isActive: true,
+          isActive: grpNo === 0 ? false : (emp.isActive ?? true),
           privilege: "User",
           verifyMode: Number(empPrivForm.verifyMode),
           groupId: grpNo,
@@ -594,7 +616,7 @@ export default function AccessControlPage() {
     setMsg(null);
     setErr(null);
     try {
-      const grpNo = Number(batchForm.groupId) || 1;
+      const grpNo = Number.isFinite(Number(batchForm.groupId)) ? Number(batchForm.groupId) : 1;
       let tz = "0000000000000000";
       if (batchForm.timePeriodMode === "manual") {
         const slot = (id: string) => {
@@ -620,7 +642,7 @@ export default function AccessControlPage() {
               department: emp.department,
               departmentCodes: [],
               position: "",
-              isActive: true,
+              isActive: grpNo === 0 ? false : (emp.isActive ?? true),
               privilege: "User",
               verifyMode: Number(batchForm.verifyMode),
               groupId: grpNo,
@@ -1171,7 +1193,7 @@ export default function AccessControlPage() {
                   </tr></thead>
                   <tbody className="divide-y divide-[#eef5fc]">
                     {sortedFilteredEmps.length===0?<tr><td colSpan={11} className="py-10 text-center text-[#7a93ab]">No employees found.</td></tr>:sortedFilteredEmps.map(emp=>{
-                      const grpNo = emp.groupId ?? 1;
+                      const grpNo = !emp.isActive ? 0 : (emp.groupId ?? 1);
                       const tz = emp.timezoneProfile ?? "0000000000000000";
                       const isPersonalTp = tz !== "0000000000000000" && tz.slice(4,8) !== "0000";
                       const tpMode = isPersonalTp ? "Personnel" : "Group";
@@ -1201,7 +1223,15 @@ export default function AccessControlPage() {
                           <td className="px-3 py-2.5 font-medium text-[#1a4a73]">{emp.employeeCode}</td>
                           <td className="px-3 py-2.5">{nameParts[0]}</td>
                           <td className="px-3 py-2.5">{nameParts.slice(1).join(" ")||"—"}</td>
-                          <td className="px-3 py-2.5 text-xs">{grpNo}</td>
+                          <td className="px-3 py-2.5 text-xs">
+                            {grpNo === 0 ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-[#fde8e8] px-2 py-0.5 text-xs font-semibold text-[#c0392b]">
+                                0 (Inactive)
+                              </span>
+                            ) : (
+                              grpNo
+                            )}
+                          </td>
                           <td className="px-3 py-2.5 text-xs">{tpMode}</td>
                           <td className="px-3 py-2.5 text-xs">{tpNo(slot1)}</td>
                           <td className="px-3 py-2.5 text-xs">{tpNo(slot2)}</td>
@@ -1616,7 +1646,8 @@ export default function AccessControlPage() {
                 </div>
                 <F label="Access Group *">
                   <select value={empPrivForm.groupId} onChange={e=>setEmpPrivForm(c=>({...c,groupId:e.target.value}))} className={ic}>
-                    {!snapshot.groups.some(g=>String(g.groupNo)===empPrivForm.groupId && g.area === empArea) && <option value={empPrivForm.groupId}>{empPrivForm.groupId} - Group {empPrivForm.groupId}</option>}
+                    <option value="0">0 - No Access Group (Inactive / Locked)</option>
+                    {!snapshot.groups.some(g=>String(g.groupNo)===empPrivForm.groupId && g.area === empArea) && empPrivForm.groupId !== "0" && <option value={empPrivForm.groupId}>{empPrivForm.groupId} - Group {empPrivForm.groupId}</option>}
                     {snapshot.groups.filter(g => g.area === empArea).map(g=><option key={g.id} value={String(g.groupNo)}>{g.groupNo} - {g.name}</option>)}
                   </select>
                 </F>
@@ -1681,6 +1712,7 @@ export default function AccessControlPage() {
                 onChange={e => setBatchForm(c => ({ ...c, groupId: e.target.value }))}
                 className={ic}
               >
+                <option value="0">0 - No Access Group (Inactive / Locked)</option>
                 {snapshot.groups.filter(g => areaFilter === "All" || g.area === areaFilter).map(g => (
                   <option key={g.id} value={String(g.groupNo)}>
                     {g.groupNo} - {g.name}

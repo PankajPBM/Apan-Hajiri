@@ -37,7 +37,7 @@ internal sealed class ServiceControllerContext : ApplicationContext
         _trayIcon = new NotifyIcon
         {
             Icon = trayIcon,
-            Text = "E-Attendance Service",
+            Text = "Apan Hajiri Service",
             Visible = true,
             ContextMenuStrip = menu
         };
@@ -170,12 +170,49 @@ internal sealed class ServiceControllerContext : ApplicationContext
 
     private static System.Drawing.Icon LoadTrayIcon()
     {
+        var smallSize = SystemInformation.SmallIconSize;
+
+        try
+        {
+            var asm = typeof(ServiceControllerContext).Assembly;
+            using var stream = asm.GetManifestResourceStream("E.Attendance.E_Att.ico");
+            if (stream is not null)
+            {
+                return new System.Drawing.Icon(stream, smallSize);
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            var candidates = new[]
+            {
+                Path.Combine(baseDir, "E_Att.ico"),
+                Path.Combine(baseDir, "favicon.ico"),
+                Path.Combine(baseDir, "..", "icon", "E_Att.ico"),
+                Path.Combine(baseDir, "..", "..", "..", "icon", "E_Att.ico")
+            };
+            foreach (var path in candidates)
+            {
+                if (File.Exists(path))
+                {
+                    return new System.Drawing.Icon(path, smallSize);
+                }
+            }
+        }
+        catch
+        {
+        }
+
         try
         {
             var icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             if (icon is not null)
             {
-                return icon;
+                return new System.Drawing.Icon(icon, smallSize);
             }
         }
         catch

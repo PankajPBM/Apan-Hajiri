@@ -25,19 +25,20 @@ foreach ($file in $projectFiles) {
 }
 
 # ── Frontend package files ────────────────────────────────────────────────────
-$packageFiles = @(
-    Join-Path $root "e-attendance-next\package.json"
-    Join-Path $root "e-attendance-next\package-lock.json"
-)
+$pkgFile = Join-Path $root "e-attendance-next\package.json"
+if (Test-Path $pkgFile) {
+    $pkg = Get-Content -LiteralPath $pkgFile -Raw
+    $pkg = [regex]::Replace($pkg, '("version"\s*:\s*")[^"]+(")', "`${1}$Version`$2", 1)
+    Set-Content -LiteralPath $pkgFile -Value $pkg -NoNewline
+    Write-Host "  Updated: package.json"
+}
 
-foreach ($file in $packageFiles) {
-    $json = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -Depth 100
-    $json.version = $Version
-    if ($json.packages -and $json.packages.'' -and $json.packages.''.version) {
-        $json.packages.''.version = $Version
-    }
-    $json | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $file
-    Write-Host "  Updated: $(Split-Path -Leaf $file)"
+$lockFile = Join-Path $root "e-attendance-next\package-lock.json"
+if (Test-Path $lockFile) {
+    $lock = Get-Content -LiteralPath $lockFile -Raw
+    $lock = [regex]::Replace($lock, '("version"\s*:\s*")[^"]+(")', "`${1}$Version`$2", 1)
+    Set-Content -LiteralPath $lockFile -Value $lock -NoNewline
+    Write-Host "  Updated: package-lock.json"
 }
 
 # ── Inno Setup installer script ───────────────────────────────────────────────

@@ -14,9 +14,9 @@ export const APP_BRANDING_EVENT = "e-attendance:branding-updated";
 const BRANDING_STORAGE_KEY = "e_attendance_branding";
 
 const defaultBranding: AppBrandingSettings = {
-  organizationName: "E-Attendance",
-  systemTitle: "E-Attendance",
-  logoUrl: "/logo_pb.ico",
+  organizationName: "अपन हाजिरी",
+  systemTitle: "Apan Hajiri",
+  logoUrl: "/apan_logo.png",
   // Previous navy-blue brand tone (original sidebar gradient base); the sidebar renders a
   // gradient from this down to a darker shade, reproducing the prior gradient look.
   primaryColor: "#134f8a",
@@ -53,7 +53,15 @@ function normalizeLegacyLogoUrl(value: string | undefined): string | undefined {
   if (!trimmed) {
     return trimmed;
   }
-  return trimmed === "/logo.svg" ? "/logo_pb.ico" : trimmed;
+  if (
+    trimmed === "/logo.svg" ||
+    trimmed === "/logo_pb.ico" ||
+    trimmed === "/E_Att.ico" ||
+    trimmed.toLowerCase().includes("logo_pb")
+  ) {
+    return "/apan_logo.png";
+  }
+  return trimmed;
 }
 
 function normalizeColorValue(value: string | undefined): string {
@@ -84,13 +92,22 @@ function syncBrandingDocument(next: AppBrandingSettings) {
   root.style.setProperty("--primary", next.primaryColor);
   root.style.setProperty("--ring", next.primaryColor);
   root.style.setProperty("--primary-foreground", pickForegroundColor(next.primaryColor));
-  document.title = next.systemTitle;
+  document.title = `${next.organizationName} (${next.systemTitle})`;
 }
 
 function normalizeBranding(raw: Partial<AppBrandingSettings> | null | undefined): AppBrandingSettings {
+  let orgName = raw?.organizationName?.trim();
+  if (!orgName || orgName === "E-Attendance" || orgName === "PB Tech Zone") {
+    orgName = defaultBranding.organizationName;
+  }
+  let sysTitle = raw?.systemTitle?.trim();
+  if (!sysTitle || sysTitle === "E-Attendance" || sysTitle === "PB Tech Zone") {
+    sysTitle = defaultBranding.systemTitle;
+  }
+
   return {
-    organizationName: raw?.organizationName?.trim() || defaultBranding.organizationName,
-    systemTitle: raw?.systemTitle?.trim() || raw?.organizationName?.trim() || defaultBranding.systemTitle,
+    organizationName: orgName,
+    systemTitle: sysTitle,
     logoUrl: normalizeLegacyLogoUrl(raw?.logoUrl) || defaultBranding.logoUrl,
     primaryColor: normalizeColorValue(raw?.primaryColor),
     supportEmail: normalizeLegacySupportEmail(raw?.supportEmail) || defaultBranding.supportEmail,

@@ -587,13 +587,10 @@ export default function ShiftsPage() {
       .map((x) => `Day ${x.dayOfMonth}: ${timetableById.get(x.timetableId) ?? "Not set"}`)
   };
 
-  const otShiftRows = shifts.length ? shifts : defaultShiftDefinitions();
-
-  const updateShiftOvertime = (shiftId: string, patch: Partial<Pick<ShiftDefinition, "enableOvertime" | "overtimeAfterMinutes">>) => {
-    setShifts((prev) => {
-      const source = prev.length ? prev : defaultShiftDefinitions();
-      return source.map((shift) => (shift.id === shiftId ? { ...shift, ...patch } : shift));
-    });
+  const updateShiftPlanOvertime = (planId: string, patch: { enableOvertime?: boolean; overtimeAfterMinutes?: number }) => {
+    setShiftPlans((prev) =>
+      prev.map((plan) => (plan.id === planId ? { ...plan, ...patch } : plan))
+    );
   };
 
   const saveOvertimeSettings = async () => {
@@ -601,10 +598,10 @@ export default function ShiftsPage() {
     setErr(null);
     setMsg(null);
 
-    const normalizedShifts = otShiftRows.map((shift) => ({
-      ...shift,
-      enableOvertime: Boolean(shift.enableOvertime),
-      overtimeAfterMinutes: Math.max(0, Math.round(shift.overtimeAfterMinutes || 0)),
+    const normalizedPlans = shiftPlans.map((plan) => ({
+      ...plan,
+      enableOvertime: plan.enableOvertime !== false,
+      overtimeAfterMinutes: Math.max(0, Math.round(plan.overtimeAfterMinutes || 0)),
     }));
     const normalizedCalendar: ShiftCalendarSettings = {
       ...calendar,
@@ -616,7 +613,7 @@ export default function ShiftsPage() {
     setOvertimeSaving(true);
     try {
       const saved = await saveShiftConfigToApi({
-        shiftDefinitions: normalizedShifts,
+        shiftPlans: normalizedPlans,
         calendar: normalizedCalendar,
       });
       applyShiftConfig(saved);
@@ -806,18 +803,6 @@ export default function ShiftsPage() {
               <CalendarDays className="h-4 w-4" />Time Table
             </button>
           ) : null}
-          {showOvertimeTab ? (
-            <button
-              type="button"
-              onClick={() => {
-                setTab("overtime");
-                router.replace("/shifts?tab=overtime");
-              }}
-              className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "overtime" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
-            >
-              <CalendarClock className="h-4 w-4" />OT
-            </button>
-          ) : null}
           {showShiftTab ? (
             <button
               type="button"
@@ -828,6 +813,18 @@ export default function ShiftsPage() {
               className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "setup" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
             >
               <Clock3 className="h-4 w-4" />Shifts
+            </button>
+          ) : null}
+          {showOvertimeTab ? (
+            <button
+              type="button"
+              onClick={() => {
+                setTab("overtime");
+                router.replace("/shifts?tab=overtime");
+              }}
+              className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "overtime" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
+            >
+              <CalendarClock className="h-4 w-4" />OT
             </button>
           ) : null}
         </div>
@@ -1332,54 +1329,65 @@ export default function ShiftsPage() {
 
             <div className="rounded-lg border border-[--border] p-3">
               <div className="mb-2 text-sm font-semibold">Shift OT Rules</div>
+              <p className="mb-3 text-xs text-[--muted-foreground]">Configure overtime rules for each created shift.</p>
               <div className="overflow-x-auto rounded-lg border border-[--border]">
                 <table className="min-w-full text-left text-sm">
                   <thead className="bg-[#f7fbff] text-xs uppercase text-[--muted-foreground]">
                     <tr>
                       <th className="px-3 py-2">Shift</th>
+                      <th className="px-3 py-2">Cycle</th>
                       <th className="px-3 py-2">OT</th>
                       <th className="px-3 py-2">OT After</th>
                       <th className="px-3 py-2">Effective Rule</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {otShiftRows.map((shift) => (
-                      <tr key={shift.id} className="border-t border-[--border]">
-                        <td className="px-3 py-2">
-                          <div className="font-medium">{shift.name}</div>
-                          <div className="text-xs text-[--muted-foreground]">{shift.id}</div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <label className="inline-flex items-center gap-2 text-sm text-[#1f4f79]">
-                            <input
-                              type="checkbox"
-                              checked={shift.enableOvertime}
-                              onChange={(e) => updateShiftOvertime(shift.id, { enableOvertime: e.target.checked })}
-                            />
-                            Selected
-                          </label>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            min={0}
-                            value={shift.overtimeAfterMinutes}
-                            onChange={(e) =>
-                              updateShiftOvertime(shift.id, {
-                                overtimeAfterMinutes: Math.max(0, Number.parseInt(e.target.value || "0", 10) || 0),
-                              })
-                            }
-                            className="w-28 rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]"
-                          />
-                          <span className="ml-2 text-xs text-[--muted-foreground]">minutes</span>
-                        </td>
-                        <td className="px-3 py-2 text-xs text-[--muted-foreground]">
-                          {calendar.overtimeEnabled && shift.enableOvertime
-                            ? `After normal work time + ${formatOtMinutes(shift.overtimeAfterMinutes)}`
-                            : "OT disabled"}
+                    {shiftPlans.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-4 text-center text-sm text-[--muted-foreground]">
+                          No shifts available. Create shifts in the Shifts tab first.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      shiftPlans.map((plan) => (
+                        <tr key={plan.id} className="border-t border-[--border]">
+                          <td className="px-3 py-2">
+                            <div className="font-medium">{plan.name}</div>
+                            <div className="text-xs text-[--muted-foreground]">{plan.id}</div>
+                          </td>
+                          <td className="px-3 py-2 text-xs text-[--muted-foreground] capitalize">{plan.cycleType}</td>
+                          <td className="px-3 py-2">
+                            <label className="inline-flex items-center gap-2 text-sm text-[#1f4f79]">
+                              <input
+                                type="checkbox"
+                                checked={plan.enableOvertime !== false}
+                                onChange={(e) => updateShiftPlanOvertime(plan.id, { enableOvertime: e.target.checked })}
+                              />
+                              Selected
+                            </label>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              min={0}
+                              value={plan.overtimeAfterMinutes ?? 0}
+                              onChange={(e) =>
+                                updateShiftPlanOvertime(plan.id, {
+                                  overtimeAfterMinutes: Math.max(0, Number.parseInt(e.target.value || "0", 10) || 0),
+                                })
+                              }
+                              className="w-28 rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]"
+                            />
+                            <span className="ml-2 text-xs text-[--muted-foreground]">minutes</span>
+                          </td>
+                          <td className="px-3 py-2 text-xs text-[--muted-foreground]">
+                            {calendar.overtimeEnabled && plan.enableOvertime !== false
+                              ? `After shift duration + ${formatOtMinutes(plan.overtimeAfterMinutes ?? 0)}`
+                              : "OT disabled"}
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>

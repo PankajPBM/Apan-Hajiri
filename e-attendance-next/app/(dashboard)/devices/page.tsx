@@ -1485,13 +1485,40 @@ export default function DevicesPage() {
           }
           return undefined;
         };
+        const parseVal = (str: string | undefined, fallback: number) => {
+          if (!str) return fallback;
+          const parsed = parseInt(str, 10);
+          return isNaN(parsed) ? fallback : parsed;
+        };
+
+        const targetDevice = devices.find((d) => d.serialNumber === serial);
         const deviceName = findField("DeviceName", "~DeviceName", "DevName", "~DevName", "Name", "Alias", "TerminalName");
         const deviceModel = findField("DeviceModel", "~DeviceModel", "Model", "~Model", "DeviceType", "ProductType", "DevType", "TerminalType");
+        const currentUser = parseVal(findField("UserCount", "~UserCount", "UserQty"), targetDevice?.userQty ?? 0);
+        const currentFp = parseVal(findField("FPCount", "~FPCount", "FpQty", "FingerprintCount"), targetDevice?.fpQty ?? 0);
+        const currentFace = parseVal(findField("FaceCount", "~FaceCount", "FaceQty"), targetDevice?.faceQty ?? 0);
+        const currentPalm = parseVal(findField("PvCount", "~PvCount", "PalmCount", "PalmQty"), targetDevice?.palmQty ?? 0);
+        const currentAtt = parseVal(findField("AttLogCount", "~AttLogCount", "TransactionQty", "TransactionCount"), targetDevice?.transactionQty ?? 0);
+
+        setDevices((prev) =>
+          prev.map((d) =>
+            d.serialNumber === serial
+              ? {
+                  ...d,
+                  model: deviceModel || d.model,
+                  userQty: currentUser,
+                  fpQty: currentFp,
+                  faceQty: currentFace,
+                  palmQty: currentPalm,
+                  transactionQty: currentAtt,
+                }
+              : d
+          )
+        );
+
         if (deviceName || deviceModel) {
-          const targetDevice = devices.find((d) => d.serialNumber === serial);
           if (targetDevice) {
             try {
-              // Preserve the editable name; use the fetched name as model when firmware exposes one shared value.
               await requestJson(`/api/devices/${targetDevice.id}/info`, {
                 method: "PUT",
                 body: JSON.stringify({
@@ -1553,13 +1580,28 @@ export default function DevicesPage() {
             return isNaN(parsed) ? fallback : parsed;
           };
 
-          const currentUser = parseVal(findField("UserCount", "UserQty"), targetDevice?.userQty ?? 0);
-          const currentFp = parseVal(findField("FPCount", "FpQty", "FingerprintCount"), targetDevice?.fpQty ?? 0);
-          const currentFace = parseVal(findField("FaceCount", "FaceQty"), targetDevice?.faceQty ?? 0);
-          const currentPalm = parseVal(findField("PvCount", "PalmCount", "PalmQty"), targetDevice?.palmQty ?? 0);
-          const currentAtt = parseVal(findField("AttLogCount", "TransactionQty", "TransactionCount"), targetDevice?.transactionQty ?? 0);
-          const currentCard = parseVal(findField("UserCardCount", "CardCount"), 0);
-          const currentPhoto = parseVal(findField("ATTPhotoCount", "AttPhotoCount"), 0);
+          const currentUser = parseVal(findField("UserCount", "~UserCount", "UserQty"), targetDevice?.userQty ?? 0);
+          const currentFp = parseVal(findField("FPCount", "~FPCount", "FpQty", "FingerprintCount"), targetDevice?.fpQty ?? 0);
+          const currentFace = parseVal(findField("FaceCount", "~FaceCount", "FaceQty"), targetDevice?.faceQty ?? 0);
+          const currentPalm = parseVal(findField("PvCount", "~PvCount", "PalmCount", "PalmQty"), targetDevice?.palmQty ?? 0);
+          const currentAtt = parseVal(findField("AttLogCount", "~AttLogCount", "TransactionQty", "TransactionCount"), targetDevice?.transactionQty ?? 0);
+          const currentCard = parseVal(findField("UserCardCount", "~UserCardCount", "CardCount"), 0);
+          const currentPhoto = parseVal(findField("ATTPhotoCount", "~ATTPhotoCount", "AttPhotoCount"), 0);
+
+          setDevices((prev) =>
+            prev.map((d) =>
+              d.serialNumber === serial
+                ? {
+                    ...d,
+                    userQty: currentUser,
+                    fpQty: currentFp,
+                    faceQty: currentFace,
+                    palmQty: currentPalm,
+                    transactionQty: currentAtt,
+                  }
+                : d
+            )
+          );
 
           setCapacityModalData({
             open: true,
@@ -2336,19 +2378,10 @@ export default function DevicesPage() {
                               openEditForDevice(device);
                             }}
                             className="rounded-md border border-[#d8e6f4] p-1.5 text-[#4e7dab] hover:bg-[#f2f8ff]"
-                            title="Edit"
+                            title="Edit Device Settings"
                           >
                             <Wrench className="h-4 w-4" />
                           </button>
-                          {device.isOnline ? (
-                            <button type="button" onClick={() => void connectDisconnect(device, false)} className="rounded-md border border-[#d8e6f4] p-1.5 text-[#4e7dab] hover:bg-[#f2f8ff]" title="Disconnect">
-                              <WifiOff className="h-4 w-4" />
-                            </button>
-                          ) : (
-                            <button type="button" onClick={() => void connectDisconnect(device, true)} className="rounded-md border border-[#d8e6f4] p-1.5 text-[#4e7dab] hover:bg-[#f2f8ff]" title="Connect">
-                              <Wifi className="h-4 w-4" />
-                            </button>
-                          )}
                         </div>
                       </td>
                     </tr>

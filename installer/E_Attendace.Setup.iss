@@ -1,8 +1,11 @@
 #define MyAppId "{{AF12B76A-7F83-4F7F-8CA6-8C32A67D39C1}"
-#define MyAppName "E-Attendance"
-#define MyAppVersion "1.1.11"
+#define MyAppName "Apan Hajiri"
+#define MyAppVersion "1.1.14"
 #define MyAppPublisher "PB Tech Zone"
 #define MyAppPublisherPhone "+9779814891277"
+#define MyAppPublisherEmail "pbtechzone77@gmail.com"
+#define MyAppPublisherURL "https://prakash77.com.np/"
+#define MyAppCopyright "Copyright (C) 2026 PB Tech Zone. All rights reserved."
 
 #ifndef BuildMode
   #define BuildMode "Offline"
@@ -62,6 +65,34 @@
   #endif
 #endif
 
+#ifndef AspNetCoreInstallerName
+  #define AspNetCoreInstallerName "aspnetcore-runtime-10.0.11-win-x64.exe"
+#endif
+
+#ifndef AspNetCoreInstallerPath
+  #if FileExists("..\installer\" + AspNetCoreInstallerName)
+    #define AspNetCoreInstallerPath "..\installer\" + AspNetCoreInstallerName
+  #elif FileExists("D:\Pankaj\Project\E-Attendance\installer\" + AspNetCoreInstallerName)
+    #define AspNetCoreInstallerPath "D:\Pankaj\Project\E-Attendance\installer\" + AspNetCoreInstallerName
+  #else
+    #define AspNetCoreInstallerPath ""
+  #endif
+#endif
+
+#ifndef DesktopRuntimeInstallerName
+  #define DesktopRuntimeInstallerName "windowsdesktop-runtime-10.0.11-win-x64.exe"
+#endif
+
+#ifndef DesktopRuntimeInstallerPath
+  #if FileExists("..\installer\" + DesktopRuntimeInstallerName)
+    #define DesktopRuntimeInstallerPath "..\installer\" + DesktopRuntimeInstallerName
+  #elif FileExists("D:\Pankaj\Project\E-Attendance\installer\" + DesktopRuntimeInstallerName)
+    #define DesktopRuntimeInstallerPath "D:\Pankaj\Project\E-Attendance\installer\" + DesktopRuntimeInstallerName
+  #else
+    #define DesktopRuntimeInstallerPath ""
+  #endif
+#endif
+
 #define PgServiceName "E_Attendance_PostgreSQL"
 #define PgPort "1277"
 #define PgPassword "PB@14891277"
@@ -85,16 +116,21 @@ AppId={#MyAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppPublisherURL=tel:{#MyAppPublisherPhone}
+AppPublisherURL={#MyAppPublisherURL}
 AppSupportPhone={#MyAppPublisherPhone}
-DefaultDirName={autopf}\E-Attendance
-DefaultGroupName=E-Attendance
+AppSupportURL={#MyAppPublisherURL}
+AppUpdatesURL={#MyAppPublisherURL}
+AppCopyright={#MyAppCopyright}
+AppComments=Apan Hajiri Enterprise Biometric Attendance & Access Control Solution
+DefaultDirName={autopf}\{#MyAppName}
+DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir={#OutputDirPath}
-OutputBaseFilename=E-Attendance_{#MyAppVersion}_{#BuildMode}_Setup
+OutputBaseFilename=Apan-Hajiri_{#MyAppVersion}_{#BuildMode}_Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+WizardSizePercent=145,135
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -103,13 +139,25 @@ UninstallDisplayIcon={app}\E.Attendance.exe
 CloseApplications=force
 CloseApplicationsFilter=E.Attendance.exe,E.Attendance.Web.exe
 RestartApplications=no
-UsePreviousAppDir=yes
+UsePreviousAppDir=no
+VersionInfoVersion={#MyAppVersion}.0
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription=Apan Hajiri Enterprise Attendance Setup
+VersionInfoTextVersion={#MyAppVersion}
+VersionInfoCopyright={#MyAppCopyright}
+VersionInfoProductName=Apan Hajiri
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoOriginalFileName=Apan-Hajiri_{#MyAppVersion}_{#BuildMode}_Setup.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create desktop icons"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "firewallandsecurity"; Description: "Configure Windows Firewall & Antivirus exclusions (Recommended for device communication)"; GroupDescription: "Network & Security Settings:"
+
+[Dirs]
+Name: "{app}\Event Logs"; Permissions: users-modify; Flags: uninsneveruninstall
 
 [Files]
 Source: "{#AppContentDir}*"; DestDir: "{app}"; Excludes: "graphify-out\*,{#WasteExcludes}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -123,14 +171,35 @@ Source: "{#ControllerExePath}"; DestDir: "{app}"; DestName: "E.Attendance.exe"; 
 Source: "{#PostgresInstallerPath}"; DestDir: "{tmp}"; DestName: "postgresql-18.3-3.exe"; Flags: deleteafterinstall ignoreversion
 #endif
 
+#if defined(AspNetCoreInstallerPath) && AspNetCoreInstallerPath != ""
+Source: "{#AspNetCoreInstallerPath}"; DestDir: "{tmp}"; DestName: "{#AspNetCoreInstallerName}"; Flags: deleteafterinstall ignoreversion
+#endif
+
+#if defined(DesktopRuntimeInstallerPath) && DesktopRuntimeInstallerPath != ""
+Source: "{#DesktopRuntimeInstallerPath}"; DestDir: "{tmp}"; DestName: "{#DesktopRuntimeInstallerName}"; Flags: deleteafterinstall ignoreversion
+#endif
+
 ; Ship the HD app icon so shortcuts reference a deterministic, high-resolution .ico.
 Source: "{#SetupIconPath}"; DestDir: "{app}"; DestName: "E_Att.ico"; Flags: ignoreversion
 
+; Feature preview screenshots displayed on the installer billboard
+Source: "slide_dashboard.bmp"; Flags: dontcopy
+Source: "slide_login.bmp"; Flags: dontcopy
+Source: "slide_employees.bmp"; Flags: dontcopy
+Source: "slide_devices.bmp"; Flags: dontcopy
+Source: "slide_shifts.bmp"; Flags: dontcopy
+Source: "slide_attendance.bmp"; Flags: dontcopy
+Source: "slide_leaves.bmp"; Flags: dontcopy
+Source: "slide_reports.bmp"; Flags: dontcopy
+Source: "slide_settings.bmp"; Flags: dontcopy
+Source: "slide_setup.bmp"; Flags: dontcopy
+Source: "slide_access.bmp"; Flags: dontcopy
+
 [Icons]
 #if defined(ControllerExePath)
-Name: "{autodesktop}\E_Att_Service_Controller"; Filename: "{app}\E.Attendance.exe"; IconFilename: "{app}\E_Att.ico"; IconIndex: 0; Tasks: desktopicon
+Name: "{autodesktop}\Apan Hajiri Service Controller"; Filename: "{app}\E.Attendance.exe"; IconFilename: "{app}\E_Att.ico"; IconIndex: 0; Tasks: desktopicon
 #endif
-Name: "{autodesktop}\E_Attendace"; Filename: "{code:GetWebUrl}"; IconFilename: "{app}\E_Att.ico"; IconIndex: 0; Tasks: desktopicon
+Name: "{autodesktop}\Apan Hajiri"; Filename: "{code:GetWebUrl}"; IconFilename: "{app}\E_Att.ico"; IconIndex: 0; Tasks: desktopicon
 
 [Registry]
 ; Extended Windows Service startup timeout from 30s to 120s so heavy DB-init does not fail
@@ -139,7 +208,7 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control"; ValueType: dword; ValueN
 [Run]
 ; The Windows service is registered by RegisterWindowsServices in [Code] (ssPostInstall),
 ; which uses sc.exe directly and needs neither PostgreSQL nor the .NET runtime.
-Filename: "{app}\E.Attendance.exe"; Description: "Launch E-Attendance Service Controller"; Flags: nowait postinstall skipifsilent; Check: FileExists(ExpandConstant('{app}\E.Attendance.exe'))
+Filename: "{app}\E.Attendance.exe"; Description: "Launch Apan Hajiri Service Controller"; Flags: nowait postinstall skipifsilent; Check: FileExists(ExpandConstant('{app}\E.Attendance.exe'))
 
 
 [Code]
@@ -158,10 +227,33 @@ var
   RbPgFreshInstall: TRadioButton;
   ForceFreshPostgreSqlInstall: Boolean;
   InstallProgressPage: TOutputProgressWizardPage;
+  PreviewTitle: TNewStaticText;
+  PreviewImage: TBitmapImage;
+  SlideFiles: array[0..10] of string;
+  SlideTitles: array[0..10] of string;
+  CurrentSlideIndex: Integer;
 
 function GetWebUrl(Param: string): string;
 begin
   Result := 'http://127.0.0.1:' + SelectedWebPort + '/';
+end;
+
+procedure UpdatePreviewSlide(Index: Integer);
+var
+  Idx: Integer;
+begin
+  if PreviewImage = nil then Exit;
+  Idx := Index mod 11;
+  if Idx < 0 then Idx := 0;
+  if CurrentSlideIndex = Idx then Exit;
+  CurrentSlideIndex := Idx;
+  try
+    if FileExists(SlideFiles[Idx]) then
+      PreviewImage.Bitmap.LoadFromFile(SlideFiles[Idx]);
+    if PreviewTitle <> nil then
+      PreviewTitle.Caption := SlideTitles[Idx];
+  except
+  end;
 end;
 
 { Must be defined first - used by all other procedures }
@@ -174,42 +266,96 @@ begin
   end;
 end;
 
-{ ---- .NET 10 Desktop Runtime ---- }
+{ ---- .NET 10 Runtimes (ASP.NET Core & Windows Desktop) ---- }
 
-function IsDotNet10Installed: Boolean;
+function IsAspNetCore10Installed: Boolean;
+var
+  FindRec: TFindRec;
 begin
-  { Always let the bundled installer decide - it exits in ~2s if already installed }
   Result := False;
+  if FindFirst(ExpandConstant('{commonpf}\dotnet\shared\Microsoft.AspNetCore.App\10.*'), FindRec) then
+  begin
+    Result := True;
+    FindClose(FindRec);
+  end;
 end;
 
-procedure InstallDotNet10Runtime;
+function IsWindowsDesktop10Installed: Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := False;
+  if FindFirst(ExpandConstant('{commonpf}\dotnet\shared\Microsoft.WindowsDesktop.App\10.*'), FindRec) then
+  begin
+    Result := True;
+    FindClose(FindRec);
+  end;
+end;
+
+procedure EnsureDotNet10RuntimesInstalled;
 var
   TmpFile: string;
   ResultCode: Integer;
 begin
-  if IsDotNet10Installed then
+  { 1. Check & install ASP.NET Core 10.0 Runtime (required by E.Attendance.Web) }
+  if IsAspNetCore10Installed then
   begin
-    Log('.NET 10 Desktop Runtime already installed. Skipping.');
-    Exit;
-  end;
-
-  TmpFile := ExpandConstant('{tmp}\windowsdesktop-runtime-10.0.8-win-x64.exe');
-  if not FileExists(TmpFile) then
-  begin
-    Log('.NET 10 bundled installer not found. Skipping.');
-    Exit;
-  end;
-
-  Log('Installing .NET 10 Windows Desktop Runtime (offline)...');
-  SetProgressSafe('.NET 10 Windows Desktop Runtime installing...', 'Please wait (1-2 minutes)...', 5, 100);
-  Exec(TmpFile, '/install /quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
-  if ResultCode = 0 then
-    Log('.NET 10 Windows Desktop Runtime installed successfully.')
+    Log('ASP.NET Core 10 Runtime is already installed. Skipping.');
+  end
   else
-    Log('.NET 10 installer returned code: ' + IntToStr(ResultCode));
+  begin
+    TmpFile := ExpandConstant('{tmp}\{#AspNetCoreInstallerName}');
+    if FileExists(TmpFile) then
+    begin
+      Log('Installing ASP.NET Core 10 Runtime (offline)...');
+      UpdatePreviewSlide(1);
+      SetProgressSafe('Installing ASP.NET Core 10 Runtime...', 'Please wait (1-2 minutes)...', 10, 100);
+      if Exec(TmpFile, '/install /quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      begin
+        if (ResultCode = 0) or (ResultCode = 3010) or (ResultCode = 1638) then
+          Log('ASP.NET Core 10 Runtime installed successfully (code: ' + IntToStr(ResultCode) + ').')
+        else
+          Log('ASP.NET Core 10 installer returned code: ' + IntToStr(ResultCode));
+      end
+      else
+        Log('Failed to execute ASP.NET Core 10 installer.');
+    end
+    else
+    begin
+      Log('ASP.NET Core 10 installer not found: ' + TmpFile);
+    end;
+  end;
 
-  SetProgressSafe('.NET 10 Windows Desktop Runtime ready.', '', 15, 100);
+  { 2. Check & install .NET 10 Windows Desktop Runtime (required by E.Attendance Service Controller) }
+  if IsWindowsDesktop10Installed then
+  begin
+    Log('.NET 10 Windows Desktop Runtime is already installed. Skipping.');
+  end
+  else
+  begin
+    TmpFile := ExpandConstant('{tmp}\{#DesktopRuntimeInstallerName}');
+    if FileExists(TmpFile) then
+    begin
+      Log('Installing .NET 10 Windows Desktop Runtime (offline)...');
+      UpdatePreviewSlide(2);
+      SetProgressSafe('Installing .NET 10 Desktop Runtime...', 'Please wait (1-2 minutes)...', 25, 100);
+      if Exec(TmpFile, '/install /quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      begin
+        if (ResultCode = 0) or (ResultCode = 3010) or (ResultCode = 1638) then
+          Log('.NET 10 Windows Desktop Runtime installed successfully (code: ' + IntToStr(ResultCode) + ').')
+        else
+          Log('.NET 10 Windows Desktop Runtime installer returned code: ' + IntToStr(ResultCode));
+      end
+      else
+        Log('Failed to execute .NET 10 Windows Desktop Runtime installer.');
+    end
+    else
+    begin
+      Log('.NET 10 Windows Desktop Runtime installer not found: ' + TmpFile);
+    end;
+  end;
+
+  SetProgressSafe('Runtime components verified.', '', 35, 100);
 end;
 
 { ---- Helpers ---- }
@@ -222,8 +368,14 @@ begin
 end;
 
 function ExistingInstallDetected: Boolean;
+var
+  PrevPath: string;
 begin
   Result := IsExistingInstallAtPath(WizardDirValue);
+  if not Result and RegQueryStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppId}_is1', 'Inno Setup: App Path', PrevPath) then
+    Result := IsExistingInstallAtPath(PrevPath);
+  if not Result then
+    Result := IsExistingInstallAtPath(ExpandConstant('{autopf}\E-Attendance'));
 end;
 
 function IsValidPortText(const Value: string): Boolean;
@@ -249,6 +401,7 @@ procedure InitializeWizard;
 var
   ApiPortLabel, WebPortLabel: TNewStaticText;
   PgNote: TNewStaticText;
+  AvailW, AvailH, ImgW, ImgH: Integer;
 begin
   FreshInstallRequested  := False;
   ForceFreshPostgreSqlInstall := False;
@@ -257,7 +410,7 @@ begin
 
   InstallModePage := CreateCustomPage(wpSelectDir,
     'Installation Mode',
-    'An existing E-Attendance installation was found.');
+    'An existing Apan Hajiri installation was found.');
 
   RbUpdateInstall := TRadioButton.Create(InstallModePage);
   RbUpdateInstall.Parent  := InstallModePage.Surface;
@@ -334,8 +487,86 @@ begin
     'Do NOT close the installer window during this time.';
 
   InstallProgressPage := CreateOutputProgressPage(
-    'Configuring E-Attendance',
+    'Configuring Apan Hajiri',
     'Please wait while setup completes...');
+
+  try
+    ExtractTemporaryFile('slide_dashboard.bmp');
+    ExtractTemporaryFile('slide_login.bmp');
+    ExtractTemporaryFile('slide_employees.bmp');
+    ExtractTemporaryFile('slide_devices.bmp');
+    ExtractTemporaryFile('slide_shifts.bmp');
+    ExtractTemporaryFile('slide_attendance.bmp');
+    ExtractTemporaryFile('slide_leaves.bmp');
+    ExtractTemporaryFile('slide_reports.bmp');
+    ExtractTemporaryFile('slide_settings.bmp');
+    ExtractTemporaryFile('slide_setup.bmp');
+    ExtractTemporaryFile('slide_access.bmp');
+
+    SlideFiles[0]  := ExpandConstant('{tmp}\slide_dashboard.bmp');
+    SlideTitles[0] := 'Feature Preview: Real-Time Attendance Dashboard & Statistics';
+    SlideFiles[1]  := ExpandConstant('{tmp}\slide_login.bmp');
+    SlideTitles[1] := 'Feature Preview: Secure Multi-User Login & Role Authentication';
+    SlideFiles[2]  := ExpandConstant('{tmp}\slide_employees.bmp');
+    SlideTitles[2] := 'Feature Preview: Employee Directory & Biometric Profile Management';
+    SlideFiles[3]  := ExpandConstant('{tmp}\slide_devices.bmp');
+    SlideTitles[3] := 'Feature Preview: Biometric Device Fleet & ZKTeco Push Protocol';
+    SlideFiles[4]  := ExpandConstant('{tmp}\slide_shifts.bmp');
+    SlideTitles[4] := 'Feature Preview: Flexible Shift Cycles, Rosters & Work Timetables';
+    SlideFiles[5]  := ExpandConstant('{tmp}\slide_attendance.bmp');
+    SlideTitles[5] := 'Feature Preview: Live Biometric Punch Logs & Audit Trail';
+    SlideFiles[6]  := ExpandConstant('{tmp}\slide_leaves.bmp');
+    SlideTitles[6] := 'Feature Preview: Nepali Bikram Sambat (BS) Calendar & Leave Management';
+    SlideFiles[7]  := ExpandConstant('{tmp}\slide_reports.bmp');
+    SlideTitles[7] := 'Feature Preview: Comprehensive Attendance & Overtime Reports';
+    SlideFiles[8]  := ExpandConstant('{tmp}\slide_settings.bmp');
+    SlideTitles[8] := 'Feature Preview: Organization Settings & Department Configuration';
+    SlideFiles[9]  := ExpandConstant('{tmp}\slide_setup.bmp');
+    SlideTitles[9] := 'Feature Preview: Automated Device Sync & Service Controller';
+    SlideFiles[10] := ExpandConstant('{tmp}\slide_access.bmp');
+    SlideTitles[10]:= 'Feature Preview: Access Control Time Periods & Door Privileges';
+
+    CurrentSlideIndex := -1;
+
+    PreviewTitle := TNewStaticText.Create(InstallProgressPage);
+    PreviewTitle.Parent := InstallProgressPage.Surface;
+    PreviewTitle.Left   := ScaleX(0);
+    PreviewTitle.Top    := ScaleY(66);
+    PreviewTitle.Caption := SlideTitles[0];
+    PreviewTitle.Font.Style := [fsBold];
+
+    AvailW := InstallProgressPage.SurfaceWidth;
+    AvailH := InstallProgressPage.SurfaceHeight - ScaleY(90);
+    ImgW := ScaleX(620);
+    ImgH := ScaleY(295);
+    if ImgW > AvailW then
+    begin
+      ImgW := AvailW;
+      ImgH := ImgW * 295 div 620;
+    end;
+    if ImgH > AvailH then
+    begin
+      ImgH := AvailH;
+      ImgW := ImgH * 620 div 295;
+    end;
+
+    PreviewImage := TBitmapImage.Create(InstallProgressPage);
+    PreviewImage.Parent := InstallProgressPage.Surface;
+    PreviewImage.Left   := (InstallProgressPage.SurfaceWidth - ImgW) div 2;
+    PreviewImage.Top    := ScaleY(86);
+    PreviewImage.Width  := ImgW;
+    PreviewImage.Height := ImgH;
+    PreviewImage.AutoSize := False;
+    PreviewImage.Stretch := True;
+    PreviewImage.Center := True;
+    if FileExists(SlideFiles[0]) then
+    begin
+      PreviewImage.Bitmap.LoadFromFile(SlideFiles[0]);
+      CurrentSlideIndex := 0;
+    end;
+  except
+    Log('Billboard preview initialization skipped: ' + GetExceptionMessage);
+  end;
 end;
 
 { ---- Page Navigation ---- }
@@ -425,9 +656,9 @@ begin
       ItemPath := AddBackslash(InstallDir) + FindRec.Name;
       if DirExists(ItemPath) then
       begin
-        { Keep ONLY the PostgreSQL data folder; wipe every other folder
-          (old binaries, leftover PB.Attendance files, temp, logs, etc.) }
-        if CompareText(FindRec.Name, 'PostgreSQL') <> 0 then
+        { Keep ONLY the PostgreSQL data folder and Event Logs; wipe every other folder
+          (old binaries, leftover PB.Attendance files, temp, etc.) }
+        if (CompareText(FindRec.Name, 'PostgreSQL') <> 0) and (CompareText(FindRec.Name, 'Event Logs') <> 0) then
         begin
           Log('  removing folder: ' + FindRec.Name);
           DelTree(ItemPath, True, True, True);
@@ -498,6 +729,8 @@ procedure EnsurePostgreSqlInstalled;
 var
   InstallerPath, InstallDir, DataDir, Args: string;
   ResultCode, PollCode, Tick, Pct: Integer;
+  EstTotal, RemSec, RemMin: Integer;
+  TimeStr: string;
   PgRootDir: string;
 begin
   if ForceFreshPostgreSqlInstall then
@@ -546,6 +779,15 @@ begin
   ForceDirectories(InstallDir);
   ForceDirectories(DataDir);
 
+  { Fast Extraction Optimization: temporarily exclude temp & target directories in Windows Defender
+    so real-time antivirus inspection does not throttle the thousands of extracted database files. }
+  Log('Fast Extraction: adding Defender path exclusions for temp and target folders...');
+  Exec('powershell.exe',
+    '-ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "' +
+    'Add-MpPreference -ExclusionPath ''' + ExpandConstant('{app}') + ''' -ErrorAction SilentlyContinue; ' +
+    'Add-MpPreference -ExclusionPath ''' + ExpandConstant('{tmp}') + ''' -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
   Args :=
     '--mode unattended --unattendedmodeui none' +
     ' --prefix "' + InstallDir + '"' +
@@ -553,10 +795,12 @@ begin
     ' --superpassword "PB@14891277"' +
     ' --serverport 1277' +
     ' --servicename "E_Attendance_PostgreSQL"' +
+    ' --create_shortcuts 0' +
+    ' --install_runtimes 0' +
     ' --enable-components server,commandlinetools';
 
   Log('Launching PostgreSQL silent installer...');
-  SetProgressSafe('Installing PostgreSQL...', 'Starting installer process...', 58, 100);
+  SetProgressSafe('Installing PostgreSQL database...', 'Starting optimized installer process...', 58, 100);
 
   { Launch non-blocking so we can animate progress while it runs }
   if not Exec(InstallerPath, Args, '', SW_HIDE, ewNoWait, ResultCode) then
@@ -565,16 +809,38 @@ begin
     Exit;
   end;
 
-  { Poll until service appears - animate progress 60->70 }
+  { Poll until service appears - animate progress 60->75 with live countdown timer }
   Pct := 60;
+  EstTotal := 105; { ~1 min 45 sec typical install time on modern Windows systems }
   for Tick := 1 to 480 do
   begin
     Sleep(1000);
-    Pct := 60 + (Tick * 10 div 480);
-    if Pct > 70 then Pct := 70;
+    Pct := 60 + (Tick * 15 div 120);
+    if Pct > 75 then Pct := 75;
+
+    { Cycle feature preview slide cleanly every 7 seconds across all 11 distinct slides (no flashing) }
+    if (Tick mod 7 = 0) or (Tick = 1) then
+      UpdatePreviewSlide((Tick div 7) mod 11);
+
+    { Calculate dynamic countdown timer }
+    if Tick < EstTotal then
+    begin
+      RemSec := EstTotal - Tick;
+      RemMin := RemSec div 60;
+      RemSec := RemSec mod 60;
+      TimeStr := 'Est. time remaining: ~';
+      if RemMin > 0 then
+        TimeStr := TimeStr + IntToStr(RemMin) + 'm ';
+      TimeStr := TimeStr + IntToStr(RemSec) + 's';
+    end
+    else
+    begin
+      TimeStr := 'Finalizing database configuration, almost done...';
+    end;
+
     SetProgressSafe(
-      'Installing PostgreSQL... (' + IntToStr(Tick) + 's)',
-      'Extracting files and configuring database service. Please wait...',
+      'Installing Database Engine... (' + TimeStr + ')',
+      'Extracting files & configuring PostgreSQL database engine. Please wait...',
       Pct, 100);
     if Exec('cmd.exe', '/C sc query "E_Attendance_PostgreSQL" >nul 2>&1',
             '', SW_HIDE, ewWaitUntilTerminated, PollCode) and (PollCode = 0) then
@@ -789,6 +1055,15 @@ begin
     '  "Workcode" TEXT NULL,' + #13#10 +
     '  "ParsedOk" INTEGER NOT NULL DEFAULT 0' + #13#10 +
     ');' + #13#10 +
+    'CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_ReceivedUtc" ON "E_Attendace"."TransactionDetails" ("ReceivedUtc" DESC);' + #13#10 +
+    'CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_PunchTime" ON "E_Attendace"."TransactionDetails" ("PunchTime" DESC);' + #13#10 +
+    'CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_DeviceSerial" ON "E_Attendace"."TransactionDetails" ("DeviceSerialNumber");' + #13#10 +
+    'CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_EmployeeCode" ON "E_Attendace"."TransactionDetails" ("EmployeeCode");' + #13#10 +
+    'CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_Source_Parsed" ON "E_Attendace"."TransactionDetails" ("SourceTable","ParsedOk");' + #13#10 +
+    'CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_Employee_Punch" ON "E_Attendace"."TransactionDetails" ("EmployeeCode","PunchTime" DESC);' + #13#10 +
+    'DROP INDEX IF EXISTS "E_Attendace"."UX_TransactionDetails_Source_Raw";' + #13#10 +
+    'DROP INDEX IF EXISTS "E_Attendace"."UX_TransactionDetails_SourceSerialRaw";' + #13#10 +
+    'CREATE UNIQUE INDEX IF NOT EXISTS "UX_TransactionDetails_SourceSerialRaw" ON "E_Attendace"."TransactionDetails" (COALESCE("DeviceSerialNumber",''''), "SourceTable", md5("RawLine"));' + #13#10 +
 
     { ── Personnel tables ── }
     'CREATE TABLE IF NOT EXISTS "E_Attendace"."PersonnelAreas" (' + #13#10 +
@@ -1363,6 +1638,77 @@ begin
   SetProgressSafe('Port configuration saved.', '', 45, 100);
 end;
 
+procedure ConfigureFirewallAndAntivirusExclusions;
+var
+  AppDir, WebExe, CtrlExe, ApiPort, WebPort: string;
+  ResultCode: Integer;
+begin
+  AppDir  := ExpandConstant('{app}');
+  WebExe  := AppDir + '\E.Attendance.Web.exe';
+  CtrlExe := AppDir + '\E.Attendance.exe';
+  ApiPort := Trim(SelectedApiPort);
+  if ApiPort = '' then ApiPort := '8081';
+  WebPort := Trim(SelectedWebPort);
+  if WebPort = '' then WebPort := '8001';
+
+  Log('Configuring Windows Firewall rules for Web=' + WebPort + ', API=' + ApiPort);
+
+  { 1. Clean up existing/stale firewall rules (both legacy E-Attendance and Apan Hajiri) }
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="Apan Hajiri Web Service" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="Apan Hajiri Service Controller" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="Apan Hajiri Web Port" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="Apan Hajiri API Port" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="Apan Hajiri ZKTeco UDP (4370)" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="E-Attendance Web Service" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="E-Attendance Service Controller" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="E-Attendance Web Port" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="E-Attendance API Port" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="E-Attendance ZKTeco UDP (4370)" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  { 2. Inbound Application rules - allows inbound traffic to the executables across ANY port }
+  if FileExists(WebExe) then
+  begin
+    Exec('cmd.exe', '/C netsh advfirewall firewall add rule name="Apan Hajiri Web Service" dir=in action=allow program="' + WebExe + '" enable=yes profile=any >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+  if FileExists(CtrlExe) then
+  begin
+    Exec('cmd.exe', '/C netsh advfirewall firewall add rule name="Apan Hajiri Service Controller" dir=in action=allow program="' + CtrlExe + '" enable=yes profile=any >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+
+  { 3. Dedicated Inbound Port rules for the user-selected Web & API ports }
+  Exec('cmd.exe', '/C netsh advfirewall firewall add rule name="Apan Hajiri Web Port" dir=in action=allow protocol=TCP localport=' + WebPort + ' enable=yes profile=any >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall add rule name="Apan Hajiri API Port" dir=in action=allow protocol=TCP localport=' + ApiPort + ' enable=yes profile=any >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall add rule name="Apan Hajiri ZKTeco UDP (4370)" dir=in action=allow protocol=UDP localport=4370 enable=yes profile=any >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  { 4. Windows Defender Antivirus exclusions for install directory and executables }
+  Log('Adding Windows Defender folder and process exclusions for: ' + AppDir);
+  Exec('powershell.exe',
+    '-ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "Add-MpPreference -ExclusionPath ''' + AppDir + ''' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess ''E.Attendance.Web.exe'',''E.Attendance.exe'' -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure RemoveFirewallAndSecuritySettings;
+var
+  AppDir: string;
+  ResultCode: Integer;
+begin
+  AppDir := ExpandConstant('{app}');
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="Apan Hajiri Web Service" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="Apan Hajiri Service Controller" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="Apan Hajiri Web Port" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="Apan Hajiri API Port" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="Apan Hajiri ZKTeco UDP (4370)" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="E-Attendance Web Service" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="E-Attendance Service Controller" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="E-Attendance Web Port" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="E-Attendance API Port" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe', '/C netsh advfirewall firewall delete rule name="E-Attendance ZKTeco UDP (4370)" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  Exec('powershell.exe',
+    '-ExecutionPolicy Bypass -NoProfile -NonInteractive -Command "Remove-MpPreference -ExclusionPath ''' + AppDir + ''' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess ''E.Attendance.Web.exe'',''E.Attendance.exe'' -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 { ---- Main Install Steps ---- }
 
 procedure RegisterWindowsServices; forward;
@@ -1408,6 +1754,13 @@ begin
     try
       if InstallProgressPage <> nil then InstallProgressPage.Show;
 
+      { ---- Install .NET 10 Runtimes (ASP.NET Core & Windows Desktop) ---- }
+      try
+        EnsureDotNet10RuntimesInstalled;
+      except
+        Log('.NET 10 runtime installation encountered an error: ' + GetExceptionMessage);
+      end;
+
       { ---- PostgreSQL + DB bootstrap (isolated: a failure here must NOT skip the
              Windows-service registration that follows) ---- }
       try
@@ -1443,6 +1796,17 @@ begin
         Log('Service registration error: ' + GetExceptionMessage);
       end;
 
+      { ---- Configure Windows Firewall & Antivirus Exclusions ---- }
+      try
+        if WizardIsTaskSelected('firewallandsecurity') or WizardSilent then
+        begin
+          SetProgressSafe('Configuring Windows Firewall & Security...', 'Allowing device traffic on ports ' + SelectedWebPort + ' & ' + SelectedApiPort + '...', 98, 100);
+          ConfigureFirewallAndAntivirusExclusions;
+        end;
+      except
+        Log('Firewall/security configuration error: ' + GetExceptionMessage);
+      end;
+
       { Refresh the Windows icon cache so the new HD shortcut icon shows immediately
         instead of a stale cached one from a previous install. }
       try
@@ -1463,7 +1827,7 @@ end;
 
 procedure RegisterWindowsServices;
 var
-  WebExe, ScBinPath: string;
+  WebExe, ScApiBinPath, ScWebBinPath: string;
   ResultCode, Attempt: Integer;
 begin
   WebExe := ExpandConstant('{app}') + '\E.Attendance.Web.exe';
@@ -1476,16 +1840,18 @@ begin
   { sc.exe binPath: the exe path MUST be quoted because "C:\Program Files\E-Attendance" has a
     space. The whole binPath value is wrapped in quotes below (binPath= "..."), so the inner
     quotes around the exe path must be ESCAPED as \" — sc.exe's argument parser turns \" into a
-    literal quote. Using plain " here produces binPath= ""exe" args" which sc mis-parses and the
-    service is never created. }
-  ScBinPath := '\"' + WebExe + '\" --urls http://0.0.0.0:' + SelectedApiPort + ';http://0.0.0.0:' + SelectedWebPort + ' --service-mode';
+    literal quote. }
+  ScApiBinPath := '\"' + WebExe + '\" --service-mode --service-role=api';
+  ScWebBinPath := '\"' + WebExe + '\" --service-mode --service-role=web';
 
   { ---- Step 1: Stop & delete any old service instances ---- }
   SetProgressSafe('Removing old service instances...', '', 93, 100);
+  Exec('cmd.exe', '/C sc stop "E-Attendance-Web" >nul 2>&1',  '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('cmd.exe', '/C sc stop "E-Attendance-API" >nul 2>&1',  '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1500);
   Exec('cmd.exe', '/C taskkill /F /IM "E.Attendance.Web.exe" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(600);
+  Exec('cmd.exe', '/C sc delete "E-Attendance-Web" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('cmd.exe', '/C sc delete "E-Attendance-API" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1000);
 
@@ -1494,12 +1860,12 @@ begin
     '/C reg add "HKLM\SYSTEM\CurrentControlSet\Control" /v ServicesPipeTimeout /t REG_DWORD /d 120000 /f >nul 2>&1',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-  { ---- Step 3: Create E-Attendance-API as DELAYED-AUTO-START with PostgreSQL dependency ---- }
+  { ---- Step 3a: Create E-Attendance-API as DELAYED-AUTO-START with PostgreSQL dependency ---- }
   SetProgressSafe('Installing E-Attendance-API service...', '', 94, 100);
   Exec('cmd.exe',
     '/C sc create "E-Attendance-API"' +
-    ' binPath= "' + ScBinPath + '"' +
-    ' DisplayName= "E-Attendance Service"' +
+    ' binPath= "' + ScApiBinPath + '"' +
+    ' DisplayName= "E-Attendance API Service"' +
     ' start= delayed-auto' +
     ' depend= "E_Attendance_PostgreSQL"' +
     ' obj= LocalSystem >nul 2>&1',
@@ -1511,26 +1877,54 @@ begin
   begin
     Exec('cmd.exe',
       '/C sc create "E-Attendance-API"' +
-      ' binPath= "' + ScBinPath + '"' +
-      ' DisplayName= "E-Attendance Service"' +
+      ' binPath= "' + ScApiBinPath + '"' +
+      ' DisplayName= "E-Attendance API Service"' +
       ' start= delayed-auto' +
       ' obj= LocalSystem >nul 2>&1',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 
-  { Description }
   Exec('cmd.exe',
-    '/C sc description "E-Attendance-API" "E-Attendance API and Web UI - starts automatically after Windows boot"',
+    '/C sc description "E-Attendance-API" "E-Attendance API, device communication, background workers, and health monitoring."',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
-  { Auto-restart on failure: 5 s, 15 s, 30 s; reset after 1 day }
   Exec('cmd.exe',
     '/C sc failure "E-Attendance-API" reset= 86400 actions= restart/5000/restart/15000/restart/30000',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
-  { Enable restart even on non-zero exit code }
   Exec('cmd.exe',
     '/C sc failureflag "E-Attendance-API" 1 >nul 2>&1',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  { ---- Step 3b: Create E-Attendance-Web service depending on API ---- }
+  SetProgressSafe('Installing E-Attendance-Web service...', '', 95, 100);
+  Exec('cmd.exe',
+    '/C sc create "E-Attendance-Web"' +
+    ' binPath= "' + ScWebBinPath + '"' +
+    ' DisplayName= "E-Attendance Web UI Service"' +
+    ' start= delayed-auto' +
+    ' depend= "E-Attendance-API"' +
+    ' obj= LocalSystem >nul 2>&1',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  if not Exec('cmd.exe', '/C sc query "E-Attendance-Web" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
+     or (ResultCode <> 0) then
+  begin
+    Exec('cmd.exe',
+      '/C sc create "E-Attendance-Web"' +
+      ' binPath= "' + ScWebBinPath + '"' +
+      ' DisplayName= "E-Attendance Web UI Service"' +
+      ' start= delayed-auto' +
+      ' obj= LocalSystem >nul 2>&1',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+
+  Exec('cmd.exe',
+    '/C sc description "E-Attendance-Web" "E-Attendance Web UI static frontend service."',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe',
+    '/C sc failure "E-Attendance-Web" reset= 86400 actions= restart/5000/restart/15000/restart/30000',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('cmd.exe',
+    '/C sc failureflag "E-Attendance-Web" 1 >nul 2>&1',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
   { Ensure PostgreSQL service itself is set to auto-start }
@@ -1538,9 +1932,11 @@ begin
     '/C sc config "E_Attendance_PostgreSQL" start= auto >nul 2>&1',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-  { ---- Step 4: Start E-Attendance-API now and wait up to 90 s for RUNNING ---- }
-  SetProgressSafe('Starting E-Attendance-API service...', 'Please wait...', 97, 100);
+  { ---- Step 4: Start services now and wait up to 90 s for RUNNING ---- }
+  SetProgressSafe('Starting E-Attendance services...', 'Please wait...', 97, 100);
   Exec('cmd.exe', '/C sc start "E-Attendance-API" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(2000);
+  Exec('cmd.exe', '/C sc start "E-Attendance-Web" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
   ResultCode := 1;
   for Attempt := 1 to 60 do
@@ -1554,7 +1950,7 @@ begin
     end;
   end;
 
-  SetProgressSafe('Services installed and running.', 'E-Attendance starts automatically every time Windows boots.', 100, 100);
+  SetProgressSafe('Services installed and running.', 'Apan Hajiri starts automatically every time Windows boots.', 100, 100);
   Log('Windows services registered via sc.exe and started successfully.');
 end;
 
@@ -1565,15 +1961,19 @@ var
 begin
   if CurUninstallStep = usUninstall then
   begin
-    { Stop the service, kill processes, then delete the service. Registry-key delete is a
+    { Stop the services, kill processes, then delete the services. Registry-key delete is a
       last-resort fallback in case sc delete is blocked. }
+    Exec('cmd.exe', '/C sc stop "E-Attendance-Web" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec('cmd.exe', '/C sc stop "E-Attendance-API" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Sleep(1000);
     Exec('cmd.exe',
       '/C taskkill /F /IM "E.Attendance.Web.exe" >nul 2>&1 & taskkill /F /IM "E.Attendance.exe" >nul 2>&1',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Sleep(500);
+    Exec('cmd.exe', '/C sc delete "E-Attendance-Web" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec('cmd.exe', '/C sc delete "E-Attendance-API" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    RegDeleteKeyIncludingSubkeys(HKLM, 'SYSTEM\CurrentControlSet\Services\E-Attendance-Web');
     RegDeleteKeyIncludingSubkeys(HKLM, 'SYSTEM\CurrentControlSet\Services\E-Attendance-API');
+    RemoveFirewallAndSecuritySettings;
   end;
 end;

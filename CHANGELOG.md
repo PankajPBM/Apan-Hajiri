@@ -26,6 +26,35 @@ build Release, and compile the installer in one flow.
 
 ## Unreleased
 
+## [1.1.14] - 2026-09-05
+
+Weekend & holiday overtime calculation fixes, OT & Device Duplicate Punch sidebar menu additions, sidebar accordion navigation, and shift OT rules alignment.
+
+### Added
+- **Sidebar OT Navigation:** Added `OT` directly under `Shifts` in `Shift Setup` sidebar menu, routing to the OT configuration dashboard.
+- **Sidebar Device Duplicate Punch Navigation:** Added `Device Duplicate Punch` option directly under `Privilege` in the `Access Control` sidebar menu.
+- **Sidebar Accordion Dropdown:** Expanding any sidebar dropdown automatically closes any previously opened dropdown menu.
+
+### Fixed
+- **Worked Hours on Weekend / Holiday:** Prevented phantom 60-minute workday lunch break deduction from wiping short weekend or holiday punch spans down to 0.
+- **Weekend / Holiday Work Counted in Overtime:** All hours worked on weekly offs and holidays are now directly credited to overtime in attendance reports and processing engine.
+- **OT Dashboard Shift Display:** Removed hardcoded `General` fallback; OT rules table now exclusively lists user-created shifts (`shiftPlans`) with their actual names and parameters.
+
+## [1.1.13] - 2026-09-03
+
+Prerequisite runtimes auto-install, PostgreSQL B-Tree index limit fix, and automatic Windows Firewall & Defender integration.
+
+### Added
+- **Automatic .NET 10 Runtimes Installer:** Bundled and silently installs `aspnetcore-runtime-10.0.11-win-x64.exe` and `windowsdesktop-runtime-10.0.11-win-x64.exe` on fresh Windows 10/11 machines if missing.
+- **Windows Firewall Automation:** Automatic inbound rules for `E.Attendance.Web.exe` (all ports), `E.Attendance.exe`, selected Web port, selected API port, and ZKTeco UDP port 4370.
+- **Windows Defender Exclusions:** Automatic folder exclusion for install directory and process exclusions for executables.
+- **Dynamic Port Reconfiguration:** Changing ports in Service Controller UI or CLI dynamically reconfigures firewall rules.
+- **Installer Setup Task:** Added configurable permission checkbox during installation.
+
+### Fixed
+- **PostgreSQL 8,191-byte Index Limit:** Replaced raw line unique constraint with `md5("RawLine")` on `TransactionDetails` table, eliminating `54000: index row requires 10256 bytes, maximum size is 8191`.
+- **Punch Queue Deadlock:** Added consecutive failure safety and bounded raw line length to prevent poison packets from blocking attendance punches.
+
 ## [1.1.12] - 2026-08-17
 
 PostgreSQL connection string and service name alignment fix.

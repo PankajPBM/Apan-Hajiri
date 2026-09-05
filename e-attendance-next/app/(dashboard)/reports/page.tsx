@@ -44,6 +44,7 @@ import {
   readTimetableDefinitions,
   resolveScheduleForDate,
   resolveShiftAssignmentsForDate,
+  resolveShiftPlanForDate,
   syncShiftCalendarHolidays,
   shiftStandardMinutes,
 } from "@/components/data/shift-store";
@@ -946,12 +947,13 @@ export default function ReportsPage() {
               shiftRow,
               useTimetableWindow ? timetableDay : null,
             );
+            const isOffDay = weeklyOff || Boolean(holiday);
             const windowStart =
-              shiftRow.shiftType === "flexible"
+              shiftRow.shiftType === "flexible" || isOffDay
                 ? dayStart
                 : new Date(assignedSchedule.startAt.getTime() - 4 * 60 * 60000);
             const windowEnd =
-              shiftRow.shiftType === "flexible"
+              shiftRow.shiftType === "flexible" || isOffDay
                 ? new Date(dayStart.getTime() + 24 * 60 * 60000)
                 : new Date(assignedSchedule.endAt.getTime() + 6 * 60 * 60000);
             return { shift: shiftRow, assignedSchedule, windowStart, windowEnd };
@@ -1043,12 +1045,15 @@ export default function ReportsPage() {
               Math.round((checkOut.getTime() - breakStart.getTime()) / 60000),
             );
           }
+          const isOffDay = weeklyOff || Boolean(holiday);
           const breakMinutes =
             breakFromPunches > 0
               ? breakFromPunches
-              : useTimetableWindow
+              : isOffDay || useTimetableWindow
                 ? 0
-                : Math.max(0, segmentShift.breakMinutes);
+                : totalSpanMinutes > segmentShift.breakMinutes
+                  ? Math.max(0, segmentShift.breakMinutes)
+                  : 0;
           const workedMinutes = Math.max(0, totalSpanMinutes - breakMinutes);
 
           standardMinutesTotal += strictShiftRules ? assignedSchedule.standardMinutes : 0;
@@ -1075,10 +1080,26 @@ export default function ReportsPage() {
             anyEarlyExit = true;
           }
 
+          const assignedPlan = resolveShiftPlanForDate(
+            employee.employeeCode,
+            date,
+            shiftPlans,
+            shiftAssignments,
+            employee.department,
+            shiftGroups,
+          );
+          const planOtEnabled =
+            assignedPlan?.enableOvertime !== undefined
+              ? assignedPlan.enableOvertime
+              : segmentShift.enableOvertime;
+          const planOtAfter =
+            assignedPlan?.overtimeAfterMinutes !== undefined
+              ? assignedPlan.overtimeAfterMinutes
+              : segmentShift.overtimeAfterMinutes;
           const overtimeThreshold =
-            assignedSchedule.standardMinutes + Math.max(0, segmentShift.overtimeAfterMinutes);
+            assignedSchedule.standardMinutes + Math.max(0, planOtAfter);
           const segmentOvertime =
-            shiftCalendar.overtimeEnabled && segmentShift.enableOvertime && workedMinutes > overtimeThreshold
+            shiftCalendar.overtimeEnabled && planOtEnabled && workedMinutes > overtimeThreshold
               ? workedMinutes - overtimeThreshold
               : 0;
           overtimeMinutesTotal += segmentOvertime;
@@ -1092,11 +1113,7 @@ export default function ReportsPage() {
           }
         }
 
-        if (shiftCalendar.overtimeEnabled && weeklyOff && anyPunch && shiftCalendar.weeklyOffWorkAsOvertime) {
-          overtimeMinutesTotal = Math.max(overtimeMinutesTotal, workedMinutesTotal);
-        }
-
-        if (shiftCalendar.overtimeEnabled && holiday && anyPunch && shiftCalendar.holidayWorkAsOvertime) {
+        if ((weeklyOff || Boolean(holiday)) && anyPunch) {
           overtimeMinutesTotal = Math.max(overtimeMinutesTotal, workedMinutesTotal);
         }
 

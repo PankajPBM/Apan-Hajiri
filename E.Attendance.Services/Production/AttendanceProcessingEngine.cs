@@ -229,12 +229,12 @@ public sealed class AttendanceProcessingEngine(PbAttendanceDbContext db)
                 overtimeMinutes = Math.Max(0, workedMinutes - standard - Math.Max(0, overtimeAfterMinutes));
             }
 
-            if (schedule.IsHoliday && workedMinutes > 0 && policy.HolidayWorkAsOvertime)
+            if (schedule.IsHoliday && workedMinutes > 0)
             {
                 overtimeMinutes = Math.Max(overtimeMinutes, workedMinutes);
             }
 
-            if (schedule.IsWeeklyOff && workedMinutes > 0 && policy.WeeklyOffWorkAsOvertime)
+            if (schedule.IsWeeklyOff && workedMinutes > 0)
             {
                 overtimeMinutes = Math.Max(overtimeMinutes, workedMinutes);
             }

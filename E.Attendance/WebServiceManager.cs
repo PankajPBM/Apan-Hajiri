@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Globalization;
 using Npgsql;
+using E.Attendance.Core.Logging;
 using E.Attendance.Services;
 
 namespace E.Attendance;
@@ -180,6 +181,9 @@ internal sealed class WebServiceManager
         var json = JsonSerializer.Serialize(new WebSettings(apiPort, frontendPort), new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(SettingsPath, json);
 
+        // Ensure Windows firewall and Defender rules are dynamically updated to open the new ports
+        EnsureFirewallAndSecurityRules(apiPort, frontendPort);
+
         // If the service is installed, re-register it to update the binPath (--urls)
         if (GetWindowsServiceInstalled())
         {
@@ -259,21 +263,22 @@ internal sealed class WebServiceManager
 
     public string EnsurePostgreSqlReadyWithReport(string? adminPasswordOverride = null)
     {
+        AppEventLogger.LogInfo("PostgreSQL", "Checking and ensuring PostgreSQL readiness...");
         var changed = EnsurePostgreSqlControllerSettings();
         EnsurePostgreSqlServiceRunning();
         var accessChanged = EnsureExpectedPostgreSqlAccess(adminPasswordOverride);
         var test = TestPostgreSqlConnection();
         if (!test.ok)
         {
+            AppEventLogger.LogError("PostgreSQL", $"PostgreSQL health check failed: {test.message}");
             throw new InvalidOperationException(test.message);
         }
 
-        if (changed || accessChanged)
-        {
-            return "DB controller settings were corrected and database is ready.";
-        }
-
-        return "Database is ready. DB controller settings were already correct.";
+        var result = (changed || accessChanged)
+            ? "DB controller settings were corrected and database is ready."
+            : "Database is ready. DB controller settings were already correct.";
+        AppEventLogger.LogInfo("PostgreSQL", result);
+        return result;
     }
 
     /// <summary>
@@ -508,7 +513,8 @@ internal sealed class WebServiceManager
             $"CREATE INDEX IF NOT EXISTS \"IX_TransactionDetails_ReceivedUtc\" ON \"{schema}\".\"TransactionDetails\" (\"ReceivedUtc\" DESC);",
             $"CREATE INDEX IF NOT EXISTS \"IX_TransactionDetails_EmployeeCode\" ON \"{schema}\".\"TransactionDetails\" (\"EmployeeCode\");",
             $"CREATE INDEX IF NOT EXISTS \"IX_TransactionDetails_DeviceSerial\" ON \"{schema}\".\"TransactionDetails\" (\"DeviceSerialNumber\");",
-            $"CREATE UNIQUE INDEX IF NOT EXISTS \"UX_TransactionDetails_Source_Raw\" ON \"{schema}\".\"TransactionDetails\" (COALESCE(\"DeviceSerialNumber\",''),\"SourceTable\",\"RawLine\");",
+            $"DROP INDEX IF EXISTS \"{schema}\".\"UX_TransactionDetails_Source_Raw\";",
+            $"CREATE UNIQUE INDEX IF NOT EXISTS \"UX_TransactionDetails_SourceSerialRaw\" ON \"{schema}\".\"TransactionDetails\" (COALESCE(\"DeviceSerialNumber\",''),\"SourceTable\",md5(\"RawLine\"));",
 
             // Timetables
             $"""
@@ -1852,8 +1858,8 @@ internal sealed class WebServiceManager
         var frontendPortToCheck = _activeFrontendPort > 0 ? _activeFrontendPort : configuredFrontendPort;
         var dbConfigured = true;
         var pgMessage = GetPostgresStatusCached();
-        var apiInstalled = GetWindowsServiceInstalled();
-        var apiStatus = GetWindowsServiceStatus();
+        var apiInstalled = ServiceExists(ApiWindowsServiceName);
+        var apiStatus = GetWindowsServiceStatus(ApiWindowsServiceName);
         return new ServiceState(
             Port: port,
             IsWebReachable: IsWebApiReachable(port),
@@ -2882,7 +2888,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
     public const string WebWindowsServiceName = "E-Attendance-Web";
 
     public bool GetWindowsServiceInstalled()
-        => ServiceExists(ApiWindowsServiceName) && ServiceExists(WebWindowsServiceName);
+        => ServiceExists(ApiWindowsServiceName) || ServiceExists(WebWindowsServiceName);
 
     public bool GetWindowsServiceInstalled(string serviceName)
         => ServiceExists(serviceName);
@@ -2976,6 +2982,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
         if (!string.IsNullOrEmpty(pgServiceName) && ServiceExists(pgServiceName))
             ScExec($"config \"{pgServiceName}\" start= auto");
 
+        // Automatically open firewall ports and exclude from Antivirus for device communication
+        EnsureFirewallAndSecurityRules(port, frontendPort);
+
         return (true, $"Installed: {ApiWindowsServiceName} and {WebWindowsServiceName} (auto-start, auto-restart on failure).");
     }
 
@@ -2991,6 +3000,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
         ScExec($"stop \"{ApiWindowsServiceName}\"");
         Thread.Sleep(500);
         var r2 = ScExec($"delete \"{ApiWindowsServiceName}\"");
+
+        RemoveFirewallAndSecurityRules();
 
         var ok = !ServiceExists(ApiWindowsServiceName) && !ServiceExists(WebWindowsServiceName);
         return (ok, ok ? "Services uninstalled successfully." : $"Partial uninstall.\nWeb: {r1}\nAPI: {r2}");
@@ -3185,6 +3196,84 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ""{ExpectedPostgreSqlSchema}"" GRANT ALL PRIV
             return p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
         }
         catch (Exception ex) { return ex.Message; }
+    }
+
+    private static string RunCommandHidden(string fileName, string arguments)
+    {
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            })!;
+            p.WaitForExit(10000);
+            return p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+        }
+        catch (Exception ex) { return ex.Message; }
+    }
+
+    public void EnsureFirewallAndSecurityRules() => EnsureFirewallAndSecurityRules(LoadPort(), LoadFrontendPort());
+
+    public static void EnsureFirewallAndSecurityRules(int apiPort, int frontendPort)
+    {
+        try
+        {
+            var baseDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
+            var webExe = Path.Combine(baseDir, "E.Attendance.Web.exe");
+            var ctrlExe = Path.Combine(baseDir, "E.Attendance.exe");
+
+            // 1. Delete outdated port rules so port changes cleanly update previous entries
+            RunCommandHidden("netsh.exe", "advfirewall firewall delete rule name=\"E-Attendance Web Port\"");
+            RunCommandHidden("netsh.exe", "advfirewall firewall delete rule name=\"E-Attendance API Port\"");
+
+            // 2. Application-level inbound rules (permits inbound traffic to the executables regardless of port changes)
+            if (File.Exists(webExe))
+            {
+                RunCommandHidden("netsh.exe", "advfirewall firewall delete rule name=\"E-Attendance Web Service\"");
+                RunCommandHidden("netsh.exe", $"advfirewall firewall add rule name=\"E-Attendance Web Service\" dir=in action=allow program=\"{webExe}\" enable=yes profile=any");
+            }
+
+            if (File.Exists(ctrlExe))
+            {
+                RunCommandHidden("netsh.exe", "advfirewall firewall delete rule name=\"E-Attendance Service Controller\"");
+                RunCommandHidden("netsh.exe", $"advfirewall firewall add rule name=\"E-Attendance Service Controller\" dir=in action=allow program=\"{ctrlExe}\" enable=yes profile=any");
+            }
+
+            // 3. Port-specific inbound rules for the currently configured ports
+            RunCommandHidden("netsh.exe", $"advfirewall firewall add rule name=\"E-Attendance Web Port\" dir=in action=allow protocol=TCP localport={frontendPort} enable=yes profile=any");
+            RunCommandHidden("netsh.exe", $"advfirewall firewall add rule name=\"E-Attendance API Port\" dir=in action=allow protocol=TCP localport={apiPort} enable=yes profile=any");
+            RunCommandHidden("netsh.exe", "advfirewall firewall add rule name=\"E-Attendance ZKTeco UDP (4370)\" dir=in action=allow protocol=UDP localport=4370 enable=yes profile=any");
+
+            // 4. Windows Defender exclusion for base directory and processes
+            var psCmd = $"Add-MpPreference -ExclusionPath '{baseDir}' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess 'E.Attendance.Web.exe','E.Attendance.exe' -ErrorAction SilentlyContinue";
+            RunCommandHidden("powershell.exe", $"-ExecutionPolicy Bypass -NoProfile -NonInteractive -Command \"{psCmd}\"");
+        }
+        catch
+        {
+            // Non-fatal: firewall/antivirus adjustments should not crash the app
+        }
+    }
+
+    public static void RemoveFirewallAndSecurityRules()
+    {
+        try
+        {
+            var baseDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
+            RunCommandHidden("netsh.exe", "advfirewall firewall delete rule name=\"E-Attendance Web Service\"");
+            RunCommandHidden("netsh.exe", "advfirewall firewall delete rule name=\"E-Attendance Service Controller\"");
+            RunCommandHidden("netsh.exe", "advfirewall firewall delete rule name=\"E-Attendance Web Port\"");
+            RunCommandHidden("netsh.exe", "advfirewall firewall delete rule name=\"E-Attendance API Port\"");
+            RunCommandHidden("netsh.exe", "advfirewall firewall delete rule name=\"E-Attendance ZKTeco UDP (4370)\"");
+
+            var psCmd = $"Remove-MpPreference -ExclusionPath '{baseDir}' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess 'E.Attendance.Web.exe','E.Attendance.exe' -ErrorAction SilentlyContinue";
+            RunCommandHidden("powershell.exe", $"-ExecutionPolicy Bypass -NoProfile -NonInteractive -Command \"{psCmd}\"");
+        }
+        catch { }
     }
 
     private static void EnsureFile(string path)

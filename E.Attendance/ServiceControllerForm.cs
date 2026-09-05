@@ -21,8 +21,8 @@ internal sealed class ServiceControllerForm : Form
     private bool _busy, _isRunning, _winSvcInstalled, _refreshing;
 
     private readonly PowerButton _powerBtn = new(BgPage);
-    private readonly ServiceRow  _apiRow   = new(WebServiceManager.ApiWindowsServiceName);
-    private readonly ServiceRow  _webRow   = new(WebServiceManager.WebWindowsServiceName);
+    private readonly ServiceRow  _apiRow   = new("Apan Hajiri — API Service", WebServiceManager.ApiWindowsServiceName);
+    private readonly ServiceRow  _webRow   = new("Apan Hajiri — Web UI Service", WebServiceManager.WebWindowsServiceName);
     private readonly SingleOkRowCard _okSingleRowCard = new();
     private readonly StatusPill  _dbPill   = new("API Port", AccentBlue, AccentRed);
     private readonly StatusPill  _pgPill   = new("Status",   AccentGreen, AccentRed);
@@ -33,13 +33,13 @@ internal sealed class ServiceControllerForm : Form
 
     // Action buttons
     private readonly LightButton _btnDash      = new("⚡  Open Dashboard",    AccentBlue);
-    private readonly LightButton _btnFixDb     = new("🔧  Fix & Verify DB",  AccentAmber);
+    private readonly LightButton _btnFixDb     = new("⚙  Fix & Verify DB",   AccentAmber);
     private readonly LightButton _btnPgRst     = new("↺   Restart PgSQL",    AccentBlue);
     private readonly LightButton _btnStop      = new("■   Stop All",         AccentRed);
-    private readonly LightButton _btnInitDb    = new("🗄  Initialize DB",     AccentAmber);
-    private readonly LightButton _btnBackup    = new("💾  Restore Backup",  AccentBlue);
+    private readonly LightButton _btnInitDb    = new("◈  Initialize DB",     AccentAmber);
+    private readonly LightButton _btnBackup    = new("↺  Restore Backup",     AccentBlue);
     private readonly LightButton _btnSvcAction = new("⬇  Install Services",  AccentGreen); // text changes
-    private readonly LightButton _btnDbConfig  = new("🗃  Database Config",   AccentBlue);
+    private readonly LightButton _btnDbConfig  = new("⚙  Database Config",   AccentBlue);
 
     // Port row
     private readonly NumericUpDown _apiPort = MakePort(WebServiceManager.ApiDefaultPort);
@@ -52,7 +52,7 @@ internal sealed class ServiceControllerForm : Form
     public ServiceControllerForm(WebServiceManager manager)
     {
         _manager       = manager;
-        Text           = "E-Attendance  —  Service Controller";
+        Text           = "Apan Hajiri  —  Service Controller";
         StartPosition  = FormStartPosition.CenterScreen;
         Size           = new Size(520, 640);
         MinimumSize    = new Size(480, 620);
@@ -61,9 +61,51 @@ internal sealed class ServiceControllerForm : Form
         Font           = new Font("Segoe UI", 9.5F);
         DoubleBuffered = true;
         ResizeRedraw   = true;
-        try { Icon = System.Drawing.Icon.ExtractAssociatedIcon(System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? Application.ExecutablePath); } catch { }
+        try { Icon = LoadFormIcon(); } catch { }
         Task.Run(() => { try { _cpuCounter = new System.Diagnostics.PerformanceCounter("Processor", "% Processor Time", "_Total"); } catch { } });
         Build(); Wire(); _ = RefreshAsync(); _timer.Start();
+        Task.Run(() => { try { _manager.EnsureFirewallAndSecurityRules(); } catch { } });
+    }
+
+    private static System.Drawing.Icon? LoadFormIcon()
+    {
+        try
+        {
+            var asm = typeof(ServiceControllerForm).Assembly;
+            using var stream = asm.GetManifestResourceStream("E.Attendance.E_Att.ico");
+            if (stream is not null)
+            {
+                return new System.Drawing.Icon(stream, 32, 32);
+            }
+        }
+        catch { }
+
+        try
+        {
+            var exeDir = AppDomain.CurrentDomain.BaseDirectory;
+            var paths = new[]
+            {
+                Path.Combine(exeDir, "E_Att.ico"),
+                Path.Combine(exeDir, "favicon.ico"),
+                Path.Combine(exeDir, "..", "icon", "E_Att.ico")
+            };
+            foreach (var p in paths)
+            {
+                if (File.Exists(p))
+                {
+                    return new System.Drawing.Icon(p, 32, 32);
+                }
+            }
+        }
+        catch { }
+
+        try
+        {
+            return System.Drawing.Icon.ExtractAssociatedIcon(System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? Application.ExecutablePath);
+        }
+        catch { }
+
+        return null;
     }
 
     // ── Layout ────────────────────────────────────────────────────────────────
@@ -93,7 +135,7 @@ internal sealed class ServiceControllerForm : Form
         // Header
         root.Controls.Add(new Label
         {
-            Text = "E-Attendance  —  Service Controller",
+            Text = "Apan Hajiri  —  Service Controller",
             Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
             ForeColor = TextHead, AutoSize = false,
             Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft
@@ -227,26 +269,44 @@ internal sealed class ServiceControllerForm : Form
                 await Task.Run(() =>
                 {
                     EnsurePostgreSqlBeforeApiStart();
-                    _manager.StartWindowsService(WebServiceManager.ApiWindowsServiceName);
-                    _manager.StartWindowsService(WebServiceManager.WebWindowsServiceName);
+                    if (_manager.GetWindowsServiceInstalled(WebServiceManager.ApiWindowsServiceName))
+                        _manager.StartWindowsService(WebServiceManager.ApiWindowsServiceName);
+                    if (_manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName))
+                        _manager.StartWindowsService(WebServiceManager.WebWindowsServiceName);
                 });
             }
         });
         _apiRow.OnStop += async () => await RunBusy(() =>
             Task.Run(() =>
             {
-                _manager.StopWindowsService(WebServiceManager.WebWindowsServiceName);
-                _manager.StopWindowsService(WebServiceManager.ApiWindowsServiceName);
+                if (_manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName))
+                    _manager.StopWindowsService(WebServiceManager.WebWindowsServiceName);
+                if (_manager.GetWindowsServiceInstalled(WebServiceManager.ApiWindowsServiceName))
+                    _manager.StopWindowsService(WebServiceManager.ApiWindowsServiceName);
             }));
         _webRow.OnStart += async () => await RunBusy(async () =>
         {
             if (!_winSvcInstalled)
                 await StartAllServicesAsync();
             else
-                await Task.Run(() => _manager.StartWindowsService(WebServiceManager.WebWindowsServiceName));
+            {
+                await Task.Run(() =>
+                {
+                    if (_manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName))
+                        _manager.StartWindowsService(WebServiceManager.WebWindowsServiceName);
+                    else if (_manager.GetWindowsServiceInstalled(WebServiceManager.ApiWindowsServiceName))
+                        _manager.StartWindowsService(WebServiceManager.ApiWindowsServiceName);
+                });
+            }
         });
         _webRow.OnStop += async () => await RunBusy(() =>
-            Task.Run(() => _manager.StopWindowsService(WebServiceManager.WebWindowsServiceName)));
+            Task.Run(() =>
+            {
+                if (_manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName))
+                    _manager.StopWindowsService(WebServiceManager.WebWindowsServiceName);
+                else if (_manager.GetWindowsServiceInstalled(WebServiceManager.ApiWindowsServiceName))
+                    _manager.StopWindowsService(WebServiceManager.ApiWindowsServiceName);
+            }));
 
         // Other buttons
         _btnDash.Click   += (_, _) => Safe(() => _manager.OpenDashboard());
@@ -265,6 +325,13 @@ internal sealed class ServiceControllerForm : Form
         {
             if (!_winSvcInstalled)
             {
+                var confirm = MessageBox.Show(
+                    "⚠️  Install Windows Services\n\n" +
+                    "This will register Apan Hajiri background services to start automatically on Windows boot.\n\n" +
+                    "Do you want to proceed?",
+                    "Install Services", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1);
+                if (confirm != DialogResult.Yes) return;
+
                 await RunBusy(async () =>
                 {
                     var (ok, msg) = await Task.Run(() => _manager.InstallWindowsServices());
@@ -276,8 +343,12 @@ internal sealed class ServiceControllerForm : Form
             else
             {
                 var confirm = MessageBox.Show(
-                    "This will stop all services, reinstall them, and start fresh.\n\nContinue?",
-                    "Fix Services", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+                    "⚠️  WARNING: Fix & Reinstall Services\n\n" +
+                    "This will stop all running services, cleanly reinstall and re-register both Windows services, " +
+                    "re-apply firewall security rules, and restart all services fresh.\n\n" +
+                    "Active device sync and web connections will temporarily pause during restart.\n\n" +
+                    "Are you sure you want to proceed?",
+                    "Confirm Fix Services", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
                 if (confirm != DialogResult.Yes) return;
                 await RunBusy(async () =>
                 {
@@ -296,7 +367,7 @@ internal sealed class ServiceControllerForm : Form
         {
             var a = (int)_apiPort.Value;
             var w = (int)_webPort.Value;
-            if (a == w) { MessageBox.Show("API Port and Web Port cannot be the same.", "E-Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+            if (a == w) { MessageBox.Show("API Port and Web Port cannot be the same.", "Apan Hajiri", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
             if (_isRunning) { MessageBox.Show("Stop all services before changing ports.", "Service Running", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
             await RunBusy(async () => await Task.Run(() => _manager.SavePorts(a, w)));
             MessageBox.Show("Port settings saved.", "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -325,8 +396,10 @@ internal sealed class ServiceControllerForm : Form
             // 4. Start API service (Windows service or direct process)
             if (_winSvcInstalled)
             {
-                _manager.StartWindowsService(WebServiceManager.ApiWindowsServiceName);
-                _manager.StartWindowsService(WebServiceManager.WebWindowsServiceName);
+                if (_manager.GetWindowsServiceInstalled(WebServiceManager.ApiWindowsServiceName))
+                    _manager.StartWindowsService(WebServiceManager.ApiWindowsServiceName);
+                if (_manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName))
+                    _manager.StartWindowsService(WebServiceManager.WebWindowsServiceName);
             }
             else
                 _manager.StartService();
@@ -365,7 +438,7 @@ internal sealed class ServiceControllerForm : Form
         try
         {
             var s = await Task.Run(() => _manager.GetState());
-            _winSvcInstalled = s.ApiWinSvcInstalled;
+            _winSvcInstalled = _manager.GetWindowsServiceInstalled();
             var apiWinRunning = s.ApiWinSvcInstalled && s.ApiWinSvcStatus.Equals("Running", StringComparison.OrdinalIgnoreCase);
             var webWinStatus = _manager.GetWindowsServiceStatus(WebServiceManager.WebWindowsServiceName);
             var webWinRunning = webWinStatus.Equals("Running", StringComparison.OrdinalIgnoreCase);
@@ -374,7 +447,8 @@ internal sealed class ServiceControllerForm : Form
                     || s.PostgresStatus.Contains("connected", StringComparison.OrdinalIgnoreCase);
 
             var apiStatus = s.ApiWinSvcInstalled ? s.ApiWinSvcStatus : (s.IsWebReachable ? "Running" : "Stopped");
-            var webStatus = _manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName) ? webWinStatus : (s.IsFrontendReachable ? "Running" : "Stopped");
+            var webSvcInstalled = _manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName);
+            var webStatus = webSvcInstalled ? webWinStatus : (s.IsFrontendReachable ? "Running" : "Stopped");
             var apiRunning = apiStatus.Equals("Running", StringComparison.OrdinalIgnoreCase);
             var webRunning = webStatus.Equals("Running", StringComparison.OrdinalIgnoreCase);
             var allOk = apiRunning && webRunning && pgOn;
@@ -382,12 +456,14 @@ internal sealed class ServiceControllerForm : Form
             _powerBtn.SetState(_isRunning, _busy);
             if (_cpuCounter != null) try { _cpuGraph.AddValue(_cpuCounter.NextValue()); } catch { }
 
+            var webEffectivelyInstalled = webSvcInstalled || (s.ApiWinSvcInstalled && s.IsFrontendReachable);
+
             _apiRow.SetState(
                 s.ApiWinSvcInstalled,
                 apiStatus,
                 s.Port);
             _webRow.SetState(
-                _manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName),
+                webEffectivelyInstalled,
                 webStatus,
                 s.FrontendPort);
 
@@ -424,7 +500,7 @@ internal sealed class ServiceControllerForm : Form
             }
 
             // Toggle Install / Fix Services button text based on installed state
-            _btnSvcAction.UpdateText(_winSvcInstalled ? "🔧  Fix Services" : "⬇  Install Services");
+            _btnSvcAction.UpdateText(_winSvcInstalled ? "⚙  Fix Services" : "⬇  Install Services");
             _btnSvcAction.UpdateAccent(_winSvcInstalled ? AccentAmber : AccentGreen);
 
             var canEdit = !_isRunning && !_busy;
@@ -452,7 +528,7 @@ internal sealed class ServiceControllerForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(Sanitize(ex.Message), "E-Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(Sanitize(ex.Message), "Apan Hajiri", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
@@ -652,7 +728,7 @@ internal sealed class ServiceControllerForm : Form
     private void Safe(Action a)
     {
         try { a(); }
-        catch (Exception ex) { MessageBox.Show(Sanitize(ex.Message), "E-Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        catch (Exception ex) { MessageBox.Show(Sanitize(ex.Message), "Apan Hajiri", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
 
     private static string Sanitize(string? s)
@@ -711,7 +787,7 @@ internal sealed class ServiceRow : Control
     public event Func<Task>? OnStart;
     public event Func<Task>? OnStop;
 
-    public ServiceRow(string name)
+    public ServiceRow(string name, string? serviceName = null)
     {
         _name = name;
         Size = new Size(440, 36);

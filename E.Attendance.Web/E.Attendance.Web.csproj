@@ -30,9 +30,14 @@
     <FrontendExportDir>..\e-attendance-next\out</FrontendExportDir>
     <!-- Ship only English satellite resources (no cs/de/fr/ja/... waste folders) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <Version>1.1.11</Version>
-    <FileVersion>1.1.11.0</FileVersion>
-    <AssemblyVersion>1.1.11.0</AssemblyVersion>
+    <Version>1.1.14</Version>
+    <FileVersion>1.1.14.0</FileVersion>
+    <AssemblyVersion>1.1.14.0</AssemblyVersion>
+    <Company>PB Tech Zone</Company>
+    <Authors>PB Tech Zone</Authors>
+    <Product>Apan Hajiri</Product>
+    <Description>Apan Hajiri - Enterprise Biometric API &amp; Web Service</Description>
+    <Copyright>Copyright © 2026 PB Tech Zone. All rights reserved.</Copyright>
   </PropertyGroup>
 
   <ItemGroup>

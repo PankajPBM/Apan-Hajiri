@@ -159,7 +159,7 @@ const ALL_TIMEZONES: string[] = (() => {
 })();
 
 const defaultSettings: SettingsState = {
-  organizationName: "E-Attendance",
+  organizationName: "अपन हाजिरी",
   timezone: "Asia/Kathmandu",
   defaultBranch: "Main Branch",
   language: "English",
@@ -167,10 +167,10 @@ const defaultSettings: SettingsState = {
   weeklyOffOt: true,
   pushEndpointPort: "8081",
   webUiPort: "8001",
-  systemTitle: "E-Attendance",
+  systemTitle: "Apan Hajiri",
   supportEmail: "pbtechzone77@gmail.com",
   primaryColor: "#134f8a",
-  logoUrl: "/logo_pb.ico",
+  logoUrl: "/apan_logo.png",
 };
 
 const tabFields: Record<SettingsTab, Array<keyof SettingsState>> = {
@@ -1393,14 +1393,20 @@ export default function SettingsPage() {
               <div className="rounded-2xl border border-sky-200 bg-[linear-gradient(135deg,#f8fdff,#eef7ff)] p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#5a7b98]">Live Branding Preview</p>
                 <div className="mt-3 flex items-center gap-3">
-                  <div
-                    className="grid h-14 w-14 place-items-center overflow-hidden rounded-full border border-white/70 bg-white shadow-sm"
-                    style={{ boxShadow: `0 18px 28px -24px ${settings.primaryColor}` }}
-                  >
-                    <span className="text-sm font-semibold text-[#0d334d]">PB</span>
+                  <div className="grid h-14 w-14 shrink-0 place-items-center">
+                    <img
+                      src={settings.logoUrl || "/apan_logo.png"}
+                      alt={settings.systemTitle || settings.organizationName}
+                      className="h-full w-full object-contain filter drop-shadow-sm"
+                    />
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate text-lg font-semibold text-[#0d334d]">{settings.systemTitle || settings.organizationName}</p>
+                    <p className="truncate text-lg font-bold text-[#0d334d] font-nepali">
+                      {settings.organizationName || "अपन हाजिरी"}
+                    </p>
+                    <p className="truncate text-xs text-[#5a7b98]">
+                      {settings.systemTitle || "Apan Hajiri"}
+                    </p>
                   </div>
                   <div className="ml-auto flex items-center gap-2 rounded-full border border-white/70 bg-white px-3 py-1.5 shadow-sm">
                     <span className="h-3 w-3 rounded-full" style={{ backgroundColor: settings.primaryColor }} />

@@ -105,6 +105,8 @@ export type ShiftPlanDefinition = {
   dailyTimetableId: string | null;
   weeklyRules: ShiftPlanWeeklyRule[];
   monthlyRules: ShiftPlanMonthlyRule[];
+  enableOvertime?: boolean;
+  overtimeAfterMinutes?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -706,6 +708,8 @@ function normalizeShiftPlanRow(
     ) || null,
     weeklyRules,
     monthlyRules,
+    enableOvertime: asBool(raw.enableOvertime, true),
+    overtimeAfterMinutes: clampNonNegative(asInt(raw.overtimeAfterMinutes, 0)),
     createdAt: asString(raw.createdAt, "").trim() || now,
     updatedAt: asString(raw.updatedAt, "").trim() || now,
   };
@@ -1212,11 +1216,18 @@ export async function ensureDefaultDepartmentShiftAssignments(
   currentSnapshot: ShiftConfigSnapshot
 ): Promise<ShiftConfigSnapshot> {
   let changed = false;
-  const nextAssignments = [...currentSnapshot.shiftAssignments];
   const defaultShiftId =
-    currentSnapshot.shiftDefinitions.find((x) => x.isActive)?.id ??
-    currentSnapshot.shiftDefinitions[0]?.id ??
-    "general";
+    currentSnapshot.shiftPlans.find((x) => x.isActive)?.id ??
+    currentSnapshot.shiftPlans[0]?.id ??
+    "default-shift-plan";
+
+  const nextAssignments = currentSnapshot.shiftAssignments.map((a) => {
+    if (a.shiftId === "general" && defaultShiftId) {
+      changed = true;
+      return { ...a, shiftId: defaultShiftId };
+    }
+    return a;
+  });
 
   for (const dept of departments) {
     const deptName = dept.name.trim();
@@ -1432,7 +1443,7 @@ function resolveTimetableIdFromShiftPlan(
   return shiftPlan.monthlyRules.find((x) => x.dayOfMonth === dayOfMonth)?.timetableId ?? null;
 }
 
-function resolveShiftPlanForDate(
+export function resolveShiftPlanForDate(
   employeeCode: string,
   date: string,
   shiftPlans: ShiftPlanDefinition[],
@@ -1458,12 +1469,21 @@ function resolveShiftPlanForDate(
     activeGroupMembers.set(group.id, members);
   }
 
+  const resolvePlan = (shiftId: string): ShiftPlanDefinition | null => {
+    if (!shiftId) return null;
+    if (activePlanMap.has(shiftId)) return activePlanMap.get(shiftId)!;
+    if (shiftId === "general" || shiftId === "default-shift-plan") {
+      return activePlanMap.get("default-shift-plan") ?? activePlanMap.values().next().value ?? null;
+    }
+    return shiftPlans.find((p) => p.isActive && p.name.toLowerCase() === shiftId.toLowerCase()) ?? null;
+  };
+
   const candidates = assignments
     .filter((x) =>
       x.isActive &&
       x.effectiveFrom <= date &&
       (!x.effectiveTo || date <= x.effectiveTo) &&
-      activePlanMap.has(x.shiftId),
+      Boolean(resolvePlan(x.shiftId)),
     )
     .filter((x) =>
       x.targetType === "employee"
@@ -1483,7 +1503,7 @@ function resolveShiftPlanForDate(
     });
 
   if (candidates.length === 0) return null;
-  return activePlanMap.get(candidates[0].shiftId) ?? null;
+  return resolvePlan(candidates[0].shiftId);
 }
 
 export function resolveTimetableForDate(

@@ -23,9 +23,14 @@
     <RollForward>LatestMinor</RollForward>
     <!-- Ship only English satellite resources (no cs/de/fr/ja/... waste folders) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <Version>1.1.11</Version>
-    <FileVersion>1.1.11.0</FileVersion>
-    <AssemblyVersion>1.1.11.0</AssemblyVersion>
+    <Version>1.1.14</Version>
+    <FileVersion>1.1.14.0</FileVersion>
+    <AssemblyVersion>1.1.14.0</AssemblyVersion>
+    <Company>PB Tech Zone</Company>
+    <Authors>PB Tech Zone</Authors>
+    <Product>Apan Hajiri</Product>
+    <Description>Apan Hajiri - Enterprise Attendance &amp; Access Control Platform</Description>
+    <Copyright>Copyright © 2026 PB Tech Zone. All rights reserved.</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
@@ -50,6 +55,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="..\icon\E_Att.ico">
+      <Link>E_Att.ico</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\icon\favicon.ico">
+      <Link>favicon.ico</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <EmbeddedResource Include="..\icon\E_Att.ico">
+      <Link>E_Att.ico</Link>
+    </EmbeddedResource>
     <EmbeddedResource Include="NepaliDateConfig.ts.txt" />
   </ItemGroup>
 

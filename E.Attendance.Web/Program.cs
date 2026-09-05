@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using E.Attendance.Core.Logging;
 using E.Attendance.Core.Models;
 using E.Attendance.Data;
 using E.Attendance.Data.Production;
@@ -18,8 +19,19 @@ using E.Attendance.Services.Production;
 using E.Attendance.Web.Licensing;
 using E.Attendance.Web.Production;
 
+AppDomain.CurrentDomain.UnhandledException += static (sender, e) =>
+{
+    AppEventLogger.LogFatal("AppDomain", "Unhandled fatal exception occurred in Web service.", e.ExceptionObject as Exception);
+};
+TaskScheduler.UnobservedTaskException += static (sender, e) =>
+{
+    AppEventLogger.LogError("TaskScheduler", "Unobserved task exception in Web service.", null, e.Exception);
+    e.SetObserved();
+};
+
 var contentRootPath = ResolveContentRootPath();
 var webRootPath = ResolveWebRootPath(contentRootPath);
+AppEventLogger.LogInfo("Startup", $"E.Attendance.Web service initializing. ContentRoot: {contentRootPath}, WebRoot: {webRootPath}, LogDir: {AppEventLogger.LogDirectory}");
 Console.WriteLine($"[Startup] ContentRootPath: {contentRootPath}");
 Console.WriteLine($"[Startup] WebRootPath: {webRootPath}");
 
@@ -721,6 +733,7 @@ void AddLog(string level, string source, string message, string? detail = null)
     }
 
     _ = appLogPersistChannel.Writer.TryWrite(entry);
+    AppEventLogger.Log(level, source, message, detail);
 }
 
 // Memory-only variant (never hits the DB) for high-frequency, zero-diagnostic-value entries —
@@ -740,12 +753,69 @@ void AddLogTransient(string level, string source, string message, string? detail
     }
 }
 
+var latestDeviceCardSwipes = new ConcurrentDictionary<string, (string CardNumber, DateTime TimestampUtc)>(StringComparer.OrdinalIgnoreCase);
+
+void RecordPotentialCardSwipe(string? serialNumber, string payload)
+{
+    if (string.IsNullOrWhiteSpace(serialNumber) || string.IsNullOrWhiteSpace(payload))
+    {
+        return;
+    }
+
+    var lines = payload.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    foreach (var line in lines)
+    {
+        if (line.StartsWith("OK", StringComparison.OrdinalIgnoreCase) || line.StartsWith("DATA ", StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        if (TryParseAttendanceLine(line, out var empCode, out _, out _, out _, out _, out _))
+        {
+            if (!string.IsNullOrWhiteSpace(empCode))
+            {
+                latestDeviceCardSwipes[serialNumber.Trim()] = (empCode.Trim(), DateTime.UtcNow);
+                AddLog("INFO", "CardEnrollment", $"Card swipe detected on {serialNumber.Trim()}: {empCode.Trim()}");
+            }
+        }
+        else
+        {
+            var parts = line.Split('\t', StringSplitOptions.TrimEntries);
+            if (parts.Length >= 2 && !parts[0].StartsWith("OPLOG", StringComparison.OrdinalIgnoreCase))
+            {
+                var candidate = parts[0].Trim();
+                if (candidate.StartsWith("PIN=", StringComparison.OrdinalIgnoreCase))
+                {
+                    candidate = candidate[4..].Trim();
+                }
+                if (!string.IsNullOrWhiteSpace(candidate))
+                {
+                    latestDeviceCardSwipes[serialNumber.Trim()] = (candidate, DateTime.UtcNow);
+                    AddLog("INFO", "CardEnrollment", $"Card swipe detected on {serialNumber.Trim()}: {candidate}");
+                }
+            }
+            if (line.Contains("Card=", StringComparison.OrdinalIgnoreCase))
+            {
+                var map = ParseOptionPairs(line);
+                var card = FirstValue(map, "Card", "CardNo", "CardNumber", "ViceCard");
+                if (!string.IsNullOrWhiteSpace(card))
+                {
+                    latestDeviceCardSwipes[serialNumber.Trim()] = (card.Trim(), DateTime.UtcNow);
+                    AddLog("INFO", "CardEnrollment", $"Card data detected on {serialNumber.Trim()}: {card.Trim()}");
+                }
+            }
+        }
+    }
+}
+
 void QueueTransactionDetails(string? serialNumber, string sourceTable, string payload)
 {
     if (string.IsNullOrWhiteSpace(payload))
     {
         return;
     }
+
+    RecordPotentialCardSwipe(serialNumber, payload);
 
     if (transactionDetailsPersistChannel.Writer.TryWrite(new TransactionDetailPersistRequest(
         serialNumber?.Trim(),
@@ -2015,7 +2085,7 @@ app.MapGet("/api/personnel/employees", (string? search, string? status, int page
             faceCount = templates.Count(t => t.Type == 9 || t.Type == 2),
             photoCount = photos.Count,
             verifyMode = effectiveVerifyMode,
-            groupId = unified?.GroupId,
+            groupId = !e.IsActive ? 0 : (unified?.GroupId ?? 1),
             timezoneProfile = unified?.TimezoneProfile ?? string.Empty,
             validFrom = unified?.ValidFrom,
             validTo = unified?.ValidTo,
@@ -2127,6 +2197,7 @@ app.MapPost("/api/personnel/employees", async (HttpRequest request) =>
         employee.Privilege = ResolveConfiguredEmployeePrivilege(payload.Privilege);
         employee.VerifyMode = ProgramHelpers.NormalizeEmployeeVerifyMode(payload.VerifyMode);
         employee.ProfilePhoto = string.IsNullOrWhiteSpace(normalizedPhotoInput) ? null : normalizedPhotoInput;
+        var effectiveGroupId = (payload.IsActive.HasValue && !payload.IsActive.Value) ? 0 : (payload.GroupId ?? 1);
         employee.SyncedAt = null;
         repository.UpdateEmployee(employee);
         ProgramHelpers.UpsertEmployeeProfile(
@@ -2142,8 +2213,8 @@ app.MapPost("/api/personnel/employees", async (HttpRequest request) =>
             normalizedPosition,
             resolvedAssignments[0].AreaCode,
             resolvedAssignments[0].DepartmentCode,
-            groupId: payload.GroupId ?? 1,
-            timezoneProfile: payload.TimezoneProfile,
+            groupId: effectiveGroupId,
+            timezoneProfile: effectiveGroupId == 0 ? "0000000000000000" : payload.TimezoneProfile,
             verifyMode: employee.VerifyMode,
             assignments: resolvedAssignments);
         // Also persist groupId to unified user table — must run BEFORE UpsertProfilePhotoSnapshot
@@ -2152,8 +2223,8 @@ app.MapPost("/api/personnel/employees", async (HttpRequest request) =>
         repository.UpsertUnifiedUser(
             pin: employee.EmployeeCode, name: employee.FullName, privilege: (int)employee.Privilege,
             password: null, primaryCard: normalizedCardNumber, secondaryCard: null,
-            groupId: payload.GroupId ?? 1, timezoneProfile: payload.TimezoneProfile, verifyMode: employee.VerifyMode,
-            validFrom: null, validTo: null, expiresEnabled: null, phone: employee.MobileNumber,
+            groupId: effectiveGroupId, timezoneProfile: effectiveGroupId == 0 ? "0000000000000000" : payload.TimezoneProfile, verifyMode: employee.VerifyMode,
+            validFrom: null, validTo: null, expiresEnabled: effectiveGroupId == 0, phone: employee.MobileNumber,
             gender: null, nation: null, idNumber: null);
         UpsertProfilePhotoSnapshot(repository, employee);
         SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
@@ -2163,44 +2234,47 @@ app.MapPost("/api/personnel/employees", async (HttpRequest request) =>
         // Wrapped in try/catch: the employee is already saved, so a transient sync/queue error
         // must NOT turn a successful create into an error response (which would otherwise cause
         // the client to retry and report a false "already exists").
-        try
+        if (employee.IsActive)
         {
-            var newProfile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, employee.EmployeeCode, StringComparison.OrdinalIgnoreCase));
-            var devicesToWake = new List<Device>();
-            foreach (var device in service.ListDevices())
+            try
             {
-                var devSetup = ResolveDeviceSetupForSerial(personnelStore, device.SerialNumber, device.Location, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
-                var devDept = ResolveEmployeeDepartmentForDevice(personnelStore, employee, newProfile, devSetup.Department, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
-                if (string.IsNullOrWhiteSpace(devDept)) continue;
-                var syncEmp = CreateEmployeeForDeviceSync(employee, newProfile, devDept);
-                syncEmp.DepartmentId = payload.GroupId ?? syncEmp.DepartmentId;
-                syncEmp.VerifyMode = employee.VerifyMode;
-                service.QueueDeviceCommand(device.SerialNumber, protocolService.CreateUserInfoCommand(syncEmp, device));
-                devicesToWake.Add(device);
-            }
+                var newProfile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, employee.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+                var devicesToWake = new List<Device>();
+                foreach (var device in service.ListDevices())
+                {
+                    var devSetup = ResolveDeviceSetupForSerial(personnelStore, device.SerialNumber, device.Location, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+                    var devDept = ResolveEmployeeDepartmentForDevice(personnelStore, employee, newProfile, devSetup.Department, DefaultAreaCode, DefaultAreaName, DefaultDepartmentCode, DefaultDepartmentName);
+                    if (string.IsNullOrWhiteSpace(devDept)) continue;
+                    var syncEmp = CreateEmployeeForDeviceSync(employee, newProfile, devDept);
+                    syncEmp.DepartmentId = effectiveGroupId;
+                    syncEmp.VerifyMode = employee.VerifyMode;
+                    service.QueueDeviceCommand(device.SerialNumber, protocolService.CreateUserInfoCommand(syncEmp, device));
+                    devicesToWake.Add(device);
+                }
 
-            var queuedPhotoCommands = QueueEmployeePhotoSyncToAssignedDevices(
-                service,
-                protocolService,
-                personnelStore,
-                [employee],
-                DefaultAreaCode,
-                DefaultAreaName,
-                DefaultDepartmentCode,
-                DefaultDepartmentName);
-            if (queuedPhotoCommands > 0)
-            {
-                AddLog("INFO", "Sync", $"Queued {queuedPhotoCommands} photo sync command(s) for employee {employee.EmployeeCode}.");
-            }
+                var queuedPhotoCommands = QueueEmployeePhotoSyncToAssignedDevices(
+                    service,
+                    protocolService,
+                    personnelStore,
+                    [employee],
+                    DefaultAreaCode,
+                    DefaultAreaName,
+                    DefaultDepartmentCode,
+                    DefaultDepartmentName);
+                if (queuedPhotoCommands > 0)
+                {
+                    AddLog("INFO", "Sync", $"Queued {queuedPhotoCommands} photo sync command(s) for employee {employee.EmployeeCode}.");
+                }
 
-            foreach (var device in devicesToWake)
-            {
-                _ = TryWakeDeviceAsync(device.IpAddress, device.SerialNumber, settings.Port);
+                foreach (var device in devicesToWake)
+                {
+                    _ = TryWakeDeviceAsync(device.IpAddress, device.SerialNumber, settings.Port);
+                }
             }
-        }
-        catch (Exception syncEx)
-        {
-            AddLog("WARN", "Sync", $"Employee {employee.EmployeeCode} saved, but real-time device sync hit an error.", syncEx.ToString());
+            catch (Exception syncEx)
+            {
+                AddLog("WARN", "Sync", $"Employee {employee.EmployeeCode} saved, but real-time device sync hit an error.", syncEx.ToString());
+            }
         }
         return Results.Json(employee);
     }
@@ -2327,6 +2401,7 @@ app.MapPut("/api/personnel/employees/{id:guid}", async (Guid id, HttpRequest req
     var ok = repository.UpdateEmployee(employee);
     if (ok)
     {
+        var effectiveGroupId = !employee.IsActive ? 0 : (payload.GroupId ?? 1);
         // Persist groupId and verifyMode to the unified user table so the API response reflects them.
         repository.UpsertUnifiedUser(
             pin: employee.EmployeeCode,
@@ -2335,12 +2410,12 @@ app.MapPut("/api/personnel/employees/{id:guid}", async (Guid id, HttpRequest req
             password: null,
             primaryCard: normalizedCardNumber,
             secondaryCard: null,
-            groupId: payload.GroupId,
-            timezoneProfile: payload.TimezoneProfile,
+            groupId: effectiveGroupId,
+            timezoneProfile: effectiveGroupId == 0 ? "0000000000000000" : payload.TimezoneProfile,
             verifyMode: employee.VerifyMode,
             validFrom: null,
             validTo: null,
-            expiresEnabled: null,
+            expiresEnabled: effectiveGroupId == 0,
             phone: employee.MobileNumber,
             gender: null,
             nation: null,
@@ -2359,8 +2434,8 @@ app.MapPut("/api/personnel/employees/{id:guid}", async (Guid id, HttpRequest req
             employee.Position,
             resolvedAssignments[0].AreaCode,
             resolvedAssignments[0].DepartmentCode,
-            groupId: payload.GroupId,
-            timezoneProfile: payload.TimezoneProfile,
+            groupId: effectiveGroupId,
+            timezoneProfile: effectiveGroupId == 0 ? "0000000000000000" : payload.TimezoneProfile,
             verifyMode: employee.VerifyMode,
             assignments: resolvedAssignments);
         SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
@@ -2396,25 +2471,43 @@ app.MapPut("/api/personnel/employees/{id:guid}", async (Guid id, HttpRequest req
                     }
                     continue;
                 }
-                var syncEmp = CreateEmployeeForDeviceSync(employee, updatedProfile, deptName);
-                syncEmp.DepartmentId = payload.GroupId ?? syncEmp.DepartmentId;
-                syncEmp.VerifyMode = employee.VerifyMode;
-                service.QueueDeviceCommand(device.SerialNumber, protocolService.CreateUserInfoCommand(syncEmp, device));
-                devicesToWake.Add(device);
+                if (!employee.IsActive)
+                {
+                    // Employee is inactive: delete from device so device cannot accept punches
+                    service.QueueDeviceCommand(device.SerialNumber, "CHECK");
+                    service.QueueDeviceCommand(device.SerialNumber, protocolService.CreateDeleteUserCommand(safeCodeForAreaRemoval));
+                    devicesToWake.Add(device);
+                }
+                else
+                {
+                    var syncEmp = CreateEmployeeForDeviceSync(employee, updatedProfile, deptName);
+                    syncEmp.DepartmentId = effectiveGroupId;
+                    syncEmp.VerifyMode = employee.VerifyMode;
+                    service.QueueDeviceCommand(device.SerialNumber, protocolService.CreateUserInfoCommand(syncEmp, device));
+                    var bioCmds = protocolService.CreateEmployeeBiometricSyncCommands(syncEmp, device);
+                    foreach (var bioCmd in bioCmds)
+                    {
+                        service.QueueDeviceCommand(device.SerialNumber, bioCmd.command);
+                    }
+                    devicesToWake.Add(device);
+                }
             }
 
-            var queuedPhotoCommands = QueueEmployeePhotoSyncToAssignedDevices(
-                service,
-                protocolService,
-                personnelStore,
-                [employee],
-                DefaultAreaCode,
-                DefaultAreaName,
-                DefaultDepartmentCode,
-                DefaultDepartmentName);
-            if (queuedPhotoCommands > 0)
+            if (employee.IsActive)
             {
-                AddLog("INFO", "Sync", $"Queued {queuedPhotoCommands} photo sync command(s) for employee {employee.EmployeeCode}.");
+                var queuedPhotoCommands = QueueEmployeePhotoSyncToAssignedDevices(
+                    service,
+                    protocolService,
+                    personnelStore,
+                    [employee],
+                    DefaultAreaCode,
+                    DefaultAreaName,
+                    DefaultDepartmentCode,
+                    DefaultDepartmentName);
+                if (queuedPhotoCommands > 0)
+                {
+                    AddLog("INFO", "Sync", $"Queued {queuedPhotoCommands} photo sync command(s) for employee {employee.EmployeeCode}.");
+                }
             }
 
             foreach (var device in devicesToWake)
@@ -2585,6 +2678,352 @@ app.MapPost("/api/personnel/employees/delete", async (HttpRequest request) =>
     return Results.Ok(new { success = true, removed, queuedDeviceDeletes, targetedDevices, deletedArtifactRows });
 });
 
+app.MapPost("/api/personnel/employees/credential/delete", async (HttpRequest request) =>
+{
+    if (!serverRunning)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    var payload = await request.ReadFromJsonAsync<EmployeeCredentialDeleteRequest>();
+    if (payload is null)
+    {
+        return Results.BadRequest(new { message = "Invalid request payload." });
+    }
+
+    var credentialType = (payload.CredentialType ?? "").Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(credentialType))
+    {
+        return Results.BadRequest(new { message = "credentialType is required." });
+    }
+
+    var allEmployees = repository.GetEmployees();
+    var targetEmployees = new List<Employee>();
+
+    if (payload.EmployeeIds != null && payload.EmployeeIds.Count > 0)
+    {
+        var rawSet = new HashSet<string>(payload.EmployeeIds.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()), StringComparer.OrdinalIgnoreCase);
+        foreach (var emp in allEmployees)
+        {
+            if (rawSet.Contains(emp.Id.ToString()) || (!string.IsNullOrWhiteSpace(emp.EmployeeCode) && rawSet.Contains(emp.EmployeeCode.Trim())))
+            {
+                targetEmployees.Add(emp);
+            }
+        }
+    }
+    else
+    {
+        Employee? employee = null;
+        if (!string.IsNullOrWhiteSpace(payload.EmployeeId) && Guid.TryParse(payload.EmployeeId, out var empGuid))
+        {
+            employee = allEmployees.FirstOrDefault(e => e.Id == empGuid);
+        }
+
+        if (employee is null && !string.IsNullOrWhiteSpace(payload.EmployeeCode))
+        {
+            employee = allEmployees.FirstOrDefault(e => string.Equals(e.EmployeeCode?.Trim(), payload.EmployeeCode.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (employee != null)
+        {
+            targetEmployees.Add(employee);
+        }
+        else if (!string.IsNullOrWhiteSpace(payload.EmployeeCode))
+        {
+            targetEmployees.Add(new Employee { EmployeeCode = payload.EmployeeCode.Trim() });
+        }
+    }
+
+    if (targetEmployees.Count == 0)
+    {
+        return Results.BadRequest(new { message = "No valid employees found." });
+    }
+
+    var serials = service.ListDevices()
+        .Select(d => d.SerialNumber?.Trim())
+        .Where(s => !string.IsNullOrWhiteSpace(s))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Cast<string>()
+        .ToList();
+
+    var targetCodes = targetEmployees.Select(e => e.EmployeeCode?.Trim()).Where(c => !string.IsNullOrWhiteSpace(c)).Distinct(StringComparer.OrdinalIgnoreCase).Cast<string>().ToList();
+
+    if (credentialType == "user")
+    {
+        var removedCount = 0;
+        foreach (var emp in targetEmployees)
+        {
+            repository.DeleteEmployee(emp.Id);
+            var code = emp.EmployeeCode?.Trim();
+            if (!string.IsNullOrWhiteSpace(code))
+            {
+                repository.DeleteEmployeeArtifactsByCode(code);
+                DeletePersonnelArtifactsInPostgres(postgresConnectionString, code);
+                personnelStore.Profiles.RemoveAll(p => string.Equals(p.EmployeeCode, code, StringComparison.OrdinalIgnoreCase));
+                var safeCode = SanitizeCommandValue(code);
+                foreach (var serial in serials)
+                {
+                    service.QueueDeviceCommand(serial, $"DATA DELETE USERINFO PIN={safeCode}");
+                }
+                removedCount++;
+            }
+        }
+        SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+        AddLog("INFO", "Personnel", $"Deleted {removedCount} employee(s)", $"devices={serials.Count}");
+        return Results.Ok(new { success = true, credentialType = "user", count = removedCount, message = $"Deleted {removedCount} employee(s)." });
+    }
+
+    if (credentialType is "fp" or "all-biometrics")
+    {
+        if (!string.IsNullOrWhiteSpace(postgresConnectionString))
+        {
+            try
+            {
+                using var conn = new NpgsqlConnection(postgresConnectionString);
+                conn.Open();
+                foreach (var code in targetCodes)
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"DELETE FROM ""E_Attendace"".""biometric_templates"" WHERE ""user_pin"" = @pin AND ""type"" = 1;";
+                    cmd.Parameters.AddWithValue("pin", code);
+                    cmd.ExecuteNonQuery();
+
+                    using var cmd2 = conn.CreateCommand();
+                    cmd2.CommandText = @"UPDATE ""E_Attendace"".""Employees"" SET ""FingerprintTemplates"" = NULL WHERE ""EmployeeCode"" = @pin;";
+                    cmd2.Parameters.AddWithValue("pin", code);
+                    cmd2.ExecuteNonQuery();
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog("WARN", "Personnel", $"Failed to delete fingerprint templates in PostgreSQL: {ex.Message}");
+            }
+        }
+
+        foreach (var emp in targetEmployees)
+        {
+            emp.FingerprintTemplates = null;
+            repository.UpdateEmployee(emp);
+        }
+
+        foreach (var serial in serials)
+        {
+            foreach (var code in targetCodes)
+            {
+                var safeCode = SanitizeCommandValue(code);
+                if (!string.IsNullOrWhiteSpace(safeCode))
+                {
+                    service.QueueDeviceCommand(serial, $"DATA DELETE FINGERTMP PIN={safeCode}");
+                }
+            }
+        }
+    }
+
+    if (credentialType is "face" or "all-biometrics")
+    {
+        if (!string.IsNullOrWhiteSpace(postgresConnectionString))
+        {
+            try
+            {
+                using var conn = new NpgsqlConnection(postgresConnectionString);
+                conn.Open();
+                foreach (var code in targetCodes)
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"DELETE FROM ""E_Attendace"".""biometric_templates"" WHERE ""user_pin"" = @pin AND ""type"" IN (2, 9);";
+                    cmd.Parameters.AddWithValue("pin", code);
+                    cmd.ExecuteNonQuery();
+
+                    try
+                    {
+                        using var cmdPhoto = conn.CreateCommand();
+                        cmdPhoto.CommandText = @"DELETE FROM ""E_Attendace"".""biometric_photos"" WHERE ""user_pin"" = @pin;";
+                        cmdPhoto.Parameters.AddWithValue("pin", code);
+                        cmdPhoto.ExecuteNonQuery();
+                    }
+                    catch { }
+
+                    using var cmd2 = conn.CreateCommand();
+                    cmd2.CommandText = @"UPDATE ""E_Attendace"".""Employees"" SET ""FaceTemplateVisible"" = NULL, ""FaceTemplateInfrared"" = NULL WHERE ""EmployeeCode"" = @pin;";
+                    cmd2.Parameters.AddWithValue("pin", code);
+                    cmd2.ExecuteNonQuery();
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog("WARN", "Personnel", $"Failed to delete face templates in PostgreSQL: {ex.Message}");
+            }
+        }
+
+        foreach (var emp in targetEmployees)
+        {
+            emp.FaceTemplateVisible = null;
+            emp.FaceTemplateInfrared = null;
+            repository.UpdateEmployee(emp);
+        }
+
+        foreach (var serial in serials)
+        {
+            foreach (var code in targetCodes)
+            {
+                var safeCode = SanitizeCommandValue(code);
+                if (!string.IsNullOrWhiteSpace(safeCode))
+                {
+                    service.QueueDeviceCommand(serial, $"DATA DELETE BIODATA PIN={safeCode}\tType=9");
+                    service.QueueDeviceCommand(serial, $"DATA DELETE BIODATA PIN={safeCode}\tType=2");
+                    service.QueueDeviceCommand(serial, $"DATA DELETE FACE PIN={safeCode}");
+                }
+            }
+        }
+    }
+
+    if (credentialType is "card" or "all-biometrics")
+    {
+        if (!string.IsNullOrWhiteSpace(postgresConnectionString))
+        {
+            try
+            {
+                using var conn = new NpgsqlConnection(postgresConnectionString);
+                conn.Open();
+                foreach (var code in targetCodes)
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"UPDATE ""E_Attendace"".""Employees"" SET ""CardNumber"" = '' WHERE ""EmployeeCode"" = @pin;";
+                    cmd.Parameters.AddWithValue("pin", code);
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog("WARN", "Personnel", $"Failed to clear cards in PostgreSQL: {ex.Message}");
+            }
+        }
+
+        foreach (var emp in targetEmployees)
+        {
+            emp.CardNumber = "";
+            repository.UpdateEmployee(emp);
+        }
+
+        foreach (var code in targetCodes)
+        {
+            var profileIdx = personnelStore.Profiles.FindIndex(p => string.Equals(p.EmployeeCode, code, StringComparison.OrdinalIgnoreCase));
+            if (profileIdx >= 0)
+            {
+                personnelStore.Profiles[profileIdx] = personnelStore.Profiles[profileIdx] with { CardNumber = "" };
+            }
+        }
+        SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+
+        foreach (var serial in serials)
+        {
+            foreach (var code in targetCodes)
+            {
+                var safeCode = SanitizeCommandValue(code);
+                if (!string.IsNullOrWhiteSpace(safeCode))
+                {
+                    service.QueueDeviceCommand(serial, $"DATA UPDATE USERINFO PIN={safeCode}\tCard=");
+                }
+            }
+        }
+    }
+
+    if (credentialType is "palm" or "all-biometrics")
+    {
+        if (!string.IsNullOrWhiteSpace(postgresConnectionString))
+        {
+            try
+            {
+                using var conn = new NpgsqlConnection(postgresConnectionString);
+                conn.Open();
+                foreach (var code in targetCodes)
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"DELETE FROM ""E_Attendace"".""biometric_templates"" WHERE ""user_pin"" = @pin AND ""type"" IN (7, 8);";
+                    cmd.Parameters.AddWithValue("pin", code);
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog("WARN", "Personnel", $"Failed to delete palm templates in PostgreSQL: {ex.Message}");
+            }
+        }
+
+        foreach (var serial in serials)
+        {
+            foreach (var code in targetCodes)
+            {
+                var safeCode = SanitizeCommandValue(code);
+                if (!string.IsNullOrWhiteSpace(safeCode))
+                {
+                    service.QueueDeviceCommand(serial, $"DATA DELETE BIODATA PIN={safeCode}\tType=8");
+                    service.QueueDeviceCommand(serial, $"DATA DELETE BIODATA PIN={safeCode}\tType=7");
+                }
+            }
+        }
+    }
+
+    if (credentialType is "password" or "all-biometrics")
+    {
+        if (!string.IsNullOrWhiteSpace(postgresConnectionString))
+        {
+            try
+            {
+                using var conn = new NpgsqlConnection(postgresConnectionString);
+                conn.Open();
+                foreach (var code in targetCodes)
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"UPDATE ""E_Attendace"".""Employees"" SET ""Password"" = '' WHERE ""EmployeeCode"" = @pin;";
+                    cmd.Parameters.AddWithValue("pin", code);
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog("WARN", "Personnel", $"Failed to clear passwords in PostgreSQL: {ex.Message}");
+            }
+        }
+
+        foreach (var emp in targetEmployees)
+        {
+            emp.Password = "";
+            repository.UpdateEmployee(emp);
+        }
+
+        foreach (var code in targetCodes)
+        {
+            var profileIdx = personnelStore.Profiles.FindIndex(p => string.Equals(p.EmployeeCode, code, StringComparison.OrdinalIgnoreCase));
+            if (profileIdx >= 0)
+            {
+                personnelStore.Profiles[profileIdx] = personnelStore.Profiles[profileIdx] with { Password = "" };
+            }
+        }
+        SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+
+        foreach (var serial in serials)
+        {
+            foreach (var code in targetCodes)
+            {
+                var safeCode = SanitizeCommandValue(code);
+                if (!string.IsNullOrWhiteSpace(safeCode))
+                {
+                    service.QueueDeviceCommand(serial, $"DATA UPDATE USERINFO PIN={safeCode}\tPasswd=");
+                }
+            }
+        }
+    }
+
+    if (credentialType is not ("fp" or "face" or "card" or "palm" or "password" or "all-biometrics" or "user"))
+    {
+        return Results.BadRequest(new { message = $"Unsupported credential type '{credentialType}'. Allowed: fp, face, card, palm, password, all-biometrics, user." });
+    }
+
+    AddLog("INFO", "Personnel", $"Deleted {credentialType} for {targetCodes.Count} employee(s)", $"devices={serials.Count}; codes={string.Join(",", targetCodes)}");
+    return Results.Ok(new { success = true, credentialType, count = targetCodes.Count, message = $"Deleted {credentialType} for {targetCodes.Count} employee(s)." });
+});
+
 app.MapPost("/api/personnel/employees/status", async (HttpRequest request) =>
 {
     if (!serverRunning)
@@ -2600,6 +3039,7 @@ app.MapPost("/api/personnel/employees/status", async (HttpRequest request) =>
 
     var updated = 0;
     var byId = repository.GetEmployees().ToDictionary(e => e.Id);
+    var updatedEmployees = new List<Employee>();
     foreach (var id in payload.Ids)
     {
         if (!byId.TryGetValue(id, out var employee))
@@ -2611,7 +3051,72 @@ app.MapPost("/api/personnel/employees/status", async (HttpRequest request) =>
         if (repository.UpdateEmployee(employee))
         {
             updated++;
+            updatedEmployees.Add(employee);
+            var effectiveGrp = payload.IsActive ? (employee.DepartmentId > 0 ? employee.DepartmentId : 1) : 0;
+            repository.UpsertUnifiedUser(
+                pin: employee.EmployeeCode,
+                name: employee.FullName,
+                privilege: (int)employee.Privilege,
+                password: null,
+                primaryCard: employee.CardNumber,
+                secondaryCard: null,
+                groupId: effectiveGrp,
+                timezoneProfile: payload.IsActive ? null : "0000000000000000",
+                verifyMode: employee.VerifyMode,
+                validFrom: null,
+                validTo: null,
+                expiresEnabled: !payload.IsActive,
+                phone: employee.MobileNumber,
+                gender: null,
+                nation: null,
+                idNumber: null);
+
+            var profile = personnelStore.Profiles.FirstOrDefault(p => string.Equals(p.EmployeeCode, employee.EmployeeCode, StringComparison.OrdinalIgnoreCase));
+            if (profile != null)
+            {
+                var idx = personnelStore.Profiles.IndexOf(profile);
+                personnelStore.Profiles[idx] = profile with { GroupId = effectiveGrp };
+            }
         }
+    }
+
+    if (updated > 0)
+    {
+        SavePersonnelStoreAndSyncDb(personnelStore, personnelPath, postgresConnectionString);
+    }
+
+    if (updatedEmployees.Count > 0)
+    {
+        var devices = service.ListDevices()
+            .Where(d => !string.IsNullOrWhiteSpace(d.SerialNumber))
+            .ToList();
+
+        foreach (var device in devices)
+        {
+            foreach (var emp in updatedEmployees)
+            {
+                if (!payload.IsActive)
+                {
+                    // Inactive: delete user from device so the machine rejects punches
+                    service.QueueDeviceCommand(device.SerialNumber, "CHECK");
+                    service.QueueDeviceCommand(device.SerialNumber, protocolService.CreateDeleteUserCommand(emp.EmployeeCode));
+                }
+                else
+                {
+                    // Active: re-enroll user and all their biometric templates on the device
+                    service.QueueDeviceCommand(device.SerialNumber, protocolService.CreateUserInfoCommand(emp, device));
+                    var bioCmds = protocolService.CreateEmployeeBiometricSyncCommands(emp, device);
+                    foreach (var bioCmd in bioCmds)
+                    {
+                        service.QueueDeviceCommand(device.SerialNumber, bioCmd.command);
+                    }
+                }
+            }
+
+            _ = TryWakeDeviceAsync(device.IpAddress, device.SerialNumber, settings.Port);
+        }
+
+        AddLog("INFO", "Personnel", $"Bulk employee status set to {(payload.IsActive ? "Active" : "Inactive")}", $"updated={updated}; devices={devices.Count}; codes={string.Join(",", updatedEmployees.Select(e => e.EmployeeCode))}");
     }
 
     return Results.Ok(new { success = true, updated });
@@ -5449,6 +5954,228 @@ app.MapPost("/api/fpenrollment/enroll", async (HttpRequest request) =>
     });
 });
 
+app.MapMethods("/api/fpenrollment/delete", ["DELETE", "POST"], async (HttpRequest request) =>
+{
+    if (!serverRunning)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    string? userId = request.Query["userId"].ToString()?.Trim();
+    string? fidStr = request.Query["fingerIndex"].ToString()?.Trim();
+    string? serial = request.Query["deviceSerial"].ToString()?.Trim();
+
+    if (string.IsNullOrWhiteSpace(userId) && request.HasJsonContentType())
+    {
+        try
+        {
+            var body = await request.ReadFromJsonAsync<JsonElement>();
+            if (body.TryGetProperty("userId", out var u)) userId = u.GetString()?.Trim();
+            if (body.TryGetProperty("fingerIndex", out var f)) fidStr = f.ToString();
+            if (body.TryGetProperty("deviceSerial", out var s)) serial = s.GetString()?.Trim();
+        }
+        catch { }
+    }
+
+    if (string.IsNullOrWhiteSpace(userId) || !int.TryParse(fidStr, out var fingerIndex) || fingerIndex < 0 || fingerIndex > 9)
+    {
+        return Results.BadRequest(new { success = false, message = "userId and valid fingerIndex (0-9) are required." });
+    }
+
+    if (!string.IsNullOrWhiteSpace(postgresConnectionString))
+    {
+        try
+        {
+            using var conn = new Npgsql.NpgsqlConnection(postgresConnectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"DELETE FROM ""E_Attendace"".""biometric_templates"" WHERE ""user_pin"" = @pin AND ""type"" = 1 AND ""no"" = @fid;";
+            cmd.Parameters.AddWithValue("pin", userId);
+            cmd.Parameters.AddWithValue("fid", fingerIndex);
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            AddLog("WARN", "Enrollment", $"Failed to delete biometric_template for user {userId} FID {fingerIndex}: {ex.Message}");
+        }
+    }
+
+    var employee = service.ListEmployees().FirstOrDefault(e => string.Equals(e.EmployeeCode, userId, StringComparison.OrdinalIgnoreCase));
+    if (employee is not null)
+    {
+        employee.FingerprintTemplates = RemoveFingerprintFromTemplateJson(employee.FingerprintTemplates, fingerIndex);
+        employee.SyncedAt = DateTime.UtcNow;
+        repository.UpdateEmployee(employee);
+    }
+
+    var deleteCommand = $"DATA DELETE FINGERTMP PIN={userId}\tFID={fingerIndex}";
+    if (!string.IsNullOrWhiteSpace(serial))
+    {
+        service.QueueDeviceCommand(serial, deleteCommand);
+    }
+    else
+    {
+        foreach (var d in service.ListDevices())
+        {
+            service.QueueDeviceCommand(d.SerialNumber, deleteCommand);
+        }
+    }
+
+    AddLog("INFO", "Enrollment", $"Deleted finger {fingerIndex} for user {userId} on device {serial ?? "all"}.");
+    return Results.Ok(new { success = true, message = $"Fingerprint {fingerIndex} deleted." });
+});
+
+app.MapPost("/api/cardenrollment/enroll", async (HttpRequest request) =>
+{
+    if (!serverRunning)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    var payload = await request.ReadFromJsonAsync<CardEnrollmentRequest>();
+    if (payload is null || string.IsNullOrWhiteSpace(payload.DeviceSerial) || string.IsNullOrWhiteSpace(payload.UserId))
+    {
+        return Results.BadRequest(new { success = false, message = "deviceSerial and userId are required." });
+    }
+
+    var serial = payload.DeviceSerial.Trim();
+    var userId = payload.UserId.Trim();
+    var device = service.ListDevices().FirstOrDefault(d =>
+        string.Equals(d.SerialNumber, serial, StringComparison.OrdinalIgnoreCase));
+    if (device is null)
+    {
+        return Results.NotFound(new { success = false, message = "Device not found." });
+    }
+
+    if (!device.IsOnline)
+    {
+        return Results.BadRequest(new { success = false, message = "Device is offline." });
+    }
+
+    var employee = service.ListEmployees()
+        .FirstOrDefault(e => string.Equals(e.EmployeeCode, userId, StringComparison.OrdinalIgnoreCase));
+    if (employee is null)
+    {
+        return Results.BadRequest(new { success = false, message = "User not found in database." });
+    }
+
+    var profile = personnelStore.Profiles
+        .FirstOrDefault(p => string.Equals(p.EmployeeCode, userId, StringComparison.OrdinalIgnoreCase));
+    var safeName = SanitizeCommandValue(employee.FullName ?? payload.UserName ?? userId);
+    if (string.IsNullOrWhiteSpace(safeName))
+    {
+        safeName = SanitizeCommandValue(userId);
+    }
+
+    var safeCardNo = SanitizeCommandValue(profile?.CardNumber ?? employee.CardNumber ?? payload.CardNo ?? string.Empty);
+    var safePassword = SanitizeCommandValue(ResolveDevicePassword(profile?.Password, employee.Password));
+    var privilege = (int)ResolveDeviceSyncPrivilege(profile?.Privilege, employee.Privilege);
+    var verifyMode = ProgramHelpers.NormalizeEmployeeVerifyMode(payload.VerifyMode, ResolveDeviceSyncVerifyMode(profile?.VerifyMode, employee.VerifyMode));
+    var deviceGroupId = profile?.GroupId ?? (employee.DepartmentId > 0 ? employee.DepartmentId : 1);
+    var timezoneProfile = string.IsNullOrWhiteSpace(profile?.TimezoneProfile)
+        ? "0000000000000000"
+        : profile.TimezoneProfile;
+    var retry = payload.Retry is >= 1 and <= 10 ? payload.Retry.Value : 3;
+
+    var userInfoCommand =
+        $"DATA UPDATE USERINFO PIN={userId}\tName={safeName}\tPri={privilege}\tPasswd={safePassword}\tCard={safeCardNo}\tGrp={deviceGroupId}\tTZ={timezoneProfile}\tVerify={verifyMode}";
+    var enrollCommand = $"ENROLL_MF PIN={userId}\tRETRY={retry}";
+
+    service.ClearPendingCommands(serial);
+    service.QueueDeviceCommand(serial, "CHECK");
+    service.QueueDeviceCommand(serial, userInfoCommand);
+    var enroll = service.QueueDeviceCommand(serial, enrollCommand);
+    AddLog("INFO", "Enrollment", $"Queued Card enroll for {serial} user {userId}.");
+
+    return Results.Ok(new
+    {
+        success = true,
+        mode = "queued",
+        commandId = enroll.Id.ToString(),
+        message = "Card enrollment queued. Swipe card on the device sensor.",
+        command = enrollCommand,
+        preProvisionedUser = true,
+        queuedCount = 3,
+        queuedSteps = new[] { "CHECK", "DATA UPDATE USERINFO", "ENROLL_MF" }
+    });
+});
+
+app.MapGet("/api/cardenrollment/poll", (string serial, string? sinceUtc) =>
+{
+    if (!serverRunning)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    if (string.IsNullOrWhiteSpace(serial))
+    {
+        return Results.BadRequest(new { message = "Serial is required." });
+    }
+
+    var normalizedSerial = serial.Trim();
+    var thresholdUtc = DateTime.UtcNow.AddSeconds(-15);
+    if (!string.IsNullOrWhiteSpace(sinceUtc) && DateTime.TryParse(sinceUtc, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var parsedSince))
+    {
+        thresholdUtc = parsedSince;
+    }
+
+    if (latestDeviceCardSwipes.TryGetValue(normalizedSerial, out var swipe) && swipe.TimestampUtc >= thresholdUtc)
+    {
+        return Results.Json(new
+        {
+            success = true,
+            cardScanned = true,
+            cardNumber = swipe.CardNumber,
+            timestampUtc = swipe.TimestampUtc
+        });
+    }
+
+    // Fallback: Check recent TransactionDetails in PostgreSQL
+    try
+    {
+        using var conn = new NpgsqlConnection(postgresConnectionString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT "EmployeeCode", "RawLine", "ReceivedUtc"
+            FROM "E_Attendace"."TransactionDetails"
+            WHERE "DeviceSerialNumber" = @serial
+              AND "ReceivedUtc" >= @since
+            ORDER BY "ReceivedUtc" DESC
+            LIMIT 1;
+        """;
+        cmd.Parameters.AddWithValue("serial", normalizedSerial);
+        cmd.Parameters.AddWithValue("since", thresholdUtc);
+        using var reader = cmd.ExecuteReader();
+        if (reader.Read())
+        {
+            var empCode = reader.IsDBNull(0) ? string.Empty : reader.GetString(0);
+            var rawLine = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+            var cardNum = !string.IsNullOrWhiteSpace(empCode) ? empCode : rawLine.Split('\t')[0].Trim();
+            if (!string.IsNullOrWhiteSpace(cardNum) && !cardNum.StartsWith("OPLOG", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Json(new
+                {
+                    success = true,
+                    cardScanned = true,
+                    cardNumber = cardNum,
+                    timestampUtc = reader.GetDateTime(2)
+                });
+            }
+        }
+    }
+    catch
+    {
+        // Ignore fallback db query errors
+    }
+
+    return Results.Json(new
+    {
+        success = true,
+        cardScanned = false
+    });
+});
+
 app.MapGet("/api/faceenrollment/status/{commandId}", (string commandId) =>
 {
     if (!serverRunning)
@@ -7158,6 +7885,31 @@ app.MapMethods("/iclock/devicecmd", ["POST"], async (HttpRequest request) =>
                     EnsureDeviceRegistered(service, serial, null, infoName, null, infoModel);
                 }
 
+                var parsedUserQty = ParseOptionInt(infoMap, "UserCount", "~UserCount", "UserQty");
+                var parsedFpQty = ParseOptionInt(infoMap, "FPCount", "~FPCount", "FpQty", "FingerprintCount");
+                var parsedFaceQty = ParseOptionInt(infoMap, "FaceCount", "~FaceCount", "FaceQty");
+                var parsedPalmQty = ParseOptionInt(infoMap, "PvCount", "~PvCount", "PalmCount", "PalmQty");
+                var parsedAttLogQty = ParseOptionInt(infoMap, "AttLogCount", "~AttLogCount", "TransactionCount", "TransactionQty");
+
+                if (parsedUserQty >= 0 || parsedFpQty >= 0 || parsedFaceQty >= 0 || parsedPalmQty >= 0 || parsedAttLogQty >= 0)
+                {
+                    discoveredDevices.AddOrUpdate(
+                        serial.Trim(),
+                        _ => new DiscoveredDevice(serial.Trim(), infoName ?? serial.Trim(), infoModel ?? string.Empty, string.Empty, string.Empty, DateTime.UtcNow, true, Math.Max(0, parsedUserQty), Math.Max(0, parsedFpQty), Math.Max(0, parsedFaceQty), Math.Max(0, parsedPalmQty), parsedAttLogQty),
+                        (_, old) => old with
+                        {
+                            LastActivityUtc = DateTime.UtcNow,
+                            IsOnline = true,
+                            UserQty = parsedUserQty >= 0 ? parsedUserQty : old.UserQty,
+                            FpQty = parsedFpQty >= 0 ? parsedFpQty : old.FpQty,
+                            FaceQty = parsedFaceQty >= 0 ? parsedFaceQty : old.FaceQty,
+                            PalmQty = parsedPalmQty >= 0 ? parsedPalmQty : old.PalmQty,
+                            TransactionQty = parsedAttLogQty >= 0 ? parsedAttLogQty : old.TransactionQty,
+                            Name = !string.IsNullOrWhiteSpace(infoName) ? infoName : old.Name,
+                            Model = !string.IsNullOrWhiteSpace(infoModel) ? infoModel : old.Model
+                        });
+                }
+
                 // The CMD=INFO devicecmd reply carries the same FaceFunOn/BioPhotoFun/etc. capability
                 // fields as the table=options payload (ApplyOptionsUpdate already parses those
                 // correctly) but this handler previously discarded everything except name/model. That
@@ -7287,9 +8039,9 @@ app.MapMethods("/iclock/devicecmd", ["POST"], async (HttpRequest request) =>
                         mappedSetup.Area.Code,
                         mappedSetup.Department.Code),
                     "ATTLOG" => repository.RunInTransaction(() =>
-                        HandleAttendancePayload(service, serial, dataPayload, allowUnknownEmployeeAutoCreate: IsRegistrationDevice(service, serial) || IsManualUserSyncWindowActive(manualUserSyncUntilUtcBySerial, serial))),
+                        HandleAttendancePayload(service, serial, dataPayload, allowUnknownEmployeeAutoCreate: false)),
                     "OPERLOG" => repository.RunInTransaction(() =>
-                        HandleAttendancePayload(service, serial, dataPayload, allowUnknownEmployeeAutoCreate: IsRegistrationDevice(service, serial) || IsManualUserSyncWindowActive(manualUserSyncUntilUtcBySerial, serial))),
+                        HandleAttendancePayload(service, serial, dataPayload, allowUnknownEmployeeAutoCreate: false)),
                     _ => 0
                 };
 
@@ -7552,7 +8304,7 @@ app.MapMethods("/iclock/cdata", ["GET", "POST"], async (HttpRequest request) =>
                 service,
                 serialNumber,
                 payload,
-                allowUnknownEmployeeAutoCreate: IsRegistrationDevice(service, serialNumber) || IsManualUserSyncWindowActive(manualUserSyncUntilUtcBySerial, serialNumber));
+                allowUnknownEmployeeAutoCreate: false);
             TryUpdateDeviceTableStampFromRequest(service, serialNumber, "ATTLOG", request.Query);
             return added;
         });
@@ -9021,8 +9773,10 @@ static void EnsurePostgresSchema(string connectionString)
         TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_Source_Parsed" ON "E_Attendace"."TransactionDetails" ("SourceTable","ParsedOk");""");
         TryExec(conn, """CREATE INDEX IF NOT EXISTS "IX_TransactionDetails_Employee_Punch" ON "E_Attendace"."TransactionDetails" ("EmployeeCode","PunchTime" DESC);""");
         TryExec(conn, """
+            DROP INDEX IF EXISTS "E_Attendace"."UX_TransactionDetails_Source_Raw";
+            DROP INDEX IF EXISTS "E_Attendace"."UX_TransactionDetails_SourceSerialRaw";
             CREATE UNIQUE INDEX IF NOT EXISTS "UX_TransactionDetails_SourceSerialRaw"
-            ON "E_Attendace"."TransactionDetails" (COALESCE("DeviceSerialNumber",''), "SourceTable", "RawLine");
+            ON "E_Attendace"."TransactionDetails" (COALESCE("DeviceSerialNumber",''), "SourceTable", md5("RawLine"));
             """);
         TryExec(conn, """
             INSERT INTO "E_Attendace"."TransactionDetails"
@@ -10230,6 +10984,7 @@ static async Task RunTransactionDetailsDbWriterAsync(
 {
     var buffer = new List<TransactionDetailPersistRequest>(500);
     using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
+    var consecutiveFailures = 0;
 
     try
     {
@@ -10242,10 +10997,18 @@ static async Task RunTransactionDetailsDbWriterAsync(
                 {
                     recordPersisted(buffer.Count);
                     buffer.Clear();
+                    consecutiveFailures = 0;
                 }
                 else
                 {
                     recordFailure(persistError);
+                    consecutiveFailures++;
+                    if (consecutiveFailures >= 5)
+                    {
+                        // Prevent an unrecoverable poison packet from permanently deadlocking the punch queue
+                        buffer.Clear();
+                        consecutiveFailures = 0;
+                    }
                 }
             }
         }
@@ -10323,12 +11086,14 @@ static bool PersistTransactionDetailRequests(string connectionString, IReadOnlyL
                     out var workcode,
                     out _);
 
+                var safeLine = line.Length > 2000 ? line.Substring(0, 2000) : line;
+
                 rows.Add(new TransactionDetailRow(
                     Guid.NewGuid().ToString("N"),
                     now,
                     normalizedSerial,
                     normalizedSource,
-                    line,
+                    safeLine,
                     parsedOk && !string.IsNullOrWhiteSpace(employeeCode) ? employeeCode : null,
                     parsedOk ? punchTime : null,
                     parsedOk ? statusCode : null,
@@ -14417,6 +15182,17 @@ static bool TryParseAttendanceLine(string line, out string employeeCode, out Dat
     return true;
 }
 
+static string? ExtractPinFromCommandText(string? commandText)
+{
+    if (string.IsNullOrWhiteSpace(commandText))
+    {
+        return null;
+    }
+
+    var match = System.Text.RegularExpressions.Regex.Match(commandText, @"\bPIN=([^\s\t]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    return match.Success ? match.Groups[1].Value.Trim() : null;
+}
+
 static void HandleCommandReplies(
     AttendanceService service,
     string payload,
@@ -14478,6 +15254,23 @@ static void HandleCommandReplies(
                     "DeviceAction",
                     $"Failed to process DATA reply: ID={id:N}, serial={serial ?? "unknown"}",
                     ex.Message);
+            }
+        }
+
+        if (string.Equals(cmd, "ENROLL_FP", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(code, "0", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(serial))
+        {
+            var pin = ExtractPinFromCommandText(queuedCommandText);
+            if (!string.IsNullOrWhiteSpace(pin))
+            {
+                service.QueueDeviceCommand(serial, $"DATA QUERY FINGERTMP PIN={pin}");
+                service.QueueDeviceCommand(serial, $"DATA QUERY BIODATA PIN={pin}");
+                addLog?.Invoke(
+                    "INFO",
+                    "Enrollment",
+                    $"ENROLL_FP succeeded for {serial} PIN={pin}; auto-queried fingerprint templates.",
+                    queuedCommandText);
             }
         }
 
@@ -15422,7 +16215,7 @@ static void ApplyMappedDepartmentAndPosition(Employee employee, string? mappedDe
             attendanceLines.AppendLine(line);
         }
 
-        var attendance = HandleAttendancePayload(service, deviceSerialNumber, attendanceLines.ToString(), allowUnknownEmployeeAutoCreate);
+        var attendance = HandleAttendancePayload(service, deviceSerialNumber, attendanceLines.ToString(), allowUnknownEmployeeAutoCreate: false);
         var userInfo = userInfoLines.Length > 0
             ? HandleUserInfoPayload(repository, personnelStore, userInfoLines.ToString(), fallbackDepartment, fallbackPosition, mappedAreaCode, mappedDepartmentCode, allowUnknownEmployeeAutoCreate)
             : 0;
@@ -16000,6 +16793,30 @@ static string MergeFingerprintTemplateJson(string? existingJson, string template
     payload.RemoveAll(entry => entry.FingerIndex == fingerIndex);
     payload.Add(new FingerprintTemplateEntry(fingerIndex, templateData));
     return JsonSerializer.Serialize(payload.OrderBy(static entry => entry.FingerIndex).ToList());
+}
+
+static string RemoveFingerprintFromTemplateJson(string? existingJson, int fingerIndex)
+{
+    if (string.IsNullOrWhiteSpace(existingJson))
+    {
+        return string.Empty;
+    }
+
+    try
+    {
+        var parsed = JsonSerializer.Deserialize<List<FingerprintTemplateEntry>>(existingJson);
+        if (parsed is null)
+        {
+            return string.Empty;
+        }
+
+        parsed.RemoveAll(entry => entry.FingerIndex == fingerIndex);
+        return parsed.Count == 0 ? string.Empty : JsonSerializer.Serialize(parsed.OrderBy(static entry => entry.FingerIndex).ToList());
+    }
+    catch
+    {
+        return string.Empty;
+    }
 }
 
 static string NormalizeBiometricPhotoContent(string content)
@@ -18833,7 +19650,8 @@ internal sealed record EmployeeCreateRequest(
     string? Password,
     int? VerifyMode = null,
     int? GroupId = 1,
-    string? TimezoneProfile = null);
+    string? TimezoneProfile = null,
+    bool? IsActive = true);
 internal sealed record EmployeeUpdateRequest(
     string? EmployeeCode,
     string? FullName,
@@ -18852,6 +19670,7 @@ internal sealed record EmployeeUpdateRequest(
     int? GroupId = null,
     string? TimezoneProfile = null);
 internal sealed record EmployeeDeleteRequest(List<Guid> Ids);
+internal sealed record EmployeeCredentialDeleteRequest(string? EmployeeId, string? EmployeeCode, string CredentialType, List<string>? EmployeeIds = null);
 internal sealed record EmployeeStatusRequest(List<Guid> Ids, bool IsActive);
 internal sealed record EmployeeVerifyModeRequest(List<Guid> Ids, int VerifyMode);
 internal sealed record EmployeeTransferRequest(List<Guid> Ids, List<string>? DepartmentCodes, string? Department = null);
@@ -18910,6 +19729,14 @@ internal sealed record FingerprintEnrollmentRequest(
     string? UserName,
     string? CardNo,
     int? FingerIndex,
+    int? Retry,
+    bool? Overwrite,
+    int? VerifyMode = null);
+internal sealed record CardEnrollmentRequest(
+    string? DeviceSerial,
+    string? UserId,
+    string? UserName,
+    string? CardNo,
     int? Retry,
     bool? Overwrite,
     int? VerifyMode = null);

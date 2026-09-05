@@ -9,6 +9,7 @@ import { initialsFromName, type AuthSession } from "@/components/data/auth-store
 import { useCalendarPreference } from "@/components/date/calendar-context";
 import { formatCalendarDate } from "@/components/date/date-display";
 import { loadAlertFeed, type AlertItem } from "@/lib/alerts";
+import { fetchAppVersion } from "@/components/data/license-client";
 import packageInfo from "@/package.json";
 
 type TopbarProps = {
@@ -53,6 +54,7 @@ export function Topbar({ onToggleSidebar, onLogout, session }: TopbarProps) {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const alertsMenuRef = useRef<HTMLDivElement | null>(null);
+  const branding = useBrandingSettings();
   const activeTab = searchParams.get("tab");
   const cleanPath = pathname !== "/" ? pathname.replace(/\/+$/, "") : "/";
   const title = cleanPath === "/shifts"
@@ -65,11 +67,17 @@ export function Topbar({ onToggleSidebar, onLogout, session }: TopbarProps) {
           : "Shifts"
     : pageTitleMap[cleanPath] ??
       Object.entries(pageTitleMap).find(([path]) => path !== "/" && cleanPath.startsWith(path))?.[1] ??
-      "E-Attendance";
+      (branding.organizationName || "अपन हाजिरी");
   const unread = alerts.length;
   const initials = initialsFromName(session?.fullName || session?.username || "NA");
   const { calendarType, setCalendarType } = useCalendarPreference();
-  const branding = useBrandingSettings();
+  const [appVersion, setAppVersion] = useState(SOFTWARE_VERSION);
+
+  useEffect(() => {
+    fetchAppVersion().then((v) => {
+      if (v) setAppVersion(v);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!profileMenuOpen) {
@@ -330,8 +338,15 @@ export function Topbar({ onToggleSidebar, onLogout, session }: TopbarProps) {
 
                 {aboutOpen ? (
                   <div className="mt-2 rounded-xl border border-[#d9e8f7] bg-[linear-gradient(120deg,#f8fbff,#eef6ff)] px-3 py-3">
+                    <div className="flex items-center gap-2 border-b border-[#d2e4f7] pb-2 mb-2">
+                      <img src="/apan_logo.png" alt="अपन हाजिरी" className="h-6 w-6 object-contain" />
+                      <div>
+                        <p className="text-xs font-bold text-[#103a61] font-nepali leading-tight">अपन हाजिरी</p>
+                        <p className="text-[10px] text-[#5c7a97]">Apan Hajiri</p>
+                      </div>
+                    </div>
                     <p className="mt-1 text-[11px] text-[#5c7a97]">Developer: {DEVELOPER_NAME}</p>
-                    <p className="text-[11px] text-[#5c7a97]">Version: {SOFTWARE_VERSION}</p>
+                    <p className="text-[11px] text-[#5c7a97]">Version: {appVersion}</p>
                     <p className="mt-1 text-[11px] text-[#5c7a97]">{DEVELOPER_PHONE}</p>
                     <p className="text-[11px] text-[#5c7a97] break-all">{DEVELOPER_EMAIL}</p>
                     <p className="text-[11px] text-[#5c7a97] break-all">{DEVELOPER_WEBSITE}</p>
