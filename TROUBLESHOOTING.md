@@ -26,7 +26,7 @@ Get-Content "C:\Program Files\E-Attendance\appsettings.json"
 ```powershell
 $content = '{
   "ConnectionStrings": {
-    "PostgreSQLConnection": "Host=127.0.0.1;Port=1277;Database=E_Attendace;Username=E_Attendace;Password=PB@14891277;Search Path=E_Attendace;Include Error Detail=True;Maximum Pool Size=100;Connection Lifetime=300"
+    "PostgreSQLConnection": "Host=127.0.0.1;Port=1277;Database=E_Attendace;Username=E_Attendace;Password=YOUR_PASSWORD_HERE;Search Path=E_Attendace;Include Error Detail=True;Maximum Pool Size=100;Connection Lifetime=300"
   },
   "DatabaseSettings": {
     "UsePostgreSql": true,
@@ -61,7 +61,7 @@ created but zero tables.
 
 **Diagnosis:**
 ```powershell
-$env:PGPASSWORD = "PB@14891277"
+$env:PGPASSWORD = "YOUR_PASSWORD_HERE"
 & "C:\Program Files\E-Attendance\PostgreSQL\15\bin\psql.exe" -h 127.0.0.1 -p 1277 -U postgres -d "E_Attendace" -c "\dt E_Attendace.*"
 # If output says "Did not find any tables" — the schema bootstrap never ran.
 ```
@@ -201,12 +201,12 @@ or
 | Web UI admin username | `admin` |
 | Web UI admin password | `PB@TechZone` |
 | PostgreSQL superuser | `postgres` |
-| PostgreSQL superuser password | `PB@14891277` |
+| PostgreSQL superuser password | `YOUR_PASSWORD_HERE` |
 | PostgreSQL app user | `E_Attendace` |
-| PostgreSQL app password | `PB@14891277` |
+| PostgreSQL app password | `YOUR_PASSWORD_HERE` |
 | PostgreSQL port | `1277` |
 
-> **Note:** The web UI admin password (`PB@TechZone`) and the PostgreSQL password (`PB@14891277`)
+> **Note:** The web UI admin password (`PB@TechZone`) and the PostgreSQL password (`YOUR_PASSWORD_HERE`)
 > are different. `28P01` errors are always about PostgreSQL authentication, not the web login.
 
 ---
@@ -224,7 +224,7 @@ Get-Service | Where-Object {$_.Name -match "Attend|Postgres"} |
 netstat -ano | Select-String "LISTENING" | Select-String ":8001|:8081|:1277"
 
 # DB connectivity
-$env:PGPASSWORD = "PB@14891277"
+$env:PGPASSWORD = "YOUR_PASSWORD_HERE"
 & "C:\Program Files\E-Attendance\PostgreSQL\15\bin\psql.exe" `
   -h 127.0.0.1 -p 1277 -U "E_Attendace" -d "E_Attendace" -c "SELECT COUNT(*) FROM ""E_Attendace"".""TransactionDetails"";"
 

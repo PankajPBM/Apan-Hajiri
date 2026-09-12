@@ -1,6 +1,6 @@
 param(
     [string]$InstallDir = "C:\Program Files\E-Attendance",
-    [string]$PostgresPassword = "PB@14891277",
+    [string]$PostgresPassword = "YOUR_PASSWORD_HERE",
     [string]$UiAdminPassword = "PB@TechZone"
 )
 

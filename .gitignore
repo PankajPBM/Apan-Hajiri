@@ -23,6 +23,28 @@ installer/*.exe
 installer/exe/
 installer/exe_tmp/
 
+# Environment Variables & Local Configs
+.env
+.env.*
+*.local.json
+appsettings.Development.json
+appsettings.Production.json
+appsettings.Local.json
+
+# Database & SQLite files
+*.db
+*.sqlite
+*.sqlite3
+instance/
+
+# Certificates & Secrets
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+
 # Sensitive: license signing keys / license database — never commit these
 installer/PB_License_Generator/
 

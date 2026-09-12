@@ -1477,7 +1477,7 @@ internal sealed class WebServiceManager
 
     /// <summary>
     /// Initialize the database using the saved admin password, falling back to the known
-    /// default (PB@14891277). No user prompt required. Errors are surfaced as exceptions.
+    /// default (YOUR_PASSWORD_HERE). No user prompt required. Errors are surfaced as exceptions.
     /// </summary>
     public string InitializePostgreSqlDatabaseAuto()
     {
@@ -5450,7 +5450,7 @@ $do$;",
         }
 
         // Base64 fallback keeps password out of plain-text config/UI; env var can override in production.
-        const string fallbackBase64 = "UEJAMTQ4OTEyNzc=";
+        const string fallbackBase64 = "WU9VUl9QQVNTV09SRF9IRVJF"; // YOUR_PASSWORD_HERE
         return Encoding.UTF8.GetString(Convert.FromBase64String(fallbackBase64));
     }
 

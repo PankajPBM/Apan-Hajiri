@@ -17,7 +17,7 @@ if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 $pgBinPath   = "C:\Program Files\E-Attendance\PostgreSQL\15\bin"
 $pgDataPath  = "C:\Program Files\E-Attendance\PostgreSQL\18\data"
 $pgPort      = 1277
-$pgPassword  = "PB@14891277"
+$pgPassword  = "YOUR_PASSWORD_HERE"
 $pgSvcName   = "E-Attendance-PostgreSQL"
 $apiSvcName  = "E-Attendance-API"
 $webSvcName  = "E-Attendance-Web"

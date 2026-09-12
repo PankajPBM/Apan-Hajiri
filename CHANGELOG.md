@@ -60,7 +60,7 @@ Prerequisite runtimes auto-install, PostgreSQL B-Tree index limit fix, and autom
 PostgreSQL connection string and service name alignment fix.
 
 ### Fixed
-- Connection string in `appsettings.json` now includes `Password=PB@14891277` explicitly, so the
+- Connection string in `appsettings.json` now includes `Password=YOUR_PASSWORD_HERE` explicitly, so the
   Windows Service (running as `LocalSystem`/`NetworkService`) never hits `28P01: password
   authentication failed` — the runtime resolver path was silently failing inside a service context
   where the `PB_ATTENDANCE_DB_PASSWORD` environment variable is not available.
@@ -93,7 +93,7 @@ Security, reporting, installer, and versioning hardening.
 - Legacy report endpoints now apply defensive row caps for direct leave, holiday-work, and CSV export
   requests.
 - UI default admin password is consistently `PB@TechZone`; PostgreSQL password remains
-  `PB@14891277`.
+  `YOUR_PASSWORD_HERE`.
 - Installer packaging is faster and smaller by skipping duplicate/precompressed files and avoiding
   the full PostgreSQL installer when portable PostgreSQL is bundled.
 - Version fields are aligned across Web, Controller, frontend package metadata, and installer output.

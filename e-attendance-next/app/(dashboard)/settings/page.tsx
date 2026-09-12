@@ -139,7 +139,7 @@ function formatBackupSize(bytes: number | null): string {
 
 const DEFAULT_ADMIN_USER_ID = "default-admin";
 const DEFAULT_ADMIN_USERNAME = "admin";
-const DEFAULT_ADMIN_PASSWORD = "PB@14891277";
+const DEFAULT_ADMIN_PASSWORD = "YOUR_PASSWORD_HERE";
 const DEFAULT_ADMIN_FULL_NAME = "Admin User";
 let preferredSettingsBase = "";
 

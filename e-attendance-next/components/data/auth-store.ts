@@ -8,7 +8,7 @@ export const AUTH_SESSION_STORAGE_KEY = "pb_attendance_auth_session_v1";
 export const AUTH_SYNC_EVENT = "pb-auth-updated";
 export const DEFAULT_ADMIN_USER_ID = "default-admin";
 export const DEFAULT_ADMIN_USERNAME = "admin";
-export const DEFAULT_ADMIN_PASSWORD = "PB@14891277";
+export const DEFAULT_ADMIN_PASSWORD = "YOUR_PASSWORD_HERE";
 export const DEFAULT_ADMIN_FULL_NAME = "Admin User";
 
 export type UserRole = "Admin" | "Manager" | "Operator";

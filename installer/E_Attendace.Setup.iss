@@ -95,7 +95,7 @@
 
 #define PgServiceName "E_Attendance_PostgreSQL"
 #define PgPort "1277"
-#define PgPassword "PB@14891277"
+#define PgPassword "YOUR_PASSWORD_HERE"
 #define PgInstallSubdir "PostgreSQL\15"
 #define PgDataSubdir "PostgreSQL\15\data"
 
@@ -792,7 +792,7 @@ begin
     '--mode unattended --unattendedmodeui none' +
     ' --prefix "' + InstallDir + '"' +
     ' --datadir "' + DataDir + '"' +
-    ' --superpassword "PB@14891277"' +
+    ' --superpassword "YOUR_PASSWORD_HERE"' +
     ' --serverport 1277' +
     ' --servicename "E_Attendance_PostgreSQL"' +
     ' --create_shortcuts 0' +
@@ -937,7 +937,7 @@ begin
     non-zero exit code so we fall through and build the schema. }
   SaveStringToFile(SqlFile, 'SELECT 1 FROM "E_Attendace"."auth_users" LIMIT 1;', False);
   if Exec('cmd.exe',
-    '/C set PGPASSWORD=PB@14891277 && "' + PsqlExe + '" -h 127.0.0.1 -p 1277 -U postgres -d "E_Attendace" -v ON_ERROR_STOP=1 -f "' + SqlFile + '" >nul 2>&1',
+    '/C set PGPASSWORD=YOUR_PASSWORD_HERE && "' + PsqlExe + '" -h 127.0.0.1 -p 1277 -U postgres -d "E_Attendace" -v ON_ERROR_STOP=1 -f "' + SqlFile + '" >nul 2>&1',
     AppDir, SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0) then
   begin
     Log('Database and core tables already exist. Skipping bootstrap.');
@@ -951,7 +951,7 @@ begin
   SaveStringToFile(SqlFile, Sql, False);
   SetProgressSafe('Creating database...', 'Step 1/3', 91, 100);
   Exec('cmd.exe',
-    '/C set PGPASSWORD=PB@14891277 && "' + PsqlExe + '" -h 127.0.0.1 -p 1277 -U postgres -f "' + SqlFile + '" >nul 2>&1',
+    '/C set PGPASSWORD=YOUR_PASSWORD_HERE && "' + PsqlExe + '" -h 127.0.0.1 -p 1277 -U postgres -f "' + SqlFile + '" >nul 2>&1',
     AppDir, SW_HIDE, ewWaitUntilTerminated, ExitCode);
 
   { Step 2: Schema, user, extensions, search_path }
@@ -959,7 +959,7 @@ begin
     'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";' + #13#10 +
     'CREATE EXTENSION IF NOT EXISTS "pg_trgm";' + #13#10 +
     'DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = ''E_Attendace'') THEN' + #13#10 +
-    '  CREATE USER "E_Attendace" WITH PASSWORD ''PB@14891277''; END IF; END $$;' + #13#10 +
+    '  CREATE USER "E_Attendace" WITH PASSWORD ''YOUR_PASSWORD_HERE''; END IF; END $$;' + #13#10 +
     'GRANT ALL PRIVILEGES ON DATABASE "E_Attendace" TO postgres;' + #13#10 +
     'GRANT CONNECT ON DATABASE "E_Attendace" TO "E_Attendace";' + #13#10 +
     'CREATE SCHEMA IF NOT EXISTS "E_Attendace" AUTHORIZATION "E_Attendace";' + #13#10 +
@@ -971,13 +971,13 @@ begin
   SaveStringToFile(SqlFile, Sql, False);
   SetProgressSafe('Creating database...', 'Step 2/3', 93, 100);
   Exec('cmd.exe',
-    '/C set PGPASSWORD=PB@14891277 && "' + PsqlExe + '" -h 127.0.0.1 -p 1277 -U postgres -d "E_Attendace" -f "' + SqlFile + '" >nul 2>&1',
+    '/C set PGPASSWORD=YOUR_PASSWORD_HERE && "' + PsqlExe + '" -h 127.0.0.1 -p 1277 -U postgres -d "E_Attendace" -f "' + SqlFile + '" >nul 2>&1',
     AppDir, SW_HIDE, ewWaitUntilTerminated, ExitCode);
 
   { Step 3: All required tables with CORRECT schemas + patch columns for existing installs }
   Sql :=
     { Self-create the schema + role first so step 3 works even if step 2 was skipped/failed. }
-    'DO $bs$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = ''E_Attendace'') THEN CREATE USER "E_Attendace" WITH PASSWORD ''PB@14891277''; END IF; END $bs$;' + #13#10 +
+    'DO $bs$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = ''E_Attendace'') THEN CREATE USER "E_Attendace" WITH PASSWORD ''YOUR_PASSWORD_HERE''; END IF; END $bs$;' + #13#10 +
     'CREATE SCHEMA IF NOT EXISTS "E_Attendace" AUTHORIZATION "E_Attendace";' + #13#10 +
     'SET search_path TO "E_Attendace";' + #13#10 +
 
@@ -1607,7 +1607,7 @@ begin
   SaveStringToFile(SqlFile, Sql, False);
   SetProgressSafe('Creating database...', 'Step 3/3: Tables and preset data', 96, 100);
   Exec('cmd.exe',
-    '/C set PGPASSWORD=PB@14891277 && "' + PsqlExe + '" -h 127.0.0.1 -p 1277 -U postgres -d "E_Attendace" -f "' + SqlFile + '" >nul 2>&1',
+    '/C set PGPASSWORD=YOUR_PASSWORD_HERE && "' + PsqlExe + '" -h 127.0.0.1 -p 1277 -U postgres -d "E_Attendace" -f "' + SqlFile + '" >nul 2>&1',
     AppDir, SW_HIDE, ewWaitUntilTerminated, ExitCode);
 
   DeleteFile(SqlFile);

@@ -13045,7 +13045,7 @@ static void EnsureDefaultSoftwareLoginInDb(string connectionString)
     const string defaultFullName = "Admin User";
     const string defaultPassword = "PB@TechZone";
     // All old/wrong default passwords that should be replaced with the correct default
-    const string previousMistakenDefaultPassword = "PB@14891277";
+    const string previousMistakenDefaultPassword = "YOUR_OLD_PASSWORD_HERE";
     const string installerDefaultPassword = "admin"; // installer used md5('admin')
     var defaultPasswordHash = NormalizePasswordHash(defaultPassword);
     var previousMistakenDefaultPasswordHash = NormalizePasswordHash(previousMistakenDefaultPassword);
@@ -13183,7 +13183,7 @@ static void EnsureDefaultSoftwareLoginInDb(string connectionString)
             SET "PasswordHash" = CASE
                     -- Replace if empty
                     WHEN COALESCE(NULLIF(TRIM("E_Attendace"."auth_users"."PasswordHash"), ''), '') = '' THEN EXCLUDED."PasswordHash"
-                    -- Replace old wrong defaults (PB@14891277 and installer's md5('admin'))
+                    -- Replace old wrong defaults (YOUR_OLD_PASSWORD_HERE and installer's md5('admin'))
                     WHEN LOWER(TRIM("E_Attendace"."auth_users"."PasswordHash")) = @previousMistakenDefaultHash THEN EXCLUDED."PasswordHash"
                     WHEN LOWER(TRIM("E_Attendace"."auth_users"."PasswordHash")) = @installerDefaultHash THEN EXCLUDED."PasswordHash"
                     ELSE "E_Attendace"."auth_users"."PasswordHash"
