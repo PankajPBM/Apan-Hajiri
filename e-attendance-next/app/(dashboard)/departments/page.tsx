@@ -74,7 +74,16 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
         return (await response.json()) as T;
       }
       const text = await response.text();
-      lastError = text || `Request failed (${response.status})`;
+      let errorMsg = text;
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === "object") {
+          errorMsg = parsed.message || parsed.error || text;
+        }
+      } catch {
+        // use raw text
+      }
+      lastError = errorMsg || `Request failed (${response.status})`;
     } catch (error) {
       lastError = error instanceof Error ? error.message : "Failed to fetch";
     }
@@ -116,6 +125,42 @@ export default function SetupPage() {
     () => Array.from(new Set(departments.map((d) => d.name.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [departments]
   );
+
+  const areaCodeDuplicate = useMemo(() => {
+    const c = areaForm.code.trim().toLowerCase();
+    if (!c) return null;
+    return areas.find((a) => a.code.trim().toLowerCase() === c) ?? null;
+  }, [areaForm.code, areas]);
+
+  const areaNameDuplicate = useMemo(() => {
+    const n = areaForm.name.trim().toLowerCase();
+    if (!n) return null;
+    return areas.find((a) => a.name.trim().toLowerCase() === n) ?? null;
+  }, [areaForm.name, areas]);
+
+  const deptCodeDuplicate = useMemo(() => {
+    const c = deptForm.code.trim().toLowerCase();
+    if (!c) return null;
+    return departments.find((d) => d.code.trim().toLowerCase() === c) ?? null;
+  }, [deptForm.code, departments]);
+
+  const deptNameDuplicate = useMemo(() => {
+    const n = deptForm.name.trim().toLowerCase();
+    if (!n) return null;
+    return departments.find((d) => d.name.trim().toLowerCase() === n) ?? null;
+  }, [deptForm.name, departments]);
+
+  const positionCodeDuplicate = useMemo(() => {
+    const c = positionForm.code.trim().toLowerCase();
+    if (!c) return null;
+    return positions.find((p) => p.code.trim().toLowerCase() === c) ?? null;
+  }, [positionForm.code, positions]);
+
+  const positionNameDuplicate = useMemo(() => {
+    const n = positionForm.name.trim().toLowerCase();
+    if (!n) return null;
+    return positions.find((p) => p.name.trim().toLowerCase() === n) ?? null;
+  }, [positionForm.name, positions]);
 
   const setSection = (next: SectionKey) => {
     const q = new URLSearchParams(searchParams.toString());
@@ -171,7 +216,14 @@ export default function SetupPage() {
     const code = areaForm.code.trim();
     const name = areaForm.name.trim();
     if (!code || !name) return setError("Area code and name are required.");
+
+    const existingCode = areas.find((a) => a.code.trim().toLowerCase() === code.toLowerCase());
+    if (existingCode) {
+      return setError(`Area code "${code}" already exists (assigned to "${existingCode.name}").`);
+    }
+
     setCreatingArea(true);
+    setError(null);
     try {
       await requestJson("/api/personnel/areas", {
         method: "POST",
@@ -182,14 +234,6 @@ export default function SetupPage() {
       await loadAll();
       void seedAccessControl();
     } catch (err) {
-      const refreshed = await loadAll();
-      const created = refreshed?.areas?.some((area) => area.code.trim().toLowerCase() === code.toLowerCase());
-      if (created) {
-        setAreaForm({ code: "", name: "", remark: "" });
-        setOpenAdd((prev) => ({ ...prev, areas: false }));
-        void seedAccessControl();
-        return;
-      }
       setError(err instanceof Error ? err.message : "Failed to create area.");
     } finally {
       setCreatingArea(false);
@@ -205,6 +249,7 @@ export default function SetupPage() {
     try {
       await requestJson(`/api/personnel/areas/${item.id}`, { method: "PUT", body: JSON.stringify(payload) });
       setEditingAreaId(null);
+      setError(null);
       await loadAll();
       void seedAccessControl();
     } catch (err) {
@@ -219,6 +264,7 @@ export default function SetupPage() {
     if (!confirm(`Are you sure you want to delete area "${item.name}"?`)) return;
     try {
       await requestJson(`/api/personnel/areas/${item.id}`, { method: "DELETE" });
+      setError(null);
       await loadAll();
       void seedAccessControl();
     } catch (err) {
@@ -231,7 +277,14 @@ export default function SetupPage() {
     const code = deptForm.code.trim();
     const name = deptForm.name.trim();
     if (!code || !name) return setError("Department code and name are required.");
+
+    const existingCode = departments.find((d) => d.code.trim().toLowerCase() === code.toLowerCase());
+    if (existingCode) {
+      return setError(`Department code "${code}" already exists (assigned to "${existingCode.name}").`);
+    }
+
     setCreatingDepartment(true);
+    setError(null);
     try {
       await requestJson("/api/personnel/departments", {
         method: "POST",
@@ -248,14 +301,6 @@ export default function SetupPage() {
       await loadAll();
       void seedAccessControl();
     } catch (err) {
-      const refreshed = await loadAll();
-      const created = refreshed?.departments?.some((department) => department.code.trim().toLowerCase() === code.toLowerCase());
-      if (created) {
-        setDeptForm({ code: "", name: "", areaCode: "1", superior: "", manager: "" });
-        setOpenAdd((prev) => ({ ...prev, departments: false }));
-        void seedAccessControl();
-        return;
-      }
       setError(err instanceof Error ? err.message : "Failed to create department.");
     } finally {
       setCreatingDepartment(false);
@@ -279,6 +324,7 @@ export default function SetupPage() {
     try {
       await requestJson(`/api/personnel/departments/${item.id}`, { method: "PUT", body: JSON.stringify(payload) });
       setEditingDeptId(null);
+      setError(null);
       await loadAll();
       void seedAccessControl();
     } catch (err) {
@@ -293,6 +339,7 @@ export default function SetupPage() {
     if (!confirm(`Are you sure you want to delete department "${item.name}"?`)) return;
     try {
       await requestJson(`/api/personnel/departments/${item.id}`, { method: "DELETE" });
+      setError(null);
       await loadAll();
       void seedAccessControl();
     } catch (err) {
@@ -305,7 +352,14 @@ export default function SetupPage() {
     const code = positionForm.code.trim();
     const name = positionForm.name.trim();
     if (!code || !name) return setError("Position code and name are required.");
+
+    const existingCode = positions.find((p) => p.code.trim().toLowerCase() === code.toLowerCase());
+    if (existingCode) {
+      return setError(`Position code "${code}" already exists (assigned to "${existingCode.name}").`);
+    }
+
     setCreatingPosition(true);
+    setError(null);
     try {
       await requestJson("/api/personnel/positions", {
         method: "POST",
@@ -315,13 +369,6 @@ export default function SetupPage() {
       setOpenAdd((prev) => ({ ...prev, positions: false }));
       await loadAll();
     } catch (err) {
-      const refreshed = await loadAll();
-      const created = refreshed?.positions?.some((position) => position.code.trim().toLowerCase() === code.toLowerCase());
-      if (created) {
-        setPositionForm({ code: "", name: "", department: "" });
-        setOpenAdd((prev) => ({ ...prev, positions: false }));
-        return;
-      }
       setError(err instanceof Error ? err.message : "Failed to create position.");
     } finally {
       setCreatingPosition(false);
@@ -338,6 +385,7 @@ export default function SetupPage() {
         body: JSON.stringify({ code, name, department: editingPositionForm.department.trim() }),
       });
       setEditingPositionId(null);
+      setError(null);
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update position.");
@@ -348,6 +396,7 @@ export default function SetupPage() {
     if (!confirm(`Are you sure you want to delete position "${item.name}"?`)) return;
     try {
       await requestJson(`/api/personnel/positions/${item.id}`, { method: "DELETE" });
+      setError(null);
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete position.");
@@ -376,7 +425,11 @@ export default function SetupPage() {
           <button
             type="button"
             onClick={() => setOpenAdd((prev) => ({ ...prev, [section]: !prev[section] }))}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 shadow-xs transition"
+            className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold shadow-xs transition ${
+              openAdd[section]
+                ? "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                : "bg-blue-600 text-white hover:bg-blue-700"
+            }`}
           >
             {openAdd[section] ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
             {openAdd[section] ? "Close Form" : `Add New ${section.slice(0, -1)}`}
@@ -445,8 +498,19 @@ export default function SetupPage() {
       </section>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs font-medium text-rose-700">
-          <span>{error}</span>
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-xs font-medium text-rose-700">
+          <div className="flex items-center gap-2">
+            <span className="text-sm">⚠️</span>
+            <span>{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="rounded p-1 text-rose-500 hover:bg-rose-100 hover:text-rose-800"
+            title="Dismiss error"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
@@ -456,26 +520,50 @@ export default function SetupPage() {
         {section === "areas" && openAdd.areas && (
           <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-blue-900 mb-3">Add New Geographic Area</h3>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12">
+              <div className="lg:col-span-3">
                 <label className="block text-xs font-medium text-slate-700 mb-1">Area Code / ID *</label>
                 <input
                   value={areaForm.code}
-                  onChange={(e) => setAreaForm((p) => ({ ...p, code: e.target.value }))}
+                  onChange={(e) => {
+                    setAreaForm((p) => ({ ...p, code: e.target.value }));
+                    if (error) setError(null);
+                  }}
                   placeholder="e.g. 2"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className={`w-full rounded-lg border bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 ${
+                    areaCodeDuplicate
+                      ? "border-rose-400 focus:border-rose-500 focus:ring-rose-500/20"
+                      : "border-slate-300 focus:ring-blue-500/20"
+                  }`}
                 />
+                {areaCodeDuplicate && (
+                  <p className="mt-1 text-[11px] font-medium text-rose-600">
+                    ⚠️ Code &quot;{areaForm.code}&quot; is already used by &quot;{areaCodeDuplicate.name}&quot;
+                  </p>
+                )}
               </div>
-              <div>
+              <div className="lg:col-span-4">
                 <label className="block text-xs font-medium text-slate-700 mb-1">Area Name *</label>
                 <input
                   value={areaForm.name}
-                  onChange={(e) => setAreaForm((p) => ({ ...p, name: e.target.value }))}
+                  onChange={(e) => {
+                    setAreaForm((p) => ({ ...p, name: e.target.value }));
+                    if (error) setError(null);
+                  }}
                   placeholder="e.g. Branch Office"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className={`w-full rounded-lg border bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 ${
+                    areaNameDuplicate
+                      ? "border-amber-400 focus:border-amber-500 focus:ring-amber-500/20"
+                      : "border-slate-300 focus:ring-blue-500/20"
+                  }`}
                 />
+                {areaNameDuplicate && (
+                  <p className="mt-1 text-[11px] font-medium text-amber-600">
+                    ⚠️ Area name already exists (Code: {areaNameDuplicate.code})
+                  </p>
+                )}
               </div>
-              <div>
+              <div className="lg:col-span-5">
                 <label className="block text-xs font-medium text-slate-700 mb-1">Remark</label>
                 <input
                   value={areaForm.remark}
@@ -495,9 +583,9 @@ export default function SetupPage() {
               </button>
               <button
                 type="button"
-                disabled={creatingArea}
+                disabled={creatingArea || !areaForm.code.trim() || !areaForm.name.trim() || Boolean(areaCodeDuplicate)}
                 onClick={() => void createArea()}
-                className="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                className="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {creatingArea ? "Saving..." : "Save Area"}
               </button>
@@ -509,26 +597,50 @@ export default function SetupPage() {
         {section === "departments" && openAdd.departments && (
           <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-blue-900 mb-3">Add New Department</h3>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12">
+              <div className="lg:col-span-2">
                 <label className="block text-xs font-medium text-slate-700 mb-1">Dept Code *</label>
                 <input
                   value={deptForm.code}
-                  onChange={(e) => setDeptForm((p) => ({ ...p, code: e.target.value }))}
+                  onChange={(e) => {
+                    setDeptForm((p) => ({ ...p, code: e.target.value }));
+                    if (error) setError(null);
+                  }}
                   placeholder="e.g. 2"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className={`w-full rounded-lg border bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 ${
+                    deptCodeDuplicate
+                      ? "border-rose-400 focus:border-rose-500 focus:ring-rose-500/20"
+                      : "border-slate-300 focus:ring-blue-500/20"
+                  }`}
                 />
+                {deptCodeDuplicate && (
+                  <p className="mt-1 text-[11px] font-medium text-rose-600">
+                    ⚠️ Code &quot;{deptForm.code}&quot; is already used by &quot;{deptCodeDuplicate.name}&quot;
+                  </p>
+                )}
               </div>
-              <div>
+              <div className="lg:col-span-4">
                 <label className="block text-xs font-medium text-slate-700 mb-1">Department Name *</label>
                 <input
                   value={deptForm.name}
-                  onChange={(e) => setDeptForm((p) => ({ ...p, name: e.target.value }))}
+                  onChange={(e) => {
+                    setDeptForm((p) => ({ ...p, name: e.target.value }));
+                    if (error) setError(null);
+                  }}
                   placeholder="e.g. Finance"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className={`w-full rounded-lg border bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 ${
+                    deptNameDuplicate
+                      ? "border-amber-400 focus:border-amber-500 focus:ring-amber-500/20"
+                      : "border-slate-300 focus:ring-blue-500/20"
+                  }`}
                 />
+                {deptNameDuplicate && (
+                  <p className="mt-1 text-[11px] font-medium text-amber-600">
+                    ⚠️ Department name already exists (Code: {deptNameDuplicate.code})
+                  </p>
+                )}
               </div>
-              <div>
+              <div className="lg:col-span-3">
                 <label className="block text-xs font-medium text-slate-700 mb-1">Assigned Area</label>
                 <select
                   value={deptForm.areaCode}
@@ -542,7 +654,7 @@ export default function SetupPage() {
                   ))}
                 </select>
               </div>
-              <div>
+              <div className="lg:col-span-3">
                 <label className="block text-xs font-medium text-slate-700 mb-1">Manager / Supervisor</label>
                 <input
                   value={deptForm.manager}
@@ -562,9 +674,9 @@ export default function SetupPage() {
               </button>
               <button
                 type="button"
-                disabled={creatingDepartment}
+                disabled={creatingDepartment || !deptForm.code.trim() || !deptForm.name.trim() || Boolean(deptCodeDuplicate)}
                 onClick={() => void createDepartment()}
-                className="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                className="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {creatingDepartment ? "Saving..." : "Save Department"}
               </button>
@@ -576,26 +688,50 @@ export default function SetupPage() {
         {section === "positions" && openAdd.positions && (
           <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-blue-900 mb-3">Add New Position / Designation</h3>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12">
+              <div className="lg:col-span-3">
                 <label className="block text-xs font-medium text-slate-700 mb-1">Position Code *</label>
                 <input
                   value={positionForm.code}
-                  onChange={(e) => setPositionForm((p) => ({ ...p, code: e.target.value }))}
+                  onChange={(e) => {
+                    setPositionForm((p) => ({ ...p, code: e.target.value }));
+                    if (error) setError(null);
+                  }}
                   placeholder="e.g. ACC-01"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className={`w-full rounded-lg border bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 ${
+                    positionCodeDuplicate
+                      ? "border-rose-400 focus:border-rose-500 focus:ring-rose-500/20"
+                      : "border-slate-300 focus:ring-blue-500/20"
+                  }`}
                 />
+                {positionCodeDuplicate && (
+                  <p className="mt-1 text-[11px] font-medium text-rose-600">
+                    ⚠️ Code &quot;{positionForm.code}&quot; is already used by &quot;{positionCodeDuplicate.name}&quot;
+                  </p>
+                )}
               </div>
-              <div>
+              <div className="lg:col-span-5">
                 <label className="block text-xs font-medium text-slate-700 mb-1">Position Title *</label>
                 <input
                   value={positionForm.name}
-                  onChange={(e) => setPositionForm((p) => ({ ...p, name: e.target.value }))}
+                  onChange={(e) => {
+                    setPositionForm((p) => ({ ...p, name: e.target.value }));
+                    if (error) setError(null);
+                  }}
                   placeholder="e.g. Senior Accountant"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className={`w-full rounded-lg border bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 ${
+                    positionNameDuplicate
+                      ? "border-amber-400 focus:border-amber-500 focus:ring-amber-500/20"
+                      : "border-slate-300 focus:ring-blue-500/20"
+                  }`}
                 />
+                {positionNameDuplicate && (
+                  <p className="mt-1 text-[11px] font-medium text-amber-600">
+                    ⚠️ Position title already exists (Code: {positionNameDuplicate.code})
+                  </p>
+                )}
               </div>
-              <div>
+              <div className="lg:col-span-4">
                 <label className="block text-xs font-medium text-slate-700 mb-1">Department</label>
                 <select
                   value={positionForm.department}
@@ -621,9 +757,9 @@ export default function SetupPage() {
               </button>
               <button
                 type="button"
-                disabled={creatingPosition}
+                disabled={creatingPosition || !positionForm.code.trim() || !positionForm.name.trim() || Boolean(positionCodeDuplicate)}
                 onClick={() => void createPosition()}
-                className="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                className="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {creatingPosition ? "Saving..." : "Save Position"}
               </button>
