@@ -2010,6 +2010,8 @@ export default function DevicesPage() {
     await withErrorHandling(() => runControlActionForSerial(current.serial, action))();
   };
 
+  const [cancellingCommandId, setCancellingCommandId] = useState<string | null>(null);
+
   const clearPending = async (serial: string, reload = true) => {
     try {
       await requestJson(`/api/devices/${encodeURIComponent(serial)}/commands/clear`, { method: "POST" });
@@ -2021,6 +2023,22 @@ export default function DevicesPage() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to clear pending commands.");
+    }
+  };
+
+  const cancelSingleCommand = async (commandId: string) => {
+    if (!selectedSerial || cancellingCommandId) return;
+    setCancellingCommandId(commandId);
+    try {
+      await requestJson(`/api/devices/${encodeURIComponent(selectedSerial)}/commands/${encodeURIComponent(commandId)}`, {
+        method: "DELETE",
+      });
+      await loadCommands();
+      await loadManaged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel command.");
+    } finally {
+      setCancellingCommandId(null);
     }
   };
 
@@ -3501,14 +3519,36 @@ export default function DevicesPage() {
               <div className="flex items-center gap-2">
                 <ListChecks className="h-5 w-5 text-blue-600" />
                 <h2 className="text-base font-bold text-slate-900">Command Queue & History</h2>
+                {commands.length > 0 && (
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 border border-slate-200">
+                    {commands.length}
+                  </span>
+                )}
               </div>
-              <button
-                type="button"
-                onClick={() => setCommandQueueOpen(false)}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {commands.filter((c) => c.status === "pending").length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const count = commands.filter((c) => c.status === "pending").length;
+                      if (!confirm(`Cancel all ${count} pending command(s) waiting for ${selectedSerial}?`)) return;
+                      void clearPending(selectedSerial, true);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition shadow-2xs"
+                    title="Cancel all pending commands for this device"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Cancel All Pending ({commands.filter((c) => c.status === "pending").length})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setCommandQueueOpen(false)}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             <div className="grid gap-2.5 md:grid-cols-[1fr_1fr_auto]">
@@ -3556,88 +3596,111 @@ export default function DevicesPage() {
                     key={item.id}
                     className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs transition hover:border-slate-300"
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-200">
-                          {item.commandText}
-                        </span>
-                        <span className="text-[11px] text-slate-500">
-                          {formatCalendarDateTime(item.createdUtc, calendarType)}
-                        </span>
-                      </div>
-                      <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${
-                          item.status === "replied"
-                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                            : item.status === "sent"
-                            ? "bg-blue-50 text-blue-700 border-blue-200"
-                            : "bg-amber-50 text-amber-700 border-amber-200"
-                        }`}
-                      >
-                        {item.status}
-                      </span>
-                    </div>
-
-                    {item.replyText ? (
-                      <div className="mt-2.5 space-y-2 border-t border-slate-100 pt-2.5">
-                        {parsed && parsed.isParsed && parsed.summary.length > 0 ? (
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {parsed.summary.map((chip, idx) => (
-                              <span
-                                key={idx}
-                                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium ${
-                                  chip.highlight
-                                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                                    : "bg-slate-100 text-slate-700 border border-slate-200"
-                                }`}
-                              >
-                                <span className="font-semibold text-slate-500">{chip.label}:</span>
-                                <span>{chip.value}</span>
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-
-                        <div className="flex items-center justify-between pt-0.5">
-                          <button
-                            type="button"
-                            onClick={() => toggleCommandExpand(item.id)}
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition"
-                          >
-                            <ChevronDown
-                              className={`h-3.5 w-3.5 transition-transform duration-200 ${
-                                isExpanded ? "rotate-180" : ""
-                              }`}
-                            />
-                            <span>{isExpanded ? "Hide raw payload" : "View raw payload"}</span>
-                            {parsed && parsed.isParsed && !isExpanded ? (
-                              <span className="text-[10px] text-slate-400 font-normal">
-                                ({parsed.totalPairs} parameters)
-                              </span>
-                            ) : null}
-                          </button>
-
-                          {isExpanded ? (
-                            <button
-                              type="button"
-                              onClick={() => void copyToClipboard(item.id, item.replyText || "")}
-                              className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50 transition"
-                            >
-                              {isCopied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3 text-slate-500" />}
-                              <span>{isCopied ? "Copied" : "Copy"}</span>
-                            </button>
-                          ) : null}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 max-w-full truncate" title={item.commandText}>
+                            {item.commandText.length > 55 ? item.commandText.slice(0, 55) + "..." : item.commandText}
+                          </span>
+                          <span className="text-[11px] text-slate-500 whitespace-nowrap">
+                            {formatCalendarDateTime(item.createdUtc, calendarType)}
+                          </span>
                         </div>
 
-                        {isExpanded ? (
-                          <div className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-[11px] font-mono text-emerald-400 break-all leading-relaxed max-h-48 overflow-y-auto">
-                            {item.replyText}
+                        {item.commandText.length > 55 ? (
+                          <div className="my-1.5 text-[11px] font-mono text-slate-600 bg-slate-50 border border-slate-200/80 rounded px-2.5 py-1.5 break-all select-all leading-relaxed">
+                            {item.commandText}
                           </div>
                         ) : null}
+
+                        {item.replyText ? (
+                          <div className="mt-2.5 space-y-2 border-t border-slate-100 pt-2.5">
+                            {parsed && parsed.isParsed && parsed.summary.length > 0 ? (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {parsed.summary.map((chip, idx) => (
+                                  <span
+                                    key={idx}
+                                    className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium ${
+                                      chip.highlight
+                                        ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                        : "bg-slate-100 text-slate-700 border border-slate-200"
+                                    }`}
+                                  >
+                                    <span className="font-semibold text-slate-500">{chip.label}:</span>
+                                    <span>{chip.value}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            <div className="flex items-center justify-between pt-0.5">
+                              <button
+                                type="button"
+                                onClick={() => toggleCommandExpand(item.id)}
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition"
+                              >
+                                <ChevronDown
+                                  className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                                    isExpanded ? "rotate-180" : ""
+                                  }`}
+                                />
+                                <span>{isExpanded ? "Hide raw payload" : "View raw payload"}</span>
+                                {parsed && parsed.isParsed && !isExpanded ? (
+                                  <span className="text-[10px] text-slate-400 font-normal">
+                                    ({parsed.totalPairs} parameters)
+                                  </span>
+                                ) : null}
+                              </button>
+
+                              {isExpanded ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void copyToClipboard(item.id, item.replyText || "")}
+                                  className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50 transition"
+                                >
+                                  {isCopied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3 text-slate-500" />}
+                                  <span>{isCopied ? "Copied" : "Copy"}</span>
+                                </button>
+                              ) : null}
+                            </div>
+
+                            {isExpanded ? (
+                              <div className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-[11px] font-mono text-emerald-400 break-all leading-relaxed max-h-48 overflow-y-auto">
+                                {item.replyText}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="mt-1 text-[11px] text-slate-400 italic">Awaiting device response...</p>
+                        )}
                       </div>
-                    ) : (
-                      <p className="mt-1 text-[11px] text-slate-400 italic">Awaiting device response...</p>
-                    )}
+
+                      <div className="shrink-0 flex items-center gap-2 pt-0.5">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${
+                            item.status === "replied"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : item.status === "sent"
+                              ? "bg-blue-50 text-blue-700 border-blue-200"
+                              : "bg-amber-50 text-amber-700 border-amber-200"
+                          }`}
+                        >
+                          {item.status}
+                        </span>
+
+                        {item.status === "pending" && (
+                          <button
+                            type="button"
+                            disabled={cancellingCommandId === item.id}
+                            onClick={() => void cancelSingleCommand(item.id)}
+                            className="inline-flex items-center justify-center h-6 w-6 rounded-md border border-slate-200 bg-white text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition disabled:opacity-50"
+                            title="Cancel this pending command"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 );
               })}

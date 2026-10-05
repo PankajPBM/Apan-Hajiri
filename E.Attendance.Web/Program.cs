@@ -5668,6 +5668,23 @@ app.MapPost("/api/devices/{serial}/commands/clear", (string serial) =>
     return Results.Ok(new { success = true, cleared });
 });
 
+app.MapDelete("/api/devices/{serial}/commands/{id:guid}", (string serial, Guid id) =>
+{
+    if (!serverRunning)
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    var deleted = service.DeleteDeviceCommand(id);
+    if (deleted)
+    {
+        AddLog("INFO", "Command", $"Deleted command {id} for {serial}");
+        return Results.Ok(new { success = true, id });
+    }
+
+    return Results.NotFound(new { success = false, message = "Command not found." });
+});
+
 app.MapPost("/api/devices/{serial}/commands/force-poll", async (string serial) =>
 {
     if (!serverRunning)

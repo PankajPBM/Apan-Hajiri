@@ -601,6 +601,9 @@ public sealed class AttendanceService : IAttendanceService
         return _repository.ClearPendingCommands(deviceSerialNumber.Trim());
     }
 
+    public bool DeleteDeviceCommand(Guid commandId)
+        => _repository.DeleteDeviceCommand(commandId);
+
     public int ResetStaleSentCommands(string deviceSerialNumber, int olderThanMinutes)
     {
         if (string.IsNullOrWhiteSpace(deviceSerialNumber))

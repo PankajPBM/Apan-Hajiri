@@ -1299,6 +1299,15 @@ public sealed class SqliteAttendanceRepository : IAttendanceRepository
         });
     }
 
+    public bool DeleteDeviceCommand(Guid commandId)
+    {
+        var sql = $"DELETE FROM DeviceCommands WHERE Id = {SqlUuid("$id")}";
+        return Execute(sql, db =>
+        {
+            db.Parameters.AddWithValue("$id", GuidParam(commandId));
+        }) > 0;
+    }
+
     public int ResetStaleSentCommands(string deviceSerialNumber, int olderThanMinutes)
     {
         // Commands delivered but never replied to stay stuck forever because GetPendingCommands

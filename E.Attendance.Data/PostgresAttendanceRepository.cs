@@ -67,6 +67,7 @@ public sealed class PostgresAttendanceRepository : IAttendanceRepository
     public void MarkCommandSent(Guid commandId) => _inner.MarkCommandSent(commandId);
     public void SaveCommandReply(Guid commandId, string replyText) => _inner.SaveCommandReply(commandId, replyText);
     public int ClearPendingCommands(string deviceSerialNumber) => _inner.ClearPendingCommands(deviceSerialNumber);
+    public bool DeleteDeviceCommand(Guid commandId) => _inner.DeleteDeviceCommand(commandId);
     public int ResetStaleSentCommands(string deviceSerialNumber, int olderThanMinutes) => _inner.ResetStaleSentCommands(deviceSerialNumber, olderThanMinutes);
 
     // Sync Logs

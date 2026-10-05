@@ -139,6 +139,11 @@ public sealed class InMemoryAttendanceRepository : IAttendanceRepository
             c.DeviceSerialNumber.Equals(deviceSerialNumber, StringComparison.OrdinalIgnoreCase));
     }
 
+    public bool DeleteDeviceCommand(Guid commandId)
+    {
+        return _commands.RemoveAll(c => c.Id == commandId) > 0;
+    }
+
     public int ResetStaleSentCommands(string deviceSerialNumber, int olderThanMinutes)
     {
         var threshold = DateTime.UtcNow.AddMinutes(-olderThanMinutes);

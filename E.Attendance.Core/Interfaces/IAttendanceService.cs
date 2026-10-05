@@ -56,6 +56,7 @@ public interface IAttendanceService
     void MarkCommandSent(Guid commandId);
     void RecordCommandReply(Guid commandId, string replyText);
     int ClearPendingCommands(string deviceSerialNumber);
+    bool DeleteDeviceCommand(Guid commandId);
     int ResetStaleSentCommands(string deviceSerialNumber, int olderThanMinutes);
     SyncLog AddSyncLog(string deviceSerialNumber, SyncType type, string commandText, SyncStatus status = SyncStatus.Pending);
     IReadOnlyList<SyncLog> GetSyncLogs(string deviceSerialNumber, int maxCount);

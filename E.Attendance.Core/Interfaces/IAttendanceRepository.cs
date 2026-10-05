@@ -59,6 +59,7 @@ public interface IAttendanceRepository
     void MarkCommandSent(Guid commandId);
     void SaveCommandReply(Guid commandId, string replyText);
     int ClearPendingCommands(string deviceSerialNumber);
+    bool DeleteDeviceCommand(Guid commandId);
     int ResetStaleSentCommands(string deviceSerialNumber, int olderThanMinutes);
 
     // Sync Logs
