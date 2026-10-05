@@ -10,9 +10,20 @@ internal static class Program
     private const string SetPortsArgument = "--set-ports";
     private const string InstallServicesArgument = "--install-services";
 
+    [System.Runtime.InteropServices.DllImport("shell32.dll", SetLastError = true)]
+    private static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string AppID);
+
     [STAThread]
     private static void Main()
     {
+        try
+        {
+            SetCurrentProcessExplicitAppUserModelID("PBTechZone.ApanHajiri.ServiceController");
+        }
+        catch
+        {
+        }
+
         AppDomain.CurrentDomain.UnhandledException += static (sender, e) =>
         {
             AppEventLogger.LogFatal("ServiceController", "Unhandled fatal exception occurred in Service Controller.", e.ExceptionObject as Exception);
@@ -237,8 +248,8 @@ internal static class Program
         catch
         {
             MessageBox.Show(
-                "Administrator permission is required to run E-Attendance Service.",
-                "E_Att_Service",
+                "Administrator permission is required to run Apan Hajiri Service.",
+                "Apan Hajiri",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
         }
