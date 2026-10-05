@@ -1264,7 +1264,7 @@ export default function ReportsPage() {
   const defaultFromDate = useMemo(() => currentMonthStartForCalendar(calendarType), [calendarType]);
   const defaultToDate = useMemo(() => currentMonthEndForCalendar(calendarType), [calendarType]);
 
-  const [reportType, setReportType] = useState<ReportType>("daily");
+  const [reportType, setReportType] = useState<ReportType>("monthlyCheckInOut");
   const [fromDate, setFromDate] = useState(defaultFromDate);
   const [toDate, setToDate] = useState(defaultToDate);
   const [department, setDepartment] = useState("all");
@@ -2269,7 +2269,7 @@ export default function ReportsPage() {
     setStatus("all");
     setShift("assigned");
     setSearch("");
-    setReportType("daily");
+    setReportType("monthlyCheckInOut");
   };
 
   const generateReport = useCallback(async () => {
