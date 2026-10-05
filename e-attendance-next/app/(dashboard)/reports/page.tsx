@@ -995,18 +995,25 @@ function openPrintable(
     }
 
     @media print {
-      body {
+      html, body {
         background: transparent !important;
         margin: 0 !important;
         padding: 0 !important;
+        height: auto !important;
+        min-height: 0 !important;
+        overflow: visible !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
       .toolbar { display: none !important; }
       .canvas-wrap {
         padding: 0 !important;
+        margin: 0 !important;
         display: block !important;
-        min-height: auto !important;
+        height: auto !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        overflow: visible !important;
         gap: 0 !important;
       }
       .paper-sheet {
@@ -1016,23 +1023,27 @@ function openPrintable(
         margin: 0 !important;
         width: 100% !important;
         max-width: none !important;
+        height: auto !important;
+        min-height: 0 !important;
+        overflow: visible !important;
       }
       .employee-sheet {
-        page-break-before: always !important;
-        page-break-after: always !important;
-        page-break-inside: avoid !important;
-        break-before: page !important;
-        break-after: page !important;
-        break-inside: avoid !important;
         box-sizing: border-box !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        page-break-after: auto !important;
+        break-after: auto !important;
+        height: auto !important;
+        min-height: 0 !important;
       }
       .employee-sheet:first-of-type {
         page-break-before: avoid !important;
         break-before: avoid !important;
       }
-      .employee-sheet:last-of-type {
-        page-break-after: avoid !important;
-        break-after: avoid !important;
+      .employee-sheet:not(:first-of-type),
+      .sec-break {
+        page-break-before: always !important;
+        break-before: page !important;
       }
     }
   </style>
@@ -1189,7 +1200,7 @@ function openPrintable(
         });
 
         var onePagePrintCss = isOnePage ? (
-          '  .employee-sheet { height: 100vh !important; max-height: 100vh !important; overflow: hidden !important; }' +
+          '  .employee-sheet { page-break-inside: avoid !important; break-inside: avoid !important; height: auto !important; max-height: none !important; overflow: visible !important; }' +
           '  .one-page-fit table { font-size: ' + (density === 'compact' ? '8.5px' : '9.5px') + ' !important; }' +
           '  .one-page-fit th, .one-page-fit td { padding: ' + (density === 'compact' ? '1.5px 3px' : '2.5px 4px') + ' !important; line-height: 1.15 !important; }' +
           '  .one-page-fit .sec-meta { margin: 2px 0 5px 0 !important; padding: 4px 8px !important; font-size: 10px !important; }' +
