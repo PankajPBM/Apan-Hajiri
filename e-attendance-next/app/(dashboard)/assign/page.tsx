@@ -3,7 +3,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Building2, Check, ClipboardCheck, UserCheck, Users, UsersRound } from "lucide-react";
+import {
+  Building2,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardCheck,
+  Filter,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  UserCheck,
+  Users,
+  UsersRound,
+  X,
+} from "lucide-react";
 import { resolveApiBases } from "@/lib/api-bases";
 import { BsDateField } from "@/components/date/dual-date-input";
 import { useCalendarPreference } from "@/components/date/calendar-context";
@@ -190,6 +206,9 @@ export default function AssignPage() {
     isActive: true,
   });
   const [groupSearch, setGroupSearch] = useState("");
+  const [groupDeptFilter, setGroupDeptFilter] = useState("");
+  const [groupMemberPage, setGroupMemberPage] = useState(1);
+  const GROUP_MEMBER_PAGE_SIZE = 12;
   const [groupMembersOpen, setGroupMembersOpen] = useState(false);
 
   useEffect(() => {
@@ -245,12 +264,22 @@ export default function AssignPage() {
 
   const filteredGroupMembers = useMemo(() => {
     const search = groupSearch.trim().toLowerCase();
-    if (!search) return activeEmployees;
+    const dept = groupDeptFilter.trim().toLowerCase();
     return activeEmployees.filter((e) => {
+      if (dept && (e.department || "").toLowerCase() !== dept) return false;
+      if (!search) return true;
       const text = `${e.fullName} ${e.employeeCode} ${e.department}`.toLowerCase();
       return text.includes(search);
     });
-  }, [activeEmployees, groupSearch]);
+  }, [activeEmployees, groupSearch, groupDeptFilter]);
+
+  const totalGroupMemberPages = Math.max(1, Math.ceil(filteredGroupMembers.length / GROUP_MEMBER_PAGE_SIZE));
+  const currentGroupMemberPage = Math.min(groupMemberPage, totalGroupMemberPages);
+
+  const paginatedGroupMembers = useMemo(() => {
+    const start = (currentGroupMemberPage - 1) * GROUP_MEMBER_PAGE_SIZE;
+    return filteredGroupMembers.slice(start, start + GROUP_MEMBER_PAGE_SIZE);
+  }, [filteredGroupMembers, currentGroupMemberPage]);
 
   const lastDefaultRangeRef = useRef(yearRange);
   const autoAssignedRef = useRef(false);
@@ -971,82 +1000,160 @@ export default function AssignPage() {
         ) : null}
 
         {viewMode === "groups" ? (
-          <div className="space-y-4">
-            <div className="rounded-lg border border-[--border] p-3">
-              <div className="mb-2 text-sm font-semibold">Group Setup</div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <label className="grid gap-1 text-xs text-[--muted-foreground]">
-                  <span className="text-sm font-medium text-[#1f4f79]">Group Name</span>
+          <div className="space-y-5">
+            {/* 1. Group Setup Card */}
+            <div className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs">
+              <div className="mb-4 flex flex-col gap-1 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {groupForm.id ? "Edit Custom Group" : "Create Custom Group"}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Group employees across different branches or departments for flexible shift scheduling.
+                  </p>
+                </div>
+                {groupForm.id ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 border border-blue-200">
+                    Editing ID: {groupForm.id}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-12 items-start">
+                <div className="sm:col-span-8">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Group Name *
+                  </label>
                   <input
                     value={groupForm.name}
                     onChange={(e) => setGroupForm((p) => ({ ...p, name: e.target.value }))}
-                    placeholder="e.g. Night Security"
-                    className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]"
+                    placeholder="e.g. Night Security Team"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                   />
-                </label>
-                <label className="grid gap-1 rounded-lg border border-[--input] px-3 py-2 text-xs text-[--muted-foreground]">
-                  <span className="flex items-center gap-2 text-sm font-medium text-[#1f4f79]">
+                </div>
+
+                <div className="sm:col-span-4">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Status
+                  </label>
+                  <label className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50/60 p-2 cursor-pointer hover:bg-slate-100/60 transition">
                     <input
                       type="checkbox"
                       checked={groupForm.isActive}
                       onChange={(e) => setGroupForm((p) => ({ ...p, isActive: e.target.checked }))}
+                      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                     />
-                    Active Group
-                  </span>
-                  <span>Inactive groups will not assign shifts.</span>
-                </label>
+                    <div className="min-w-0">
+                      <span className="text-xs font-bold text-slate-800">
+                        {groupForm.isActive ? "Active Group" : "Inactive Group"}
+                      </span>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        {groupForm.isActive ? "Eligible for shift assignments" : "Disabled from shifts"}
+                      </p>
+                    </div>
+                  </label>
+                </div>
               </div>
-              <div className="mt-3 rounded-lg border border-[--input] bg-[#fbfdff] p-3">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-sm font-semibold text-[#1f4f79]">Group Members</div>
+
+              {/* Group Members Sub-Panel */}
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/70 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <Users className="h-4 w-4 text-blue-600" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                      Group Members
+                    </span>
+                    <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold border transition ${
+                      groupForm.memberEmployeeCodes.length > 0
+                        ? "bg-blue-100 text-blue-800 border-blue-200"
+                        : "bg-slate-100 text-slate-600 border-slate-200"
+                    }`}>
+                      {groupForm.memberEmployeeCodes.length} selected
+                    </span>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => setGroupMembersOpen((prev) => !prev)}
-                    className="rounded-lg border border-[#c8dbf0] bg-white px-3 py-1 text-xs font-semibold text-[#1f5c8f]"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition"
                   >
-                    {groupMembersOpen ? "Hide Members" : "Select Members"}
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${groupMembersOpen ? "rotate-180" : ""}`} />
+                    {groupMembersOpen ? "Hide Member Picker" : "Select Members"}
                   </button>
                 </div>
-                <div className="text-xs text-[#5f7f9f]">
-                  Selected: {groupForm.memberEmployeeCodes.length}
-                </div>
+
                 {groupMembersOpen ? (
-                  <>
-                    <div className="mt-2 flex flex-wrap items-end gap-2">
-                      <label className="grid min-w-[220px] flex-1 gap-1 text-xs text-[--muted-foreground]">
-                        <span className="text-sm font-medium text-[#1f4f79]">Search</span>
+                  <div className="mt-3 space-y-3">
+                    {/* Search & Department Filters Toolbar */}
+                    <div className="grid gap-2 sm:grid-cols-12 items-center">
+                      <div className="sm:col-span-5 relative">
+                        <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
                         <input
                           value={groupSearch}
-                          onChange={(e) => setGroupSearch(e.target.value)}
-                          placeholder="Search employee..."
-                          className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]"
+                          onChange={(e) => {
+                            setGroupSearch(e.target.value);
+                            setGroupMemberPage(1);
+                          }}
+                          placeholder="Search by name or code..."
+                          className="w-full rounded-lg border border-slate-300 bg-white pl-8 pr-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                         />
-                      </label>
-                      <div className="flex flex-wrap gap-2">
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <select
+                          value={groupDeptFilter}
+                          onChange={(e) => {
+                            setGroupDeptFilter(e.target.value);
+                            setGroupMemberPage(1);
+                          }}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        >
+                          <option value="">All Departments ({activeEmployees.length})</option>
+                          {deptOptions.map((d) => (
+                            <option key={d.id} value={d.name.toLowerCase()}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-4 flex justify-end gap-1.5">
                         <button
                           type="button"
-                          onClick={() => setGroupForm((p) => ({
-                            ...p,
-                            memberEmployeeCodes: activeEmployees.map((e) => e.employeeCode),
-                          }))}
-                          className="rounded-lg border border-[#c8dbf0] bg-white px-3 py-2 text-xs text-[#1f5c8f]"
+                          onClick={() => {
+                            const filteredCodes = filteredGroupMembers.map((e) => e.employeeCode);
+                            setGroupForm((p) => ({
+                              ...p,
+                              memberEmployeeCodes: Array.from(new Set([...p.memberEmployeeCodes, ...filteredCodes])),
+                            }));
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition shadow-2xs"
                         >
-                          Select All
+                          <Check className="h-3 w-3" /> Select Filtered ({filteredGroupMembers.length})
                         </button>
                         <button
                           type="button"
                           onClick={() => setGroupForm((p) => ({ ...p, memberEmployeeCodes: [] }))}
-                          className="rounded-lg border border-[#e2a6a6] bg-white px-3 py-2 text-xs text-[#a33a3a]"
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition shadow-2xs"
                         >
-                          Clear
+                          <X className="h-3 w-3" /> Clear
                         </button>
                       </div>
                     </div>
-                    <div className="mt-2 grid gap-2 rounded-lg border border-[--input] bg-white p-2 sm:grid-cols-2 xl:grid-cols-3">
-                      {filteredGroupMembers.map((emp) => {
+
+                    {/* Member Cards Grid */}
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 max-h-80 overflow-y-auto pr-1">
+                      {paginatedGroupMembers.map((emp) => {
                         const checked = groupForm.memberEmployeeCodes.includes(emp.employeeCode);
                         return (
-                          <label key={emp.employeeCode} className="flex items-start gap-2 rounded-md px-2 py-1 text-xs text-[#355a7a] hover:bg-[#f3f8ff]">
+                          <label
+                            key={emp.employeeCode}
+                            className={`flex items-center gap-2.5 rounded-xl border p-2.5 cursor-pointer transition select-none ${
+                              checked
+                                ? "border-blue-500 bg-blue-50/50 shadow-2xs ring-1 ring-blue-500/20"
+                                : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50"
+                            }`}
+                          >
                             <input
                               type="checkbox"
                               checked={checked}
@@ -1061,79 +1168,152 @@ export default function AssignPage() {
                                   return { ...p, memberEmployeeCodes: Array.from(next) };
                                 });
                               }}
+                              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                             />
-                            <span className="break-words">{emp.fullName} ({emp.employeeCode})</span>
-                            <span className="ml-auto break-words text-[10px] text-[#7b94ad]">{emp.department}</span>
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-bold text-slate-600 border border-slate-200">
+                              {emp.fullName.slice(0, 1).toUpperCase()}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-semibold text-slate-900 truncate" title={`${emp.fullName} (#${emp.employeeCode})`}>
+                                {emp.fullName}
+                                <span className="ml-1 text-[10px] font-mono text-slate-500">#{emp.employeeCode}</span>
+                              </div>
+                              <div className="text-[10px] text-slate-400 truncate" title={emp.department}>
+                                {emp.department || "No Department"}
+                              </div>
+                            </div>
                           </label>
                         );
                       })}
                       {filteredGroupMembers.length === 0 ? (
-                        <div className="px-2 py-3 text-xs text-[#7b94ad]">No employees match this search.</div>
+                        <div className="col-span-full py-8 text-center text-xs text-slate-500">
+                          No employees match this search or department filter.
+                        </div>
                       ) : null}
                     </div>
-                  </>
+
+                    {/* Member Pagination Controls */}
+                    {filteredGroupMembers.length > GROUP_MEMBER_PAGE_SIZE ? (
+                      <div className="flex items-center justify-between border-t border-slate-200/70 pt-2 text-xs text-slate-500">
+                        <span>
+                          Showing {(currentGroupMemberPage - 1) * GROUP_MEMBER_PAGE_SIZE + 1}–{Math.min(currentGroupMemberPage * GROUP_MEMBER_PAGE_SIZE, filteredGroupMembers.length)} of {filteredGroupMembers.length} employees
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={currentGroupMemberPage <= 1}
+                            onClick={() => setGroupMemberPage((p) => Math.max(1, p - 1))}
+                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                          >
+                            <ChevronLeft className="h-3.5 w-3.5" /> Prev
+                          </button>
+                          <span className="px-2 font-semibold text-slate-800">
+                            {currentGroupMemberPage} / {totalGroupMemberPages}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={currentGroupMemberPage >= totalGroupMemberPages}
+                            onClick={() => setGroupMemberPage((p) => Math.min(totalGroupMemberPages, p + 1))}
+                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                          >
+                            Next <ChevronRight className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={groupSaving}
-                  onClick={handleSaveGroup}
-                  className="rounded-lg bg-[--primary] px-4 py-2 text-sm font-medium text-[--primary-foreground] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {groupSaving ? "Saving..." : groupForm.id ? "Update Group" : "Save Group"}
-                </button>
+
+              {/* Form Action Buttons */}
+              <div className="mt-5 flex items-center justify-end gap-2.5">
                 {groupForm.id ? (
                   <button
                     type="button"
                     onClick={() => setGroupForm({ id: null, name: "", memberEmployeeCodes: [], isActive: true })}
-                    className="rounded-lg border border-[--border] bg-white px-4 py-2 text-sm text-[#355a7a]"
+                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition"
                   >
-                    New Group
+                    Cancel Edit
                   </button>
                 ) : null}
+                <button
+                  type="button"
+                  disabled={groupSaving || !groupForm.name.trim()}
+                  onClick={handleSaveGroup}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-5 py-2 text-xs font-bold text-white hover:bg-blue-700 shadow-xs transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Check className="h-4 w-4" />
+                  {groupSaving ? "Saving Group..." : groupForm.id ? "Update Group" : "Save Group"}
+                </button>
               </div>
             </div>
 
-            <div className="rounded-lg border border-[--border] p-3">
-              <div className="mb-2 text-sm font-semibold">Group List</div>
-              <div className="overflow-x-auto rounded-lg border border-[--border]">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="bg-[#f7fbff] text-xs uppercase text-[--muted-foreground]">
+            {/* 2. Group List Table Card */}
+            <div className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs">
+              <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-slate-900">Custom Group List</h3>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 border border-slate-200">
+                    {shiftGroups.length}
+                  </span>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
                     <tr>
-                      <th className="px-3 py-2">Group</th>
-                      <th className="px-3 py-2">Members</th>
-                      <th className="px-3 py-2">Status</th>
-                      <th className="px-3 py-2">Actions</th>
+                      <th className="px-4 py-3">Group Name</th>
+                      <th className="px-4 py-3">Members</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-100">
                     {shiftGroups.map((group) => (
-                      <tr key={group.id} className="border-t border-[--border]">
-                        <td className="px-3 py-2">
-                          <div className="font-medium">{group.name}</div>
-                          <div className="text-xs text-[--muted-foreground]">{group.id}</div>
+                      <tr key={group.id} className="hover:bg-slate-50/70 transition">
+                        <td className="px-4 py-3 font-semibold text-slate-900">
+                          {group.name}
                         </td>
-                        <td className="px-3 py-2 text-xs text-[--muted-foreground]">
-                          {group.memberEmployeeCodes.length} members
+                        <td className="px-4 py-3">
+                          <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2.5 py-0.5 font-bold text-slate-700 border border-slate-200">
+                            <Users className="h-3 w-3 text-slate-500" />
+                            {group.memberEmployeeCodes.length} members
+                          </span>
                         </td>
-                        <td className="px-3 py-2">
-                          <span className={`rounded-full px-2 py-0.5 text-xs ${group.isActive ? "bg-[#e7f5ec] text-[#22603a]" : "bg-[#f5e7e7] text-[#8d2f2f]"}`}>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${
+                            group.isActive
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-slate-100 text-slate-600 border-slate-200"
+                          }`}>
                             {group.isActive ? "Active" : "Inactive"}
                           </span>
                         </td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-2">
-                            <button type="button" onClick={() => handleEditGroup(group)} className="rounded border border-[#c8dbf0] bg-white px-2 py-1 text-xs text-[#1f5c8f]">Edit</button>
-                            <button type="button" onClick={() => handleDeleteGroup(group)} className="rounded border border-[#f2d0d0] bg-white px-2 py-1 text-xs text-[#b94141]">Delete</button>
+                        <td className="px-4 py-3 text-right">
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleEditGroup(group)}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition"
+                            >
+                              <Pencil className="h-3 w-3 text-slate-500" /> Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteGroup(group)}
+                              className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100 shadow-2xs transition"
+                            >
+                              <Trash2 className="h-3 w-3" /> Delete
+                            </button>
                           </div>
                         </td>
                       </tr>
                     ))}
                     {shiftGroups.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="px-3 py-4 text-center text-sm text-[--muted-foreground]">
-                          No groups created yet.
+                        <td colSpan={4} className="py-10 text-center text-xs text-slate-400">
+                          No groups created yet. Create a group above to assign shifts in bulk.
                         </td>
                       </tr>
                     ) : null}
