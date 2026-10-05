@@ -333,6 +333,19 @@ export function LicensePanel({ compact = false, showHeader = true, onClose }: Li
               <XCircle className="h-3.5 w-3.5" />
               Deactivate
             </button>
+            {onClose ? (
+              <>
+                <span className="mx-1 h-5 w-px bg-slate-200" />
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+                  title="Close License Details"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -590,14 +603,16 @@ export function LicensePanel({ compact = false, showHeader = true, onClose }: Li
         }}
       >
         <div className="relative w-full max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
-            title="Close License Details"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          {!showHeader ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+              title="Close License Details"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          ) : null}
           {panelContent}
         </div>
       </div>
