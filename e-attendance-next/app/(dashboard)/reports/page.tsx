@@ -280,25 +280,64 @@ const toInputDate = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const csvEscape = (s: string) =>
   /[,"\n\r]/.test(s) ? `"${s.replace(/"/g, "\"\"")}"` : s;
-const statusClass = (s: "Present" | "Late" | "Absent" | "On Leave") =>
-  s === "Present"
-    ? "bg-[#e7f9ef] text-[#0f8a45]"
-    : s === "Late"
-      ? "bg-[#fff5e8] text-[#cc7a00]"
-      : s === "On Leave"
-        ? "bg-[#f3e8ff] text-[#7e22ce]"
-        : "bg-[#ffecec] text-[#be2f2f]";
-
-const columnColorClass = (colName: string): string => {
-  if (colName === "CheckIn" || colName === "CheckOut" || colName === "Check In" || colName === "Check Out") {
-    return "bg-[#e7f4f9]"; // Light blue
+const renderReportStatusBadge = (statusText: string) => {
+  const s = statusText.toLowerCase().trim();
+  if (s === "present") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800 shadow-2xs">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+        Present
+      </span>
+    );
   }
-  if (colName === "LateIn" || colName === "EarlyOut" || colName === "Late In" || colName === "Early Out") {
-    return "bg-[#fff5e8]"; // Light orange
+  if (s === "late" || s.startsWith("late")) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 shadow-2xs">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
+        {statusText}
+      </span>
+    );
   }
-  if (colName === "Status") return "bg-[#f0f0f0]"; // Light gray
-  return "";
+  if (s === "absent") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[11px] font-bold text-rose-700 shadow-2xs">
+        <span className="h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0" />
+        Absent
+      </span>
+    );
+  }
+  if (s.includes("holiday")) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-purple-50 px-2.5 py-0.5 text-[11px] font-bold text-purple-800 shadow-2xs max-w-[240px] truncate" title={statusText}>
+        <span className="h-1.5 w-1.5 rounded-full bg-purple-500 shrink-0" />
+        <span className="truncate">{statusText}</span>
+      </span>
+    );
+  }
+  if (s.includes("weekly off") || s === "off") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700">
+        <span className="h-1.5 w-1.5 rounded-full bg-slate-400 shrink-0" />
+        Weekly Off
+      </span>
+    );
+  }
+  if (s.includes("leave")) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[11px] font-bold text-blue-700 shadow-2xs">
+        <span className="h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
+        {statusText}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+      {statusText}
+    </span>
+  );
 };
+
+const columnColorClass = (_colName: string): string => "";
 
 function lowerBound(values: number[], target: number): number {
   let lo = 0;
@@ -2816,10 +2855,6 @@ export default function ReportsPage() {
                 Print / Live Preview
               </button>
             </div>
-
-            <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-              <span>Avg Work: <strong className="text-slate-900">{fmtDuration(footer.avgMinutes)}</strong></span>
-            </div>
           </div>
 
           {error ? (
@@ -2875,38 +2910,38 @@ export default function ReportsPage() {
             </div>
           ) : null}
 
-          <section className="surface overflow-visible rounded-xl">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#d8e6f4] bg-[#f2f8ff] px-4 py-3">
+          <section className="surface overflow-visible rounded-2xl border border-slate-200/90 shadow-2xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
               <div>
-                <div className="text-sm font-semibold text-[#1f4f79]">{reportTitle}</div>
-                <div className="text-xs text-[#5f7f9f]">
+                <div className="text-sm font-bold text-slate-900">{reportTitle}</div>
+                <div className="text-xs text-slate-500">
                   Company: E-Attendance | Generated:{" "}
                   {generatedAt ? formatCalendarDateTime(generatedAt, calendarType) : "-"} | By: {generatedBy}
                 </div>
               </div>
-            <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 text-xs text-[#5f7f9f]">
-                  <CalendarDays className="h-4 w-4" />
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 font-medium shadow-2xs">
+                  <CalendarDays className="h-3.5 w-3.5 text-blue-600" />
                   {displayFromDate} to {displayToDate}
                 </div>
                 <div className="relative group">
                   <button
                     type="button"
                     title="Column preferences"
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#bfd4ea] bg-white text-[#1f5c8f] hover:bg-[#f2f8ff]"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 shadow-2xs transition"
                   >
                     <SlidersHorizontal className="h-4 w-4" />
                   </button>
-                  <div className="absolute right-0 top-full mt-1 hidden rounded-lg border border-[#bfd4ea] bg-white shadow-lg w-64 max-h-96 overflow-y-auto z-50 group-hover:block">
-                    <div className="sticky top-0 bg-[#f2f8ff] border-b border-[#d8e6f4] px-3 py-2">
-                      <div className="text-xs font-semibold text-[#1f4f79]">Columns ({selectedColumns.length}/{availableColumns.length})</div>
+                  <div className="absolute right-0 top-full mt-1 hidden rounded-xl border border-slate-200 bg-white shadow-xl w-64 max-h-96 overflow-y-auto z-50 group-hover:block">
+                    <div className="sticky top-0 bg-slate-50 border-b border-slate-200 px-3 py-2">
+                      <div className="text-xs font-bold text-slate-800">Columns ({selectedColumns.length}/{availableColumns.length})</div>
                     </div>
                     <div className="p-2 space-y-1">
                       {availableColumns.length === 0 ? (
-                        <div className="px-2 py-2 text-xs text-[#5f7f9f]">Generate report first</div>
+                        <div className="px-2 py-2 text-xs text-slate-400">Generate report first</div>
                       ) : (
                         availableColumns.map((col) => (
-                          <label key={col} className="flex items-center gap-2 cursor-pointer px-2 py-1 hover:bg-[#f9fcff] rounded text-xs text-[#2d5d86]">
+                          <label key={col} className="flex items-center gap-2 cursor-pointer px-2 py-1 hover:bg-slate-50 rounded text-xs text-slate-700">
                             <input
                               type="checkbox"
                               checked={selectedColumns.includes(col)}
@@ -2929,14 +2964,14 @@ export default function ReportsPage() {
                                   return updated;
                                 });
                               }}
-                              className="h-3 w-3 accent-[#1f5c8f]"
+                              className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                             />
                             <span>{col}</span>
                           </label>
                         ))
                       )}
                     </div>
-                    <div className="sticky bottom-0 border-t border-[#d8e6f4] bg-[#f9fcff] px-2 py-2 flex gap-1">
+                    <div className="sticky bottom-0 border-t border-slate-200 bg-slate-50 px-2 py-2 flex gap-1">
                       <button
                         type="button"
                         onClick={() =>
@@ -2947,7 +2982,7 @@ export default function ReportsPage() {
                             return updated;
                           })
                         }
-                        className="text-xs px-2 py-1 rounded border border-[#bfd4ea] text-[#1f5c8f] hover:bg-white flex-1"
+                        className="text-xs px-2 py-1 rounded border border-slate-200 bg-white font-medium text-slate-700 hover:bg-slate-50 flex-1 shadow-2xs"
                       >
                         Reset
                       </button>
@@ -2961,7 +2996,7 @@ export default function ReportsPage() {
                             return updated;
                           })
                         }
-                        className="text-xs px-2 py-1 rounded border border-[#bfd4ea] text-[#1f5c8f] hover:bg-white flex-1"
+                        className="text-xs px-2 py-1 rounded border border-slate-200 bg-white font-medium text-slate-700 hover:bg-slate-50 flex-1 shadow-2xs"
                       >
                         All
                       </button>
@@ -2972,145 +3007,153 @@ export default function ReportsPage() {
             </div>
 
             {isMonthlySplitPreview && activeMonthlyPreviewGroup ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#d8e6f4] bg-[#fbfdff] px-4 py-2 text-xs text-[#4c6f8f]">
-                <div className="grid flex-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
-                  <span className="rounded bg-white px-2 py-1">
-                    Employee:{" "}
-                    <span className="font-semibold">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 shadow-2xs">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Employee</span>
+                    <span className="font-bold text-slate-900">
                       {activeMonthlyPreviewGroup.employeeCode} - {activeMonthlyPreviewGroup.employeeName}
                     </span>
-                  </span>
-                  <span className="rounded bg-white px-2 py-1">
-                    Department: <span className="font-semibold">{activeMonthlyPreviewGroup.department}</span>
-                  </span>
-                  {reportType === "monthly" ? (
-                    <span className="rounded bg-white px-2 py-1">
-                      Month Start Date: <span className="font-semibold">{displayMonthStartDate}</span>
-                    </span>
-                  ) : null}
-                  <span className="rounded bg-white px-2 py-1">
-                    Report From: <span className="font-semibold">{displayFromDate}</span>
-                  </span>
-                  <span className="rounded bg-white px-2 py-1">
-                    Report To: <span className="font-semibold">{displayToDate}</span>
-                  </span>
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 shadow-2xs">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Department</span>
+                    <span className="font-semibold text-slate-700">{activeMonthlyPreviewGroup.department}</span>
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 shadow-2xs">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Period</span>
+                    <span className="font-medium text-slate-700">{displayFromDate} — {displayToDate}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setMonthlyPreviewEmployeeIndex((x) => Math.max(0, x - 1))}
-                    disabled={monthlyPreviewEmployeeIndex <= 0}
-                    className="rounded border border-[#c8dbf0] bg-white px-2 py-1 text-xs text-[#1f5c8f] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Prev
-                  </button>
-                  <span className="font-semibold text-[#355a7a]">
-                    {Math.min(monthlyPreviewEmployeeIndex + 1, monthlyPreviewGroups.length)} / {monthlyPreviewGroups.length}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setMonthlyPreviewEmployeeIndex((x) =>
-                        Math.min(monthlyPreviewGroups.length - 1, x + 1),
-                      )
-                    }
-                    disabled={monthlyPreviewEmployeeIndex >= monthlyPreviewGroups.length - 1}
-                    className="rounded border border-[#c8dbf0] bg-white px-2 py-1 text-xs text-[#1f5c8f] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Next
-                  </button>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs font-semibold text-slate-600">Employee:</span>
+                  <div className="inline-flex items-center rounded-lg border border-slate-300 bg-white shadow-2xs overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setMonthlyPreviewEmployeeIndex((x) => Math.max(0, x - 1))}
+                      disabled={monthlyPreviewEmployeeIndex <= 0}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" /> Prev
+                    </button>
+                    <span className="border-x border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-blue-700">
+                      {Math.min(monthlyPreviewEmployeeIndex + 1, monthlyPreviewGroups.length)} / {monthlyPreviewGroups.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMonthlyPreviewEmployeeIndex((x) =>
+                          Math.min(monthlyPreviewGroups.length - 1, x + 1),
+                        )
+                      }
+                      disabled={monthlyPreviewEmployeeIndex >= monthlyPreviewGroups.length - 1}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
+                    >
+                      Next <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : null}
 
-            <div className="flex items-center justify-between gap-2 border-b border-[#d8e6f4] bg-[#fcfeff] px-4 py-2 text-xs text-[#5f7f9f]">
-              <span>
-                Showing {previewRangeStart}–{previewRangeEnd} of {previewRowCount} row(s).
-              </span>
-              <div className="inline-flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
-                  disabled={previewCurrentPage === 1 || previewRowCount === 0}
-                  className="inline-flex items-center gap-1 rounded-lg border border-[--border] bg-white px-2 py-1 disabled:opacity-40"
-                >
-                  Prev
-                </button>
-                <span className="px-1">
-                  Page {previewCurrentPage} / {previewTotalPages}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPreviewPage((p) => Math.min(previewTotalPages, p + 1))}
-                  disabled={previewCurrentPage >= previewTotalPages || previewRowCount === 0}
-                  className="inline-flex items-center gap-1 rounded-lg border border-[--border] bg-white px-2 py-1 disabled:opacity-40"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
               {previewRows.length === 0 ? (
-                <div className="px-4 py-10 text-center text-sm text-[#5f7f9f]">
+                <div className="px-4 py-12 text-center text-sm text-slate-400">
                   {loading ? "Generating report..." : "No data available for selected filters."}
                 </div>
               ) : (
-                <table className="min-w-max text-left text-sm">
-                  <thead className="bg-[#fbfdff] text-xs uppercase text-[#4a6d8d]">
+                <table className="min-w-full text-left text-xs divide-y divide-slate-200">
+                  <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100/90 backdrop-blur-xs text-[11px] font-bold uppercase tracking-wider text-slate-700 shadow-2xs">
                     <tr>
                       {Object.keys(previewRows[0]).map((k) => (
-                        <th key={k} className="whitespace-nowrap px-3 py-2">
+                        <th key={k} className="whitespace-nowrap px-3.5 py-2.5">
                           <button
                             type="button"
                             onClick={() => handleSort(k)}
-                            className="font-semibold hover:text-[--foreground] inline-flex items-center gap-0.5"
+                            className="font-bold hover:text-blue-700 inline-flex items-center gap-1 transition"
                           >
                             <span>{k}</span>
-                            {sortField === k && (
-                              <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>
+                            {sortField === k ? (
+                              <span className="text-[10px] text-blue-600 font-black">{sortAsc ? "▲" : "▼"}</span>
+                            ) : (
+                              <span className="text-[10px] text-slate-300">↕</span>
                             )}
                           </button>
                         </th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-100">
                     {previewRows.map((r, i) => (
                       <tr
                         key={`${i}_${Object.values(r).join("_")}`}
-                        className="border-t border-[#e5effa]"
+                        className="hover:bg-blue-50/40 transition-colors odd:bg-white even:bg-slate-50/30"
                       >
                         {Object.entries(r).map(([k, v]) => {
-                          const bgColor = columnColorClass(k);
-                          if (k === "Status" && typeof v === "string" && ["Present", "Late", "Absent", "On Leave"].includes(v)) {
+                          const valStr = String(v ?? "").trim();
+                          if (k === "Status") {
                             return (
-                              <td key={k} className={`px-3 py-2 ${bgColor}`}>
-                                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusClass(v as "Present" | "Late" | "Absent" | "On Leave")}`}>
-                                  {v}
+                              <td key={k} className="whitespace-nowrap px-3.5 py-2">
+                                {renderReportStatusBadge(valStr)}
+                              </td>
+                            );
+                          }
+                          if (k === "Day") {
+                            const isSaturday = valStr.toLowerCase() === "saturday";
+                            return (
+                              <td key={k} className="whitespace-nowrap px-3.5 py-2">
+                                <span
+                                  className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${
+                                    isSaturday
+                                      ? "border border-amber-200 bg-amber-50 text-amber-900 font-bold"
+                                      : "text-slate-700 font-medium"
+                                  }`}
+                                >
+                                  {valStr}
                                 </span>
                               </td>
                             );
                           }
-                          if (k === "Day" && typeof v === "string") {
-                            const isSaturday = v === "Saturday";
+                          if (["CheckIn", "CheckOut", "Check In", "Check Out", "WorkingHours", "Working Hours", "WorkedHours", "Worked Hours", "OTHours", "OT"].includes(k)) {
+                            const isDash = !valStr || valStr === "-" || valStr === "00:00" || valStr === "0";
                             return (
-                              <td key={k} className={`whitespace-nowrap px-3 py-2 ${bgColor}`}>
-                                <span
-                                  className={`inline-block rounded px-2 py-0.5 text-xs font-semibold ${
-                                    isSaturday
-                                      ? "border border-amber-300 bg-amber-100 text-amber-900"
-                                      : "text-slate-700 font-medium"
-                                  }`}
-                                >
-                                  {v}
-                                </span>
+                              <td key={k} className="whitespace-nowrap px-3.5 py-2 font-mono text-xs">
+                                {isDash ? (
+                                  <span className="text-slate-300 font-normal">—</span>
+                                ) : (
+                                  <span className="font-semibold text-slate-800">{valStr}</span>
+                                )}
+                              </td>
+                            );
+                          }
+                          if (["LateIn", "Late In", "EarlyOut", "Early Out"].includes(k)) {
+                            const isZero = !valStr || valStr === "-" || valStr === "00:00" || valStr === "0";
+                            return (
+                              <td key={k} className="whitespace-nowrap px-3.5 py-2 font-mono text-xs">
+                                {isZero ? (
+                                  <span className="text-slate-300 font-normal">—</span>
+                                ) : (
+                                  <span className="font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
+                                    {valStr}
+                                  </span>
+                                )}
+                              </td>
+                            );
+                          }
+                          if (k === "Date") {
+                            return (
+                              <td key={k} className="whitespace-nowrap px-3.5 py-2 font-mono text-xs font-medium text-slate-800">
+                                {valStr}
                               </td>
                             );
                           }
                           return (
-                            <td key={k} className={`whitespace-nowrap px-3 py-2 ${bgColor}`}>
-                              {String(v)}
+                            <td key={k} className="whitespace-nowrap px-3.5 py-2 text-xs text-slate-700">
+                              {valStr === "-" || !valStr ? (
+                                <span className="text-slate-300">—</span>
+                              ) : (
+                                valStr
+                              )}
                             </td>
                           );
                         })}
@@ -3121,22 +3164,54 @@ export default function ReportsPage() {
               )}
             </div>
 
-            <div className="border-t border-[#d8e6f4] bg-[#fcfeff] px-4 py-3 text-xs text-[#355a7a]">
-              <div className="grid gap-2 sm:grid-cols-5">
-                <div>
-                  Total Employees: <span className="font-semibold">{footer.total}</span>
+            {/* Table Footer with Summary Stats & Pagination */}
+            <div className="border-t border-slate-200 bg-slate-50/80 px-4 py-3 text-xs">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                {/* Statistics Pills */}
+                <div className="flex flex-wrap items-center gap-2.5 text-slate-600">
+                  <span className="rounded-lg bg-white px-2.5 py-1 border border-slate-200 font-medium shadow-2xs">
+                    Total: <strong className="text-slate-900">{footer.total}</strong>
+                  </span>
+                  <span className="rounded-lg bg-emerald-50 px-2.5 py-1 border border-emerald-200 text-emerald-800 font-medium shadow-2xs">
+                    Present: <strong className="text-emerald-950">{footer.present}</strong>
+                  </span>
+                  <span className="rounded-lg bg-rose-50 px-2.5 py-1 border border-rose-200 text-rose-800 font-medium shadow-2xs">
+                    Absent: <strong className="text-rose-950">{footer.absent}</strong>
+                  </span>
+                  <span className="rounded-lg bg-amber-50 px-2.5 py-1 border border-amber-200 text-amber-800 font-medium shadow-2xs">
+                    Late: <strong className="text-amber-950">{footer.late}</strong>
+                  </span>
+                  <span className="rounded-lg bg-white px-2.5 py-1 border border-slate-200 text-slate-700 font-medium shadow-2xs">
+                    Avg Hours: <strong className="text-slate-900">{fmtDuration(footer.avgMinutes)}</strong>
+                  </span>
                 </div>
-                <div>
-                  Present: <span className="font-semibold text-[#0f8a45]">{footer.present}</span>
-                </div>
-                <div>
-                  Absent: <span className="font-semibold text-[#be2f2f]">{footer.absent}</span>
-                </div>
-                <div>
-                  Late: <span className="font-semibold text-[#cc7a00]">{footer.late}</span>
-                </div>
-                <div>
-                  Average Hours: <span className="font-semibold">{fmtDuration(footer.avgMinutes)}</span>
+
+                {/* Table Page Pagination */}
+                <div className="flex items-center justify-between lg:justify-end gap-3 text-slate-600 shrink-0">
+                  <span className="text-xs text-slate-500">
+                    Showing <strong className="text-slate-800">{previewRangeStart}–{previewRangeEnd}</strong> of <strong className="text-slate-800">{previewRowCount}</strong> rows
+                  </span>
+                  <div className="inline-flex items-center rounded-lg border border-slate-300 bg-white shadow-2xs overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                      disabled={previewCurrentPage === 1 || previewRowCount === 0}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" /> Prev
+                    </button>
+                    <span className="border-x border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700">
+                      Page {previewCurrentPage} / {previewTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewPage((p) => Math.min(previewTotalPages, p + 1))}
+                      disabled={previewCurrentPage >= previewTotalPages || previewRowCount === 0}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
+                    >
+                      Next <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -3653,10 +3728,8 @@ export default function ReportsPage() {
                                           : ""
                                       } ${columnColorClass(col)}`}
                                     >
-                                      {isStatus && ["Present", "Late", "Absent", "On Leave"].includes(val) ? (
-                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10.5px] font-semibold ${statusClass(val as any)}`}>
-                                          {val}
-                                        </span>
+                                      {isStatus ? (
+                                        renderReportStatusBadge(val)
                                       ) : isSat ? (
                                         <span className="font-semibold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded text-[11px]">
                                           {val}
