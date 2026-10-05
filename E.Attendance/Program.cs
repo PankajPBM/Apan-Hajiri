@@ -87,7 +87,7 @@ internal static class Program
                     "Please install .NET Desktop Runtime 10.0 or later from:\n" +
                     "https://dotnet.microsoft.com/download/dotnet/10.0\n\n" +
                     "Error: " + ex.Message,
-                    "E_Att_Service - Missing Runtime Component",
+                    "Apan Hajiri - Missing Runtime Component",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
@@ -97,7 +97,7 @@ internal static class Program
                 MessageBox.Show(
                     "Failed to initialize E-Attendance Service Controller.\n\n" +
                     "Error: " + ex.Message,
-                    "E_Att_Service - Startup Error",
+                    "Apan Hajiri - Startup Error",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }

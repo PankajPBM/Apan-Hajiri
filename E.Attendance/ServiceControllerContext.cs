@@ -25,7 +25,7 @@ internal sealed class ServiceControllerContext : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("Open E_Att_Service", null, (_, _) => OpenController()));
+        menu.Items.Add(new ToolStripMenuItem("Open Apan Hajiri", null, (_, _) => OpenController()));
         menu.Items.Add(new ToolStripMenuItem("Open Dashboard", null, async (_, _) =>
             await RunActionAsync(() => Task.Run(() => _manager.OpenDashboard()), "Dashboard opened.")));
         menu.Items.Add(_startItem);
@@ -130,7 +130,7 @@ internal sealed class ServiceControllerContext : ApplicationContext
         _statusItem.Text = $"Status: {(isRunning ? "Running" : "Stopped")} (API {state.Port}, UI {configuredFrontendPort})";
         _startItem.Enabled = !_actionInProgress && !isRunning;
         _stopItem.Enabled = !_actionInProgress && isRunning;
-        _trayIcon.Text = $"E_Att_Service {(isRunning ? "Running" : "Stopped")} API:{state.Port} UI:{configuredFrontendPort}";
+        _trayIcon.Text = $"Apan Hajiri {(isRunning ? "Running" : "Stopped")} API:{state.Port} UI:{configuredFrontendPort}";
 
         _controllerForm?.RefreshState();
     }
@@ -154,12 +154,12 @@ internal sealed class ServiceControllerContext : ApplicationContext
 
             if (showSuccessBalloon && !string.IsNullOrWhiteSpace(successMessage))
             {
-                _trayIcon.ShowBalloonTip(1200, "E_Att_Service", SanitizeMessage(successMessage), ToolTipIcon.Info);
+                _trayIcon.ShowBalloonTip(1200, "Apan Hajiri", SanitizeMessage(successMessage), ToolTipIcon.Info);
             }
         }
         catch (Exception ex)
         {
-            _trayIcon.ShowBalloonTip(3000, "E_Att_Service", SanitizeMessage(ex.Message), ToolTipIcon.Warning);
+            _trayIcon.ShowBalloonTip(3000, "Apan Hajiri", SanitizeMessage(ex.Message), ToolTipIcon.Warning);
         }
         finally
         {
