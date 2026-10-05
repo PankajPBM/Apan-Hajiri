@@ -275,7 +275,7 @@ export function DashboardLayoutClient({ children }: Readonly<{ children: React.R
       />
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
         <Topbar onToggleSidebar={handleToggleSidebar} onLogout={handleLogout} session={session} />
-        <main className="min-h-0 flex-1 overflow-visible p-4 md:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
+        <main className="min-h-0 flex-1 overflow-visible p-4 md:p-6 lg:p-8 w-full">
           <div className="page-chrome">{children}</div>
         </main>
       </div>
