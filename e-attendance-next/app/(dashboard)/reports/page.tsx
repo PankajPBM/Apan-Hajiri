@@ -250,11 +250,14 @@ const REPORT_TYPES: Array<{ value: ReportType; label: string }> = [
   { value: "absent", label: "Absent" },
   { value: "overtime", label: "Overtime" },
 ];
-const COLUMN_CONFIG_KEY = "pb.attendance.reports.columns.v1";
+const COLUMN_CONFIG_KEY = "pb.attendance.reports.columns.v3";
 const DEFAULT_UNCHECKED_COLUMNS = new Set([
   "EmployeeID",
+  "Employee ID",
+  "EmployeeName",
+  "Employee Name",
+  "Department",
   "Shift",
-  "Timetable",
   "Device",
 ]);
 
@@ -602,10 +605,10 @@ const DAILY_COLUMN_ORDER = [
   "Shift",
   "Time Table",
   "Device",
-  "Late In",
   "Check In",
-  "Early Out",
+  "Late In",
   "Check Out",
+  "Early Out",
   "Working Hours",
   "Worked Hours",
   "OT",
@@ -622,10 +625,10 @@ const DAILY_RESET_SELECTED_COLUMNS: DailyColumnName[] = [
   "Employee ID",
   "Employee Name",
   "Time Table",
-  "Late In",
   "Check In",
-  "Early Out",
+  "Late In",
   "Check Out",
+  "Early Out",
   "Working Hours",
   "Worked Hours",
   "Status",
@@ -641,7 +644,9 @@ const MONTHLY_CHECKINOUT_COLUMN_ORDER = [
   "Timetable",
   "Shift",
   "CheckIn",
+  "LateIn",
   "CheckOut",
+  "EarlyOut",
   "WorkingHours",
   "WorkedHours",
   "OTHours",
@@ -1995,10 +2000,10 @@ export default function ReportsPage() {
           Shift: r.shiftName,
           "Time Table": r.timetableLabel,
           Device: r.deviceName,
-          "Late In": r.lateInMinutes > 0 ? fmtDuration(r.lateInMinutes) : "-",
           "Check In": fmtTime(r.checkIn),
-          "Early Out": r.earlyOutMinutes > 0 ? fmtDuration(r.earlyOutMinutes) : "-",
+          "Late In": r.lateInMinutes > 0 ? fmtDuration(r.lateInMinutes) : "-",
           "Check Out": fmtTime(r.checkOut),
+          "Early Out": r.earlyOutMinutes > 0 ? fmtDuration(r.earlyOutMinutes) : "-",
           "Working Hours": fmtDuration(r.shiftStandardMinutes),
           "Worked Hours": fmtDuration(r.workedMinutes),
           OT: fmtDuration(r.overtimeMinutes),
@@ -2042,10 +2047,10 @@ export default function ReportsPage() {
           Department: r.department,
           Timetable: r.timetableLabel,
           Shift: r.shiftName,
-          LateIn: r.lateInMinutes > 0 ? fmtDuration(r.lateInMinutes) : "-",
           CheckIn: fmtTime(r.checkIn),
-          EarlyOut: r.earlyOutMinutes > 0 ? fmtDuration(r.earlyOutMinutes) : "-",
+          LateIn: r.lateInMinutes > 0 ? fmtDuration(r.lateInMinutes) : "-",
           CheckOut: fmtTime(r.checkOut),
+          EarlyOut: r.earlyOutMinutes > 0 ? fmtDuration(r.earlyOutMinutes) : "-",
           WorkingHours: fmtDuration(r.shiftStandardMinutes),
           WorkedHours: fmtDuration(r.workedMinutes),
           OTHours: fmtDuration(r.overtimeMinutes),
@@ -3009,34 +3014,34 @@ export default function ReportsPage() {
             {isMonthlySplitPreview && activeMonthlyPreviewGroup ? (
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-xs">
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 shadow-2xs">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Employee</span>
-                    <span className="font-bold text-slate-900">
+                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 shadow-2xs">
+                    <span className="text-xs font-bold text-slate-600">Employee:</span>
+                    <strong className="text-xs sm:text-sm font-extrabold text-slate-900">
                       {activeMonthlyPreviewGroup.employeeCode} - {activeMonthlyPreviewGroup.employeeName}
-                    </span>
+                    </strong>
                   </div>
-                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 shadow-2xs">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Department</span>
-                    <span className="font-semibold text-slate-700">{activeMonthlyPreviewGroup.department}</span>
+                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 shadow-2xs">
+                    <span className="text-xs font-bold text-slate-600">Department:</span>
+                    <strong className="text-xs sm:text-sm font-extrabold text-slate-900">{activeMonthlyPreviewGroup.department}</strong>
                   </div>
-                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 shadow-2xs">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Period</span>
-                    <span className="font-medium text-slate-700">{displayFromDate} — {displayToDate}</span>
+                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 shadow-2xs">
+                    <span className="text-xs font-bold text-slate-600">Period:</span>
+                    <strong className="text-xs sm:text-sm font-extrabold text-slate-900">{displayFromDate} — {displayToDate}</strong>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs font-semibold text-slate-600">Employee:</span>
+                  <span className="text-xs font-bold text-slate-700">Employee:</span>
                   <div className="inline-flex items-center rounded-lg border border-slate-300 bg-white shadow-2xs overflow-hidden">
                     <button
                       type="button"
                       onClick={() => setMonthlyPreviewEmployeeIndex((x) => Math.max(0, x - 1))}
                       disabled={monthlyPreviewEmployeeIndex <= 0}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
                     >
                       <ChevronLeft className="h-3.5 w-3.5" /> Prev
                     </button>
-                    <span className="border-x border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-blue-700">
+                    <span className="border-x border-slate-200 bg-slate-50 px-3.5 py-1.5 text-xs font-extrabold text-blue-700">
                       {Math.min(monthlyPreviewEmployeeIndex + 1, monthlyPreviewGroups.length)} / {monthlyPreviewGroups.length}
                     </span>
                     <button
@@ -3047,7 +3052,7 @@ export default function ReportsPage() {
                         )
                       }
                       disabled={monthlyPreviewEmployeeIndex >= monthlyPreviewGroups.length - 1}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
                     >
                       Next <ChevronRight className="h-3.5 w-3.5" />
                     </button>
@@ -3063,102 +3068,150 @@ export default function ReportsPage() {
                 </div>
               ) : (
                 <table className="min-w-full text-left text-xs divide-y divide-slate-200">
-                  <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100/90 backdrop-blur-xs text-[11px] font-bold uppercase tracking-wider text-slate-700 shadow-2xs">
+                  <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100/95 backdrop-blur-xs text-[11px] font-bold uppercase tracking-wider text-slate-700 shadow-2xs">
                     <tr>
-                      {Object.keys(previewRows[0]).map((k) => (
-                        <th key={k} className="whitespace-nowrap px-3.5 py-2.5">
-                          <button
-                            type="button"
-                            onClick={() => handleSort(k)}
-                            className="font-bold hover:text-blue-700 inline-flex items-center gap-1 transition"
-                          >
-                            <span>{k}</span>
-                            {sortField === k ? (
-                              <span className="text-[10px] text-blue-600 font-black">{sortAsc ? "▲" : "▼"}</span>
-                            ) : (
-                              <span className="text-[10px] text-slate-300">↕</span>
-                            )}
-                          </button>
-                        </th>
-                      ))}
+                      {Object.keys(previewRows[0]).map((k) => {
+                        const isCheckCol = ["CheckIn", "CheckOut", "Check In", "Check Out"].includes(k);
+                        const isLateEarlyCol = ["LateIn", "EarlyOut", "Late In", "Early Out"].includes(k);
+                        const colHeaderClass = isCheckCol
+                          ? "bg-sky-100/80 text-sky-950 border-x border-sky-200/70"
+                          : isLateEarlyCol
+                            ? "bg-amber-100/80 text-amber-950 border-x border-amber-200/70"
+                            : "text-slate-700";
+                        return (
+                          <th key={k} className={`whitespace-nowrap px-3.5 py-2.5 ${colHeaderClass}`}>
+                            <button
+                              type="button"
+                              onClick={() => handleSort(k)}
+                              className="font-bold hover:text-blue-700 inline-flex items-center gap-1 transition"
+                            >
+                              <span>{k}</span>
+                              {sortField === k ? (
+                                <span className="text-[10px] text-blue-600 font-black">{sortAsc ? "▲" : "▼"}</span>
+                              ) : (
+                                <span className="text-[10px] text-slate-400">↕</span>
+                              )}
+                            </button>
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {previewRows.map((r, i) => (
-                      <tr
-                        key={`${i}_${Object.values(r).join("_")}`}
-                        className="hover:bg-blue-50/40 transition-colors odd:bg-white even:bg-slate-50/30"
-                      >
-                        {Object.entries(r).map(([k, v]) => {
-                          const valStr = String(v ?? "").trim();
-                          if (k === "Status") {
-                            return (
-                              <td key={k} className="whitespace-nowrap px-3.5 py-2">
-                                {renderReportStatusBadge(valStr)}
-                              </td>
-                            );
-                          }
-                          if (k === "Day") {
-                            const isSaturday = valStr.toLowerCase() === "saturday";
-                            return (
-                              <td key={k} className="whitespace-nowrap px-3.5 py-2">
-                                <span
-                                  className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${
-                                    isSaturday
-                                      ? "border border-amber-200 bg-amber-50 text-amber-900 font-bold"
-                                      : "text-slate-700 font-medium"
-                                  }`}
-                                >
-                                  {valStr}
-                                </span>
-                              </td>
-                            );
-                          }
-                          if (["CheckIn", "CheckOut", "Check In", "Check Out", "WorkingHours", "Working Hours", "WorkedHours", "Worked Hours", "OTHours", "OT"].includes(k)) {
-                            const isDash = !valStr || valStr === "-" || valStr === "00:00" || valStr === "0";
-                            return (
-                              <td key={k} className="whitespace-nowrap px-3.5 py-2 font-mono text-xs">
-                                {isDash ? (
-                                  <span className="text-slate-300 font-normal">—</span>
-                                ) : (
-                                  <span className="font-semibold text-slate-800">{valStr}</span>
-                                )}
-                              </td>
-                            );
-                          }
-                          if (["LateIn", "Late In", "EarlyOut", "Early Out"].includes(k)) {
-                            const isZero = !valStr || valStr === "-" || valStr === "00:00" || valStr === "0";
-                            return (
-                              <td key={k} className="whitespace-nowrap px-3.5 py-2 font-mono text-xs">
-                                {isZero ? (
-                                  <span className="text-slate-300 font-normal">—</span>
-                                ) : (
-                                  <span className="font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
+                    {previewRows.map((r, i) => {
+                      const dayStr = String(r.Day ?? "").toLowerCase();
+                      const statusStr = String(r.Status ?? "").toLowerCase();
+                      const remarkStr = String(r.Remark ?? "").toLowerCase();
+                      const isWeekend = dayStr === "saturday";
+                      const isHoliday = statusStr.includes("holiday") || remarkStr.includes("holiday");
+                      const isWeeklyOff = statusStr.includes("weekly off") || statusStr === "off" || remarkStr.includes("weekly off");
+                      const isOffDayRow = isWeekend || isHoliday || isWeeklyOff;
+
+                      const rowStyle = isOffDayRow
+                        ? "bg-rose-50/70 hover:bg-rose-100/80 border-l-4 border-l-rose-500 font-medium"
+                        : "hover:bg-blue-50/40 transition-colors odd:bg-white even:bg-slate-50/30";
+
+                      return (
+                        <tr
+                          key={`${i}_${Object.values(r).join("_")}`}
+                          className={rowStyle}
+                        >
+                          {Object.entries(r).map(([k, v]) => {
+                            const valStr = String(v ?? "").trim();
+                            const isCheckCol = ["CheckIn", "CheckOut", "Check In", "Check Out"].includes(k);
+                            const isLateEarlyCol = ["LateIn", "EarlyOut", "Late In", "Early Out"].includes(k);
+                            const colCellClass = isOffDayRow
+                              ? isCheckCol
+                                ? "bg-sky-100/35 border-x border-sky-100/40"
+                                : isLateEarlyCol
+                                  ? "bg-amber-100/35 border-x border-amber-100/40"
+                                  : ""
+                              : isCheckCol
+                                ? "bg-sky-50/50 border-x border-sky-100/60"
+                                : isLateEarlyCol
+                                  ? "bg-amber-50/50 border-x border-amber-100/60"
+                                  : "";
+
+                            if (k === "Status") {
+                              return (
+                                <td key={k} className={`whitespace-nowrap px-3.5 py-2 ${colCellClass}`}>
+                                  {renderReportStatusBadge(valStr)}
+                                </td>
+                              );
+                            }
+                            if (k === "Day") {
+                              return (
+                                <td key={k} className={`whitespace-nowrap px-3.5 py-2 ${colCellClass}`}>
+                                  <span
+                                    className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${
+                                      isWeekend
+                                        ? "border border-rose-300 bg-rose-100 text-rose-900 font-bold"
+                                        : "text-slate-700 font-medium"
+                                    }`}
+                                  >
                                     {valStr}
                                   </span>
+                                </td>
+                              );
+                            }
+                            if (["CheckIn", "CheckOut", "Check In", "Check Out"].includes(k)) {
+                              const isDash = !valStr || valStr === "-" || valStr === "00:00" || valStr === "0";
+                              return (
+                                <td key={k} className={`whitespace-nowrap px-3.5 py-2 font-mono text-xs ${colCellClass}`}>
+                                  {isDash ? (
+                                    <span className="text-slate-300 font-normal">—</span>
+                                  ) : (
+                                    <span className="font-bold text-sky-950">{valStr}</span>
+                                  )}
+                                </td>
+                              );
+                            }
+                            if (["LateIn", "Late In", "EarlyOut", "Early Out"].includes(k)) {
+                              const isZero = !valStr || valStr === "-" || valStr === "00:00" || valStr === "0";
+                              return (
+                                <td key={k} className={`whitespace-nowrap px-3.5 py-2 font-mono text-xs ${colCellClass}`}>
+                                  {isZero ? (
+                                    <span className="text-slate-300 font-normal">—</span>
+                                  ) : (
+                                    <span className="font-bold text-amber-800 bg-amber-100/80 px-1.5 py-0.5 rounded border border-amber-200">
+                                      {valStr}
+                                    </span>
+                                  )}
+                                </td>
+                              );
+                            }
+                            if (["WorkingHours", "Working Hours", "WorkedHours", "Worked Hours", "OTHours", "OT"].includes(k)) {
+                              const isDash = !valStr || valStr === "-" || valStr === "00:00" || valStr === "0";
+                              return (
+                                <td key={k} className={`whitespace-nowrap px-3.5 py-2 font-mono text-xs ${colCellClass}`}>
+                                  {isDash ? (
+                                    <span className="text-slate-300 font-normal">—</span>
+                                  ) : (
+                                    <span className="font-semibold text-slate-800">{valStr}</span>
+                                  )}
+                                </td>
+                              );
+                            }
+                            if (k === "Date") {
+                              return (
+                                <td key={k} className={`whitespace-nowrap px-3.5 py-2 font-mono text-xs font-medium ${isOffDayRow ? "text-rose-950 font-bold" : "text-slate-800"} ${colCellClass}`}>
+                                  {valStr}
+                                </td>
+                              );
+                            }
+                            return (
+                              <td key={k} className={`whitespace-nowrap px-3.5 py-2 text-xs text-slate-700 ${colCellClass}`}>
+                                {valStr === "-" || !valStr ? (
+                                  <span className="text-slate-300">—</span>
+                                ) : (
+                                  valStr
                                 )}
                               </td>
                             );
-                          }
-                          if (k === "Date") {
-                            return (
-                              <td key={k} className="whitespace-nowrap px-3.5 py-2 font-mono text-xs font-medium text-slate-800">
-                                {valStr}
-                              </td>
-                            );
-                          }
-                          return (
-                            <td key={k} className="whitespace-nowrap px-3.5 py-2 text-xs text-slate-700">
-                              {valStr === "-" || !valStr ? (
-                                <span className="text-slate-300">—</span>
-                              ) : (
-                                valStr
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
+                          })}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
