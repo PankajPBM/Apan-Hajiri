@@ -340,7 +340,15 @@ const renderReportStatusBadge = (statusText: string) => {
   );
 };
 
-const columnColorClass = (_colName: string): string => "";
+const columnColorClass = (colName: string): string => {
+  if (["CheckIn", "CheckOut", "Check In", "Check Out"].includes(colName)) {
+    return "bg-sky-50/70 text-sky-950 font-semibold";
+  }
+  if (["LateIn", "EarlyOut", "Late In", "Early Out"].includes(colName)) {
+    return "bg-amber-50/70 text-amber-950 font-semibold";
+  }
+  return "";
+};
 
 function lowerBound(values: number[], target: number): number {
   let lo = 0;
@@ -749,23 +757,67 @@ function openPrintable(
           c !== "Device",
       );
     }
-    const th = cols.map((c) => `<th>${escHtml(c)}</th>`).join("");
+    const th = cols
+      .map((c) => {
+        const isCheckCol = ["CheckIn", "CheckOut", "Check In", "Check Out"].includes(c);
+        const isLateEarlyCol = ["LateIn", "EarlyOut", "Late In", "Early Out"].includes(c);
+        const thClass = isCheckCol ? ' class="col-check"' : isLateEarlyCol ? ' class="col-late-early"' : "";
+        return `<th${thClass}>${escHtml(c)}</th>`;
+      })
+      .join("");
     const tb = tableRows
       .slice(0, 3000)
-      .map(
-        (r) =>
-          `<tr>${cols
-            .map((c) => {
-              const val = String(r[c] ?? "");
-              const isSat = c === "Day" && val === "Saturday";
-              const isStatus = c === "Status";
-              let tdClass = "";
-              if (isSat) tdClass = ' class="sat-cell"';
-              else if (isStatus) tdClass = ' class="status-cell"';
-              return `<td${tdClass}>${escHtml(val)}</td>`;
-            })
-            .join("")}</tr>`,
-      )
+      .map((r, idx) => {
+        const dayStr = String(r.Day ?? "").toLowerCase();
+        const statusStr = String(r.Status ?? "").toLowerCase();
+        const remarkStr = String(r.Remark ?? "").toLowerCase();
+        const isWeekend = dayStr === "saturday";
+        const isHoliday = statusStr.includes("holiday") || remarkStr.includes("holiday");
+        const isWeeklyOff = statusStr.includes("weekly off") || statusStr === "off" || remarkStr.includes("weekly off");
+        const isOffDayRow = isWeekend || isHoliday || isWeeklyOff;
+
+        const rowClass = isOffDayRow ? ' class="row-offday"' : (idx % 2 === 1 ? ' class="row-even"' : "");
+
+        const cells = cols
+          .map((c) => {
+            const val = String(r[c] ?? "");
+            const isSat = c === "Day" && val === "Saturday";
+            const isStatus = c === "Status";
+            const isCheckCol = ["CheckIn", "CheckOut", "Check In", "Check Out"].includes(c);
+            const isLateEarlyCol = ["LateIn", "EarlyOut", "Late In", "Early Out"].includes(c);
+
+            let cellClass = "";
+            if (isCheckCol) cellClass = isOffDayRow ? ' class="cell-check-off"' : ' class="cell-check"';
+            else if (isLateEarlyCol) cellClass = isOffDayRow ? ' class="cell-late-early-off"' : ' class="cell-late-early"';
+            else if (isSat) cellClass = ' class="sat-cell"';
+            else if (isStatus) cellClass = ' class="status-cell"';
+            else if (c === "Date" && isOffDayRow) cellClass = ' class="date-off-cell"';
+
+            let content = escHtml(val);
+            if (isStatus) {
+              const s = val.toLowerCase().trim();
+              if (s === "present") content = `<span class="badge-status badge-status-present">Present</span>`;
+              else if (s === "late" || s.startsWith("late")) content = `<span class="badge-status badge-status-late">${escHtml(val)}</span>`;
+              else if (s === "absent") content = `<span class="badge-status badge-status-absent">Absent</span>`;
+              else if (s.includes("holiday")) content = `<span class="badge-status badge-status-holiday">${escHtml(val)}</span>`;
+              else if (s.includes("weekly off") || s === "off") content = `<span class="badge-status badge-status-off">${escHtml(val)}</span>`;
+              else content = `<span class="badge-status badge-status-off">${escHtml(val)}</span>`;
+            } else if (isSat) {
+              content = `<span class="badge-sat">${escHtml(val)}</span>`;
+            } else if (isLateEarlyCol && val && val !== "-" && val !== "00:00" && val !== "0") {
+              content = `<span class="badge-late-early">${escHtml(val)}</span>`;
+            } else if (isCheckCol && val && val !== "-" && val !== "00:00" && val !== "0") {
+              content = `<strong>${escHtml(val)}</strong>`;
+            } else if (!val || val === "-") {
+              content = `<span style="color:#cbd5e1">—</span>`;
+            }
+
+            return `<td${cellClass}>${content}</td>`;
+          })
+          .join("");
+
+        return `<tr${rowClass}>${cells}</tr>`;
+      })
       .join("");
     return `<table><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table>`;
   };
@@ -953,7 +1005,54 @@ function openPrintable(
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     th, td { border: 1px solid #cbd5e1; text-align: left; word-break: break-word; white-space: normal; }
     th { background: #f1f5f9; color: #1e293b; font-weight: 700; }
-    tr:nth-child(even) td { background: #f8fafc; }
+    tr.row-even td { background: #f8fafc; }
+
+    /* Matching Column Colors: Sky for Check In/Out, Amber for Late In/Early Out */
+    th.col-check { background: #e0f2fe !important; color: #082f49 !important; border-color: #bae6fd !important; }
+    th.col-late-early { background: #fef3c7 !important; color: #78350f !important; border-color: #fde68a !important; }
+
+    td.cell-check { background: #f0f9ff !important; color: #0c4a6e !important; }
+    td.cell-late-early { background: #fffbeb !important; color: #92400e !important; }
+
+    /* Matching Off-Day (Weekend / Holiday / Weekly Off) Row Highlight */
+    tr.row-offday { background: #fff1f2 !important; border-left: 3px solid #f43f5e !important; }
+    tr.row-offday td { background: #fff1f2 !important; border-color: #fecdd3 !important; }
+    tr.row-offday td.date-off-cell { color: #881337 !important; font-weight: 700 !important; }
+    tr.row-offday td.cell-check-off { background: #e0f2fe !important; color: #082f49 !important; }
+    tr.row-offday td.cell-late-early-off { background: #fef3c7 !important; color: #78350f !important; }
+
+    /* Badges in Print & Export PDF */
+    .badge-sat {
+      display: inline-block;
+      background: #ffe4e6 !important;
+      color: #9f1239 !important;
+      border: 1px solid #fecdd3;
+      padding: 0.5px 4px;
+      border-radius: 3px;
+      font-weight: 700;
+    }
+    .badge-late-early {
+      display: inline-block;
+      background: #fef3c7 !important;
+      color: #92400e !important;
+      border: 1px solid #fde68a;
+      padding: 0.5px 4px;
+      border-radius: 3px;
+      font-weight: 700;
+    }
+    .badge-status {
+      display: inline-block;
+      padding: 0.5px 5px;
+      border-radius: 3px;
+      font-size: 9px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge-status-present { background: #ecfdf5 !important; color: #065f46 !important; border: 1px solid #a7f3d0; }
+    .badge-status-late { background: #fffbeb !important; color: #92400e !important; border: 1px solid #fde68a; }
+    .badge-status-absent { background: #fff1f2 !important; color: #9f1239 !important; border: 1px solid #fecdd3; }
+    .badge-status-holiday { background: #faf5ff !important; color: #6b21a8 !important; border: 1px solid #e9d5ff; }
+    .badge-status-off { background: #f8fafc !important; color: #475569 !important; border: 1px solid #cbd5e1; }
     .sec-meta {
       margin: 8px 0;
       background: #f8fafc;
@@ -3763,49 +3862,93 @@ export default function ReportsPage() {
                         <table className="w-full border-collapse text-left text-xs">
                           <thead>
                             <tr className="bg-slate-100 text-slate-800 font-bold border-y border-slate-300">
-                              {previewCols.map((col) => (
-                                <th
-                                  key={col}
-                                  className="border border-slate-300 px-2.5 py-1.5 whitespace-nowrap text-[11px]"
-                                >
-                                  {col}
-                                </th>
-                              ))}
+                              {previewCols.map((col) => {
+                                const isCheckCol = ["CheckIn", "CheckOut", "Check In", "Check Out"].includes(col);
+                                const isLateEarlyCol = ["LateIn", "EarlyOut", "Late In", "Early Out"].includes(col);
+                                const thClass = isCheckCol
+                                  ? "bg-sky-100 text-sky-950 border-sky-300"
+                                  : isLateEarlyCol
+                                    ? "bg-amber-100 text-amber-950 border-amber-300"
+                                    : "border-slate-300";
+                                return (
+                                  <th
+                                    key={col}
+                                    className={`border px-2.5 py-1.5 whitespace-nowrap text-[11px] font-bold ${thClass}`}
+                                  >
+                                    {col}
+                                  </th>
+                                );
+                              })}
                             </tr>
                           </thead>
                           <tbody>
-                            {activeSheetRows.map((r, idx) => (
-                              <tr
-                                key={idx}
-                                className={`border-b border-slate-200 ${idx % 2 === 1 ? "bg-slate-50/70" : "bg-white"}`}
-                              >
-                                {previewCols.map((col) => {
-                                  const val = String(r[col] ?? "");
-                                  const isStatus = col === "Status";
-                                  const isSat = col === "Day" && val === "Saturday";
-                                  return (
-                                    <td
-                                      key={col}
-                                      className={`border border-slate-200 px-2.5 py-1 text-[11px] ${
-                                        col === "Date" || col === "Day" || col.includes("Check") || col.includes("Hours") || col.includes("OT")
-                                          ? "whitespace-nowrap"
-                                          : ""
-                                      } ${columnColorClass(col)}`}
-                                    >
-                                      {isStatus ? (
-                                        renderReportStatusBadge(val)
-                                      ) : isSat ? (
-                                        <span className="font-semibold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded text-[11px]">
-                                          {val}
-                                        </span>
-                                      ) : (
-                                        val || "-"
-                                      )}
-                                    </td>
-                                  );
-                                })}
-                              </tr>
-                            ))}
+                            {activeSheetRows.map((r, idx) => {
+                              const dayStr = String(r.Day ?? "").toLowerCase();
+                              const statusStr = String(r.Status ?? "").toLowerCase();
+                              const remarkStr = String(r.Remark ?? "").toLowerCase();
+                              const isWeekend = dayStr === "saturday";
+                              const isHoliday = statusStr.includes("holiday") || remarkStr.includes("holiday");
+                              const isWeeklyOff = statusStr.includes("weekly off") || statusStr === "off" || remarkStr.includes("weekly off");
+                              const isOffDayRow = isWeekend || isHoliday || isWeeklyOff;
+
+                              const rowClass = isOffDayRow
+                                ? "bg-rose-50/80 border-b border-rose-200 border-l-4 border-l-rose-500 font-medium"
+                                : `border-b border-slate-200 ${idx % 2 === 1 ? "bg-slate-50/70" : "bg-white"}`;
+
+                              return (
+                                <tr
+                                  key={idx}
+                                  className={rowClass}
+                                >
+                                  {previewCols.map((col) => {
+                                    const val = String(r[col] ?? "");
+                                    const isStatus = col === "Status";
+                                    const isSat = col === "Day" && val === "Saturday";
+                                    const isCheckCol = ["CheckIn", "CheckOut", "Check In", "Check Out"].includes(col);
+                                    const isLateEarlyCol = ["LateIn", "EarlyOut", "Late In", "Early Out"].includes(col);
+
+                                    const cellColor = isOffDayRow
+                                      ? isCheckCol
+                                        ? "bg-sky-100/50 text-sky-950 font-semibold"
+                                        : isLateEarlyCol
+                                          ? "bg-amber-100/50 text-amber-950 font-semibold"
+                                          : col === "Date"
+                                            ? "text-rose-950 font-bold"
+                                            : ""
+                                      : columnColorClass(col);
+
+                                    return (
+                                      <td
+                                        key={col}
+                                        className={`border border-slate-200 px-2.5 py-1 text-[11px] ${
+                                          col === "Date" || col === "Day" || col.includes("Check") || col.includes("Hours") || col.includes("OT")
+                                            ? "whitespace-nowrap"
+                                            : ""
+                                        } ${cellColor}`}
+                                      >
+                                        {isStatus ? (
+                                          renderReportStatusBadge(val)
+                                        ) : isSat ? (
+                                          <span className="font-semibold text-rose-900 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-200 text-[11px]">
+                                            {val}
+                                          </span>
+                                        ) : isLateEarlyCol && val && val !== "-" && val !== "00:00" && val !== "0" ? (
+                                          <span className="font-semibold text-amber-800 bg-amber-100/80 px-1.5 py-0.5 rounded border border-amber-200 text-[11px]">
+                                            {val}
+                                          </span>
+                                        ) : isCheckCol && val && val !== "-" && val !== "00:00" && val !== "0" ? (
+                                          <span className="font-bold text-sky-950">
+                                            {val}
+                                          </span>
+                                        ) : (
+                                          val || "-"
+                                        )}
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
