@@ -3074,12 +3074,12 @@ export default function ReportsPage() {
                         const isCheckCol = ["CheckIn", "CheckOut", "Check In", "Check Out"].includes(k);
                         const isLateEarlyCol = ["LateIn", "EarlyOut", "Late In", "Early Out"].includes(k);
                         const colHeaderClass = isCheckCol
-                          ? "bg-sky-100/80 text-sky-950 border-x border-sky-200/70"
+                          ? "bg-sky-100/90 text-sky-950 border-r border-sky-200/90 last:border-r-0"
                           : isLateEarlyCol
-                            ? "bg-amber-100/80 text-amber-950 border-x border-amber-200/70"
-                            : "text-slate-700";
+                            ? "bg-amber-100/90 text-amber-950 border-r border-amber-200/90 last:border-r-0"
+                            : "text-slate-700 border-r border-slate-200 last:border-r-0";
                         return (
-                          <th key={k} className={`whitespace-nowrap px-3.5 py-2.5 ${colHeaderClass}`}>
+                          <th key={k} className={`whitespace-nowrap px-3.5 py-2.5 border-b border-slate-200 ${colHeaderClass}`}>
                             <button
                               type="button"
                               onClick={() => handleSort(k)}
@@ -3122,15 +3122,15 @@ export default function ReportsPage() {
                             const isLateEarlyCol = ["LateIn", "EarlyOut", "Late In", "Early Out"].includes(k);
                             const colCellClass = isOffDayRow
                               ? isCheckCol
-                                ? "bg-sky-100/35 border-x border-sky-100/40"
+                                ? "bg-sky-100/40 border-r border-sky-200/70 last:border-r-0"
                                 : isLateEarlyCol
-                                  ? "bg-amber-100/35 border-x border-amber-100/40"
-                                  : ""
+                                  ? "bg-amber-100/40 border-r border-amber-200/70 last:border-r-0"
+                                  : "border-r border-rose-200/70 last:border-r-0"
                               : isCheckCol
-                                ? "bg-sky-50/50 border-x border-sky-100/60"
+                                ? "bg-sky-50/60 border-r border-sky-200/70 last:border-r-0"
                                 : isLateEarlyCol
-                                  ? "bg-amber-50/50 border-x border-amber-100/60"
-                                  : "";
+                                  ? "bg-amber-50/60 border-r border-amber-200/70 last:border-r-0"
+                                  : "border-r border-slate-200/80 last:border-r-0";
 
                             if (k === "Status") {
                               return (
