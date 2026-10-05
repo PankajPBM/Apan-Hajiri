@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, KeyRound, RefreshCcw, ShieldAlert, Upload, XCircle } from "lucide-react";
+import { CheckCircle2, KeyRound, Lock, RefreshCcw, ShieldAlert, Upload, X, XCircle } from "lucide-react";
 import {
   activateLicenseFiles,
   deactivateLicenseFiles,
@@ -11,6 +11,8 @@ import {
 } from "@/components/data/license-client";
 import { useCalendarPreference } from "@/components/date/calendar-context";
 import { formatCalendarDateTime } from "@/components/date/date-display";
+import { readAuthSession, type AuthSession } from "@/components/data/auth-store";
+import { resolveApiBases } from "@/lib/api-bases";
 
 type NoticeKind = "success" | "warning" | "error" | "info";
 
@@ -22,6 +24,7 @@ type NoticeState = {
 type LicensePanelProps = {
   compact?: boolean;
   showHeader?: boolean;
+  onClose?: () => void;
 };
 
 const noticeTone: Record<NoticeKind, string> = {
@@ -89,8 +92,9 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function LicensePanel({ compact = false, showHeader = true }: LicensePanelProps) {
+export function LicensePanel({ compact = false, showHeader = true, onClose }: LicensePanelProps) {
   const { calendarType } = useCalendarPreference();
+  const [session, setSession] = useState<AuthSession | null>(null);
   const [status, setStatus] = useState<LicenseStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -100,7 +104,34 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Deactivate modal state
+  const [deactivateModalOpen, setDeactivateModalOpen] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminPasswordError, setAdminPasswordError] = useState<string | null>(null);
+  const [deactivating, setDeactivating] = useState(false);
+
+  useEffect(() => {
+    setSession(readAuthSession());
+  }, []);
+
+  const isAdmin = session?.role === "Admin";
   const statusTone = useMemo(() => modeTone(status?.activationMode ?? "locked"), [status?.activationMode]);
+
+  // Handle ESC key for modal
+  useEffect(() => {
+    if (!onClose) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (deactivateModalOpen) {
+          setDeactivateModalOpen(false);
+        } else {
+          onClose();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, deactivateModalOpen]);
 
   const loadStatus = useCallback(async (withNotice: boolean) => {
     try {
@@ -136,6 +167,10 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
   }
 
   function attachFiles(files: FileList | File[]) {
+    if (!isAdmin) {
+      setNotice({ kind: "error", text: "Only Administrator accounts can activate the license." });
+      return;
+    }
     const picked = pickLicenseFiles(Array.from(files));
     if (picked.dat) {
       setLicenseDatFile(picked.dat);
@@ -161,6 +196,11 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
   }
 
   async function handleActivate() {
+    if (!isAdmin) {
+      setNotice({ kind: "error", text: "Only Administrator accounts can activate the license." });
+      return;
+    }
+
     if (!licenseKeyFile) {
       setNotice({ kind: "warning", text: "Drop or select a .key activation file." });
       return;
@@ -188,28 +228,84 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
     }
   }
 
-  async function handleDeactivate() {
-    if (!window.confirm("Deactivate current license and return to trial/locked mode?")) {
+  function handleDeactivateClick() {
+    if (!isAdmin) {
+      setNotice({ kind: "error", text: "Only Administrator accounts can deactivate the license." });
+      return;
+    }
+    setAdminPassword("");
+    setAdminPasswordError(null);
+    setDeactivateModalOpen(true);
+  }
+
+  async function confirmDeactivate() {
+    const pwd = adminPassword.trim();
+    if (!pwd) {
+      setAdminPasswordError("Please enter the administrator password.");
       return;
     }
 
-    setBusy(true);
+    setDeactivating(true);
+    setAdminPasswordError(null);
+
     try {
+      let verified = false;
+      const bases = resolveApiBases();
+      for (const base of bases) {
+        try {
+          const res = await fetch(`${base}/api/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: session?.username || "admin",
+              password: pwd,
+            }),
+            cache: "no-store",
+          });
+
+          if (res.ok) {
+            const data = (await res.json()) as { role?: string; Role?: string };
+            const role = data.role || data.Role;
+            if (role === "Admin") {
+              verified = true;
+              break;
+            } else {
+              setAdminPasswordError("This account does not have Administrator privileges.");
+              setDeactivating(false);
+              return;
+            }
+          } else {
+            const errData = (await res.json().catch(() => null)) as { message?: string } | null;
+            setAdminPasswordError(errData?.message || "Invalid administrator password.");
+            setDeactivating(false);
+            return;
+          }
+        } catch {
+          // try next base
+        }
+      }
+
+      if (!verified) {
+        setAdminPasswordError("Invalid administrator password. Please try again.");
+        setDeactivating(false);
+        return;
+      }
+
       const latest = await deactivateLicenseFiles();
       setStatus(latest);
-      setNotice({ kind: "warning", text: "License deactivated." });
+      setDeactivateModalOpen(false);
+      setNotice({ kind: "warning", text: "License successfully deactivated." });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "License deactivation failed.";
-      setNotice({ kind: "error", text: message });
+      setAdminPasswordError(error instanceof Error ? error.message : "License deactivation failed.");
     } finally {
-      setBusy(false);
+      setDeactivating(false);
     }
   }
 
   const summaryGrid = compact ? "sm:grid-cols-2" : "md:grid-cols-3";
   const bodyGrid = compact ? "grid-cols-1" : "xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]";
 
-  return (
+  const panelContent = (
     <div className="space-y-5">
       {showHeader ? (
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -229,14 +325,24 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
             </button>
             <button
               type="button"
-              onClick={handleDeactivate}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-[linear-gradient(120deg,#fff1f1,#ffe9e9)] px-3 py-1.5 text-xs font-medium text-rose-700 transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_18px_-14px_rgba(153,58,58,0.6)] disabled:cursor-not-allowed disabled:opacity-70"
+              onClick={handleDeactivateClick}
+              disabled={busy || !isAdmin}
+              title={!isAdmin ? "Administrator privilege required" : "Deactivate current license"}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-[linear-gradient(120deg,#fff1f1,#ffe9e9)] px-3 py-1.5 text-xs font-medium text-rose-700 transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_18px_-14px_rgba(153,58,58,0.6)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <XCircle className="h-3.5 w-3.5" />
               Deactivate
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {!isAdmin ? (
+        <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
+          <Lock className="h-4 w-4 shrink-0 text-amber-600" />
+          <span>
+            You are signed in as <strong>{session?.role || "User"}</strong>. Only an <strong>Administrator</strong> can activate or deactivate the software license.
+          </span>
         </div>
       ) : null}
 
@@ -304,6 +410,7 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
               <div
                 onDragOver={(event) => {
                   event.preventDefault();
+                  if (!isAdmin) return;
                   setDragActive(true);
                 }}
                 onDragLeave={(event) => {
@@ -313,10 +420,18 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
                 onDrop={(event) => {
                   event.preventDefault();
                   setDragActive(false);
+                  if (!isAdmin) {
+                    setNotice({ kind: "error", text: "Only Administrator accounts can activate the license." });
+                    return;
+                  }
                   attachFiles(event.dataTransfer.files);
                 }}
                 className={`mt-3 rounded-xl border-2 border-dashed px-4 py-6 text-center transition ${
-                  dragActive ? "border-[#2f6e9c] bg-[#eef5fd]" : "border-[#cfe0f2] bg-[#f8fbff]"
+                  !isAdmin
+                    ? "border-slate-200 bg-slate-50/50 opacity-60 cursor-not-allowed"
+                    : dragActive
+                    ? "border-[#2f6e9c] bg-[#eef5fd]"
+                    : "border-[#cfe0f2] bg-[#f8fbff]"
                 }`}
               >
                 <Upload className="mx-auto h-5 w-5 text-[#2f6e9c]" />
@@ -324,8 +439,15 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
                 <p className="mt-1 text-xs text-[#53738d]">or choose files manually</p>
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[#b9d3ea] bg-white px-3 py-1.5 text-xs font-medium text-[#1d446b] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_18px_-14px_rgba(29,68,107,0.75)]"
+                  onClick={() => {
+                    if (!isAdmin) {
+                      setNotice({ kind: "error", text: "Only Administrator accounts can activate the license." });
+                      return;
+                    }
+                    fileInputRef.current?.click();
+                  }}
+                  disabled={!isAdmin}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[#b9d3ea] bg-white px-3 py-1.5 text-xs font-medium text-[#1d446b] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_18px_-14px_rgba(29,68,107,0.75)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <KeyRound className="h-3.5 w-3.5" />
                   Browse Files
@@ -335,6 +457,7 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
                   type="file"
                   accept=".key"
                   multiple
+                  disabled={!isAdmin}
                   onChange={(event) => {
                     attachFiles(event.target.files ?? []);
                     event.target.value = "";
@@ -354,8 +477,9 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
                 <button
                   type="button"
                   onClick={handleActivate}
-                  disabled={busy}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[linear-gradient(120deg,#1d4ed8,#0284c7)] px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_18px_-14px_rgba(30,78,216,0.9)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_16px_22px_-14px_rgba(30,78,216,0.95)] disabled:cursor-not-allowed disabled:opacity-70"
+                  disabled={busy || !isAdmin}
+                  title={!isAdmin ? "Administrator privilege required" : "Activate license"}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[linear-gradient(120deg,#1d4ed8,#0284c7)] px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_18px_-14px_rgba(30,78,216,0.9)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_16px_22px_-14px_rgba(30,78,216,0.95)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <CheckCircle2 className="h-3.5 w-3.5" />
                   Activate
@@ -367,8 +491,8 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
                     setLicenseKeyFile(null);
                     setNotice({ kind: "info", text: "Selected files cleared." });
                   }}
-                  disabled={busy}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[--border] bg-[--card] px-3 py-1.5 text-xs font-medium transition duration-200 hover:-translate-y-0.5 hover:bg-[#f5f9ff] disabled:cursor-not-allowed disabled:opacity-70"
+                  disabled={busy || !isAdmin}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[--border] bg-[--card] px-3 py-1.5 text-xs font-medium transition duration-200 hover:-translate-y-0.5 hover:bg-[#f5f9ff] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Clear Files
                 </button>
@@ -379,6 +503,106 @@ export function LicensePanel({ compact = false, showHeader = true }: LicensePane
       ) : null}
 
       {notice ? <div className={`rounded-lg border px-3 py-2 text-sm ${noticeTone[notice.kind]}`}>{notice.text}</div> : null}
+
+      {/* Application-based Deactivation Confirmation Modal */}
+      {deactivateModalOpen ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !deactivating) {
+              setDeactivateModalOpen(false);
+            }
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-rose-100 p-2.5 text-rose-600 shrink-0">
+                <ShieldAlert className="h-6 w-6" />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-slate-900">Deactivate License</h4>
+                <p className="mt-1 text-xs text-slate-500 leading-relaxed">
+                  Deactivating your license will remove the active license key and return the software to trial or restricted mode. This action requires Administrator credentials.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 pt-2">
+              <label className="block text-xs font-semibold text-slate-700">
+                Admin Password:
+              </label>
+              <input
+                type="password"
+                value={adminPassword}
+                onChange={(e) => {
+                  setAdminPassword(e.target.value);
+                  setAdminPasswordError(null);
+                }}
+                placeholder="Enter Administrator Password"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-200"
+                autoFocus
+                disabled={deactivating}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && adminPassword.trim() && !deactivating) {
+                    void confirmDeactivate();
+                  }
+                }}
+              />
+              {adminPasswordError ? (
+                <p className="text-xs text-rose-600 font-medium pt-0.5">{adminPasswordError}</p>
+              ) : null}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDeactivateModalOpen(false)}
+                disabled={deactivating}
+                className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeactivate}
+                disabled={deactivating || !adminPassword.trim()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50 transition shadow-xs"
+              >
+                {deactivating ? <RefreshCcw className="h-3.5 w-3.5 animate-spin" /> : null}
+                Confirm Deactivation
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
+
+  // If opened via Topbar modal (onClose is passed), wrap in an application dialog
+  if (onClose) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto animate-in fade-in duration-200"
+        onClick={(e) => {
+          if (e.target === e.currentTarget && !deactivateModalOpen) {
+            onClose();
+          }
+        }}
+      >
+        <div className="relative w-full max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+            title="Close License Details"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          {panelContent}
+        </div>
+      </div>
+    );
+  }
+
+  return panelContent;
 }

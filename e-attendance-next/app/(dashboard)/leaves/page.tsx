@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Pencil, Plus, RefreshCcw, Search, Trash2, X } from "lucide-react";
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Pencil, Plus, RefreshCcw, Search, Sparkles, Trash2, X } from "lucide-react";
 import { syncShiftCalendarHolidays, type HolidayItem } from "@/components/data/shift-store";
-import { adToBs, bsToAd, type CalendarType as DateCalendarType } from "@/components/date/bs-converter";
+import { adToBs, bsToAd, fromAdString, toAdString, type CalendarType as DateCalendarType } from "@/components/date/bs-converter";
+import { getResolvedNepalHolidays } from "@/components/data/nepal-holidays";
 import { useCalendarPreference } from "@/components/date/calendar-context";
 import { formatCalendarDate } from "@/components/date/date-display";
 import { BsDateField, defaultTodayAdString, shiftDateByDays } from "@/components/date/dual-date-input";
@@ -69,11 +70,13 @@ function pad2(value: number): string {
 function calendarHeaderLabel(value: string, calendarType: DateCalendarType): string {
   const base = new Date(`${value}T00:00:00`);
   if (Number.isNaN(base.getTime())) return value;
-  if (calendarType === "ad") {
-    return base.toLocaleString(undefined, { month: "long", year: "numeric" });
-  }
   const bs = adToBs(base);
-  return bs ? `${BS_MONTHS[bs.month - 1]} ${bs.year}` : value;
+  const adLabel = base.toLocaleString(undefined, { month: "short", year: "numeric" });
+  const bsLabel = bs ? `${BS_MONTHS[bs.month - 1]} ${bs.year}` : "";
+  if (calendarType === "ad") {
+    return bs ? `${adLabel} (${bsLabel} BS)` : adLabel;
+  }
+  return bs ? `${bsLabel} (${adLabel} AD)` : value;
 }
 
 function shiftMonth(value: string, delta: number, calendarType: DateCalendarType): string {
@@ -313,11 +316,77 @@ export default function LeavesPage() {
     }
   };
 
+  const seedDefaultNepalHolidays = async () => {
+    const catalog = getResolvedNepalHolidays();
+    for (const h of catalog) {
+      try {
+        await requestJson("/api/personnel/holidays", {
+          method: "POST",
+          body: JSON.stringify({
+            holidayDate: h.holidayDate,
+            holidayName: h.holidayName,
+            description: h.description,
+            isRecurring: h.isRecurring,
+            department: "all",
+            timeZoneId: "1",
+            isActive: true,
+          }),
+        });
+      } catch { /* ignore duplicates */ }
+    }
+  };
+
+  const [importingHolidays, setImportingHolidays] = useState(false);
+
+  const importNepalHolidays = async () => {
+    setImportingHolidays(true);
+    try {
+      const catalog = getResolvedNepalHolidays();
+      const existing = await requestJson<HolidayRow[]>("/api/personnel/holidays").catch(() => []);
+      const existingSet = new Set(existing.map((h) => `${h.holidayDate}_${h.holidayName.toLowerCase().trim()}`));
+
+      let addedCount = 0;
+      for (const h of catalog) {
+        const key = `${h.holidayDate}_${h.holidayName.toLowerCase().trim()}`;
+        if (existingSet.has(key)) continue;
+        try {
+          await requestJson("/api/personnel/holidays", {
+            method: "POST",
+            body: JSON.stringify({
+              holidayDate: h.holidayDate,
+              holidayName: h.holidayName,
+              description: h.description,
+              isRecurring: h.isRecurring,
+              department: "all",
+              timeZoneId: "1",
+              isActive: true,
+            }),
+          });
+          addedCount++;
+        } catch { /* ignore */ }
+      }
+      await loadHolidays();
+      window.alert(
+        addedCount > 0
+          ? `Successfully synchronized ${addedCount} Nepal Public Holidays into the system!`
+          : "All Nepal Public Holidays are already up-to-date in the calendar."
+      );
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to sync Nepal public holidays.");
+    } finally {
+      setImportingHolidays(false);
+    }
+  };
+
   const loadHolidays = useCallback(async () => {
     setHolidayLoading(true);
     setHolidayError(null);
     try {
-      const rows = normalizeHolidayRows(await requestJson<HolidayRow[]>("/api/personnel/holidays"));
+      let rows = normalizeHolidayRows(await requestJson<HolidayRow[]>("/api/personnel/holidays"));
+      if (rows.length === 0) {
+        await seedDefaultNepalHolidays();
+        rows = normalizeHolidayRows(await requestJson<HolidayRow[]>("/api/personnel/holidays"));
+      }
       setHolidayRows(rows);
       syncShiftCalendarHolidays(rows.map(toHolidayItem));
     } catch (error) {
@@ -462,13 +531,61 @@ export default function LeavesPage() {
 
   const calendarCells = useMemo(() => buildCalendar(calendarMonth, calendarType), [calendarMonth, calendarType]);
   const activeHolidays = useMemo(() => holidayRows.filter((row) => row.isActive), [holidayRows]);
+
+  const currentCalendarYear = useMemo(() => {
+    const anchor = fromAdString(calendarMonth) ?? new Date();
+    if (calendarType === "bs") {
+      const bs = adToBs(anchor);
+      return bs?.year ?? 2082;
+    }
+    return anchor.getFullYear();
+  }, [calendarMonth, calendarType]);
+
+  const availableYears = useMemo(() => {
+    const set = new Set<number>();
+    set.add(currentCalendarYear);
+    for (const h of holidayRows) {
+      const d = fromAdString(h.holidayDate);
+      if (!d) continue;
+      if (calendarType === "bs") {
+        const bs = adToBs(d);
+        if (bs) set.add(bs.year);
+      } else {
+        set.add(d.getFullYear());
+      }
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }, [holidayRows, calendarType, currentCalendarYear]);
+
+  const handleSelectYear = (year: number) => {
+    if (calendarType === "bs") {
+      const targetAd = bsToAd(year, 1, 1);
+      if (targetAd) setCalendarMonth(toInputDate(targetAd));
+    } else {
+      setCalendarMonth(`${year}-01-01`);
+    }
+  };
+
   const filteredHolidayRows = useMemo(() => {
     const token = holidaySearch.trim().toLowerCase();
-    return holidayRows.filter((row) => {
-      if (!token) return true;
-      return [row.holidayDate, row.holidayName, row.description].join(" ").toLowerCase().includes(token);
-    });
-  }, [holidayRows, holidaySearch]);
+    return holidayRows
+      .filter((row) => {
+        const d = fromAdString(row.holidayDate);
+        if (!d) return false;
+        if (calendarType === "bs") {
+          const bs = adToBs(d);
+          const matchesYear = bs ? bs.year === currentCalendarYear : false;
+          if (!matchesYear && !row.isRecurring) return false;
+        } else {
+          const matchesYear = d.getFullYear() === currentCalendarYear;
+          if (!matchesYear && !row.isRecurring) return false;
+        }
+
+        if (!token) return true;
+        return [row.holidayDate, row.holidayName, row.description].join(" ").toLowerCase().includes(token);
+      })
+      .sort((a, b) => a.holidayDate.localeCompare(b.holidayDate));
+  }, [holidayRows, holidaySearch, calendarType, currentCalendarYear]);
 
   const visibleMonthHolidayCount = useMemo(() => {
     const ids = new Set<number>();
@@ -481,7 +598,22 @@ export default function LeavesPage() {
     return ids.size;
   }, [calendarCells, activeHolidays]);
 
-  const recurringCount = useMemo(() => activeHolidays.filter((row) => row.isRecurring).length, [activeHolidays]);
+  const selectedYearActiveHolidays = useMemo(() => {
+    return activeHolidays.filter((row) => {
+      const d = fromAdString(row.holidayDate);
+      if (!d) return false;
+      if (calendarType === "bs") {
+        const bs = adToBs(d);
+        const matchesYear = bs ? bs.year === currentCalendarYear : false;
+        return matchesYear || row.isRecurring;
+      } else {
+        const matchesYear = d.getFullYear() === currentCalendarYear;
+        return matchesYear || row.isRecurring;
+      }
+    });
+  }, [activeHolidays, calendarType, currentCalendarYear]);
+
+  const recurringCount = useMemo(() => selectedYearActiveHolidays.filter((row) => row.isRecurring).length, [selectedYearActiveHolidays]);
   const leaveSummary = useMemo(
     () => ({
       pending: leaveRequests.filter((row) => row.status === "pending").length,
@@ -510,6 +642,21 @@ export default function LeavesPage() {
       return [row.employeeCode, row.employee, row.type, row.from, row.to].join(" ").toLowerCase().includes(token);
     });
   }, [leaveRequests, leaveSearch, leaveStatus, leaveAreaFilter, leaveDeptFilter]);
+
+  const [leavePage, setLeavePage] = useState(1);
+  const [leavePageSize, setLeavePageSize] = useState(10);
+
+  const leaveTotalPages = Math.max(1, Math.ceil(filteredLeaves.length / leavePageSize));
+  const leaveCurrentPage = Math.min(leavePage, leaveTotalPages);
+
+  const paginatedLeaves = useMemo(() => {
+    const start = (leaveCurrentPage - 1) * leavePageSize;
+    return filteredLeaves.slice(start, start + leavePageSize);
+  }, [filteredLeaves, leaveCurrentPage, leavePageSize]);
+
+  useEffect(() => {
+    setLeavePage(1);
+  }, [leaveSearch, leaveStatus, leaveAreaFilter, leaveDeptFilter, leavePageSize]);
 
   const openHolidayModal = (date?: string, row?: HolidayRow) => {
     const nextDate = row?.holidayDate || date || today;
@@ -577,141 +724,397 @@ export default function LeavesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="tab-header">
-        <h1 className="text-xl font-bold text-[#123454]">Leaves and Holiday Management</h1>
-        <p className="text-xs text-[--muted-foreground]">Save holidays by date with detail, show them red in calendar view, and keep the same holiday data ready for reports.</p>
-      </div>
+      {/* 1. Header Overview & Summary */}
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-5 mb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                Leaves & Holiday Management
+              </h1>
+              <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-100">
+                Time-Off Hub
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Configure organizational calendar holidays, manage employee leave requests, and review approvals.
+            </p>
+          </div>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <article className="rounded-xl border border-[#d8e6f4] bg-[linear-gradient(145deg,#ffffff,#f6fbff)] p-3 shadow-sm transition duration-300 hover:-translate-y-0.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-[#6987a3]">Active Holidays</p><p className="mt-1 text-2xl font-bold text-[#123454]">{activeHolidays.length}</p></article>
-        <article className="rounded-xl border border-[#f1d3d3] bg-[linear-gradient(145deg,#fff9f9,#fff0f0)] p-3 shadow-sm transition duration-300 hover:-translate-y-0.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-[#ab6262]">This Month</p><p className="mt-1 text-2xl font-bold text-[#a12424]">{visibleMonthHolidayCount}</p></article>
-        <article className="rounded-xl border border-[#dce8de] bg-[linear-gradient(145deg,#fcfffc,#eff8f1)] p-3 shadow-sm transition duration-300 hover:-translate-y-0.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-[#608767]">Recurring</p><p className="mt-1 text-2xl font-bold text-[#1d7b38]">{recurringCount}</p></article>
-        <article className="rounded-xl border border-[#dae3f4] bg-[linear-gradient(145deg,#ffffff,#f3f7ff)] p-3 shadow-sm transition duration-300 hover:-translate-y-0.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-[#657ca7]">Pending Leaves</p><p className="mt-1 text-2xl font-bold text-[#214f95]">{leaveSummary.pending}</p></article>
-      </section>
-
-      <section className="rounded-2xl border border-[#d8e6f4] bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => openHolidayModal(today)} className="inline-flex items-center gap-1.5 rounded-lg bg-[#1f5c8f] px-3 py-1.5 text-xs font-semibold text-white transition duration-300 hover:bg-[#164a72]"><Plus className="h-3.5 w-3.5" />Add Holiday</button>
-          <button type="button" onClick={() => setLeaveModalOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-[#d3e1ee] bg-[#f7fbff] px-3 py-1.5 text-xs font-semibold text-[#1f5c8f] transition duration-300 hover:bg-[#eef7ff]"><CalendarDays className="h-3.5 w-3.5" />Apply Leave</button>
-          <button type="button" onClick={() => void loadHolidays()} className="inline-flex items-center gap-1.5 rounded-lg border border-[#d3e1ee] bg-white px-3 py-1.5 text-xs font-semibold text-[#355a7a] transition duration-300 hover:bg-[#f9fcff]"><RefreshCcw className={`h-3.5 w-3.5 ${holidayLoading ? "animate-spin" : ""}`} />Refresh</button>
-          <div className="relative ml-auto min-w-[200px] flex-1 md:max-w-xs">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#6d87a4]" />
-            <input value={holidaySearch} onChange={(event) => setHolidaySearch(event.target.value)} placeholder="Search holiday..." className="w-full rounded-lg border border-[#d3e1ee] bg-[#fbfdff] py-1.5 pl-8 pr-3 text-xs text-[#123454] outline-none focus:ring-1 focus:ring-[#b7d0e6]" />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openHolidayModal(today)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-blue-700 shadow-xs transition"
+            >
+              <Plus className="h-4 w-4" />
+              Add Holiday
+            </button>
+            <button
+              type="button"
+              onClick={() => void importNepalHolidays()}
+              disabled={importingHolidays}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 shadow-xs transition"
+            >
+              <Sparkles className={`h-4 w-4 text-rose-600 ${importingHolidays ? "animate-spin" : ""}`} />
+              {importingHolidays ? "Updating Holidays..." : "Load Nepal Public Holidays"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLeaveModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-xs transition"
+            >
+              <CalendarDays className="h-4 w-4 text-slate-500" />
+              Apply Leave
+            </button>
+            <button
+              type="button"
+              onClick={() => void loadHolidays()}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+            >
+              <RefreshCcw className={`h-4 w-4 text-slate-500 ${holidayLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
           </div>
         </div>
-        {holidayError ? <div className="mt-2 rounded-lg border border-[#f3c7c7] bg-[#fff3f3] px-3 py-2 text-xs text-[#a53535]">{holidayError}</div> : null}
+
+        {/* 4 Summary Cards */}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Active Holidays</span>
+              <p className="text-2xl font-extrabold text-slate-900 leading-tight mt-1">{selectedYearActiveHolidays.length}</p>
+              <p className="text-[11px] text-slate-400">In year {currentCalendarYear} {calendarType.toUpperCase()}</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded-xl border border-rose-100 bg-rose-50/40 p-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-rose-700">This Month</span>
+              <p className="text-2xl font-extrabold text-rose-700 leading-tight mt-1">{visibleMonthHolidayCount}</p>
+              <p className="text-[11px] text-rose-500">Current calendar view</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50/40 p-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">Recurring</span>
+              <p className="text-2xl font-extrabold text-emerald-700 leading-tight mt-1">{recurringCount}</p>
+              <p className="text-[11px] text-emerald-500">Annual repeat</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-700">Pending Leaves</span>
+              <p className="text-2xl font-extrabold text-blue-700 leading-tight mt-1">{leaveSummary.pending}</p>
+              <p className="text-[11px] text-blue-500">Awaiting approval</p>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)]">
-        <div className="rounded-2xl border border-[#d8e6f4] bg-[radial-gradient(circle_at_top_left,#ffffff,#f7fbff_48%,#edf6ff)] p-3 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <div className="inline-flex items-center gap-1.5 rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#1f5c8f] shadow-sm">
-                <CalendarDays className="h-3 w-3" />
+      {/* 2. Interactive Calendar & Holiday List */}
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,1fr)]">
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-2">
+              <span className="rounded-md bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
                 {calendarType === "bs" ? "BS Calendar" : "AD Calendar"}
-              </div>
-              <h2 className="mt-1 text-base font-bold text-[#123454]">Holiday Calendar</h2>
+              </span>
+              <h2 className="text-sm font-bold text-slate-900">Holiday Calendar</h2>
             </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button type="button" onClick={() => setCalendarMonth((prev) => shiftMonth(prev, -1, calendarType))} className="rounded-lg border border-[#d3e1ee] bg-white p-1.5 text-[#1f5c8f] hover:bg-[#eef7ff]"><ChevronLeft className="h-3.5 w-3.5" /></button>
-              <div className="min-w-[140px] rounded-xl bg-white/75 px-3 py-1 text-center shadow-sm">
-                <div className="text-xs font-bold text-[#123454]">{calendarHeaderLabel(calendarMonth, calendarType)}</div>
-                <div className="text-[10px] text-[#6a86a1]">{calendarType === "bs" ? `Ref AD ${calendarMonth}` : formatCalendarDate(calendarMonth, "bs", calendarMonth)}</div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCalendarMonth((prev) => shiftMonth(prev, -1, calendarType))}
+                className="rounded-lg border border-slate-300 bg-white p-1.5 text-slate-600 hover:bg-slate-50"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <div className="min-w-[140px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-1 text-center text-xs font-bold text-slate-800">
+                {calendarHeaderLabel(calendarMonth, calendarType)}
               </div>
-              <button type="button" onClick={() => setCalendarMonth((prev) => shiftMonth(prev, 1, calendarType))} className="rounded-lg border border-[#d3e1ee] bg-white p-1.5 text-[#1f5c8f] hover:bg-[#eef7ff]"><ChevronRight className="h-4 w-4" /></button>
-              <button type="button" onClick={() => setCalendarMonth(today)} className="rounded-lg border border-[#c8dbf0] bg-white px-2 py-1 text-[10px] font-bold text-[#355a7a] hover:bg-[#eef7ff]">Today</button>
+              <button
+                type="button"
+                onClick={() => setCalendarMonth((prev) => shiftMonth(prev, 1, calendarType))}
+                className="rounded-lg border border-slate-300 bg-white p-1.5 text-slate-600 hover:bg-slate-50"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setCalendarMonth(today)}
+                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Today
+              </button>
             </div>
           </div>
 
-          <div className="mt-3 grid grid-cols-7 gap-1.5">
-            {WEEK_LABELS.map((label, index) => <div key={label} className={`rounded-lg px-2 py-1 text-center text-[10px] font-bold uppercase tracking-wider ${index === 6 ? "bg-[#fff4f4] text-[#b54646]" : "bg-[#eef5fb] text-[#6987a3]"}`}>{label}</div>)}
-            {calendarCells.map((cell) => {
+          <div className="mt-4 grid grid-cols-7 gap-1.5">
+            {WEEK_LABELS.map((label, index) => (
+              <div
+                key={label}
+                className={`rounded-md p-1.5 text-center text-[10px] font-bold uppercase tracking-wider ${
+                  index === 6 ? "bg-rose-50 text-rose-700 font-bold" : "bg-slate-50 text-slate-500"
+                }`}
+              >
+                {label}
+              </div>
+            ))}
+            {calendarCells.map((cell, cellIndex) => {
               const matching = activeHolidays.filter((row) => matchesHolidayDate(row, cell.date));
               const picked = primaryHoliday(matching, cell.date);
               const isHoliday = matching.length > 0;
               const isWeeklyOff = cell.dayOfWeek === 6;
               const isToday = cell.date === today;
-              
-              const dayStyles = isToday 
-                ? "border-emerald-200 bg-emerald-50/50 ring-2 ring-emerald-500/20 hover:bg-emerald-50 shadow-[0_12px_24px_-20px_rgba(16,185,129,0.5)]"
-                : isHoliday 
-                  ? "border-[#efb8b8] bg-[#fff8f8] shadow-sm hover:-translate-y-0.5" 
-                  : isWeeklyOff 
-                    ? "border-[#f0d8c9] bg-[#fffaf7] hover:-translate-y-0.5" 
-                    : "border-[#dbe8f4] bg-white hover:-translate-y-0.5 hover:bg-[#f8fbff]";
 
-              const labelStyles = isToday 
-                ? "text-emerald-700" 
-                : isHoliday || isWeeklyOff 
-                  ? "text-[#a82424]" 
-                  : "text-[#123454]";
+              const cellParsed = fromAdString(cell.date);
+              const cellBs = cellParsed ? adToBs(cellParsed) : null;
+              const cellBsFormatted = cellBs ? `${BS_MONTHS[cellBs.month - 1]} ${cellBs.day}, ${cellBs.year} BS` : "";
+
+              const dayStyles = isToday
+                ? "border-blue-600 bg-blue-50/50 ring-2 ring-blue-600/30 shadow-xs"
+                : isHoliday
+                ? "border-rose-200 bg-rose-50/50"
+                : isWeeklyOff
+                ? "border-slate-200 bg-slate-50/60"
+                : "border-slate-200 bg-white hover:bg-slate-50";
 
               return (
-                <button key={cell.date} type="button" onClick={() => openHolidayModal(cell.date, picked ?? undefined)} className={`group relative flex min-h-[76px] flex-col overflow-hidden rounded-xl border p-2 text-left transition-all duration-300 ${dayStyles} ${cell.inCurrentMonth ? "" : "opacity-30"}`}>
-                  <div className="flex items-center justify-between">
-                    <div className="leading-tight">
-                      <div className={`text-sm font-bold ${labelStyles}`}>{cell.primaryLabel}{isToday && " •"}</div>
-                      <div className="text-[9px] font-medium text-[#6a86a1]">{cell.secondaryLabel}</div>
+                <button
+                  key={cell.date}
+                  type="button"
+                  onClick={() => openHolidayModal(cell.date, picked ?? undefined)}
+                  title={
+                    isHoliday
+                      ? `${matching.map((r) => r.holidayName).join(", ")}${cellBsFormatted ? ` (${cellBsFormatted})` : ""} - Click to edit`
+                      : undefined
+                  }
+                  className={`group relative flex min-h-[76px] flex-col rounded-xl border p-2 text-left transition ${dayStyles} ${
+                    cell.inCurrentMonth ? "" : "opacity-30"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-1">
+                    <div className="flex flex-col">
+                      <span className={`text-xs font-bold leading-tight ${isHoliday || isWeeklyOff ? "text-rose-600" : "text-slate-800"}`}>
+                        {cell.primaryLabel}
+                      </span>
+                      <span className="text-[9.5px] font-semibold text-slate-400 tabular-nums whitespace-nowrap leading-tight mt-0.5">
+                        {cell.secondaryLabel}
+                      </span>
                     </div>
-                    {isToday ? <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[8px] font-bold uppercase text-white shadow-sm">Today</span> : isHoliday ? <span className="rounded-full bg-[#b82828] px-1.5 py-0.5 text-[8px] font-bold uppercase text-white">Holiday</span> : null}
+                    {isToday ? (
+                      <span className="rounded bg-emerald-600 px-1 py-0.5 text-[8px] font-bold text-white leading-none">TODAY</span>
+                    ) : isHoliday ? (
+                      <span className="rounded bg-rose-600 px-1 py-0.5 text-[8px] font-bold text-white leading-none">OFF</span>
+                    ) : null}
                   </div>
-                  <div className="mt-1 min-h-0 grow space-y-0.5">
-                    {matching.slice(0, 1).map((row) => <div key={`${cell.date}-${row.id}`} className="truncate rounded-md bg-white/80 px-1 py-0.5 text-[10px] font-semibold text-[#992c2c]">{row.holidayName}</div>)}
-                    {matching.length > 1 ? <div className="pl-1 text-[9px] font-medium text-[#8a4646]">+{matching.length - 1} more</div> : null}
+                  <div className="mt-1 flex-1">
+                    {matching.slice(0, 1).map((row) => (
+                      <div key={`${cell.date}-${row.id}`} className="truncate rounded bg-white px-1 py-0.5 text-[9px] font-semibold text-rose-700 shadow-2xs border border-rose-100">
+                        {row.holidayName}
+                      </div>
+                    ))}
                   </div>
+
+                  {/* Holiday Hover Detail Popover */}
+                  {isHoliday && (
+                    <div
+                      className={`pointer-events-none absolute z-50 hidden group-hover:flex flex-col w-72 rounded-2xl border border-rose-200/90 bg-white/95 backdrop-blur-md p-3.5 shadow-2xl text-xs text-slate-800 transition-all duration-150 ${
+                        cellIndex < 7 ? "top-full mt-2" : "bottom-full mb-2"
+                      } ${
+                        cell.dayOfWeek <= 1 ? "left-0" : cell.dayOfWeek >= 5 ? "right-0" : "left-1/2 -translate-x-1/2"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between border-b border-rose-100 pb-2 mb-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="flex h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
+                          <span className="font-bold text-rose-700 uppercase tracking-wider text-[10px]">
+                            Public Holiday
+                          </span>
+                        </div>
+                        <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] font-bold text-rose-700 border border-rose-200">
+                          Office Closed
+                        </span>
+                      </div>
+
+                      <div className="space-y-2">
+                        {matching.map((row) => (
+                          <div key={row.id} className="space-y-0.5">
+                            <div className="flex items-start justify-between gap-1">
+                              <h4 className="font-extrabold text-slate-900 text-xs leading-snug">
+                                {row.holidayName}
+                              </h4>
+                              {row.isRecurring && (
+                                <span className="rounded bg-amber-50 px-1.5 py-0.2 text-[8.5px] font-bold text-amber-700 border border-amber-200 shrink-0">
+                                  Annual
+                                </span>
+                              )}
+                            </div>
+                            {row.description && (
+                              <p className="text-[11px] text-slate-600 leading-relaxed font-normal">
+                                {row.description}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-2.5 pt-2 border-t border-slate-100 grid grid-cols-2 gap-1.5 text-[10.5px]">
+                        <div>
+                          <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">
+                            Bikram Sambat
+                          </span>
+                          <span className="font-bold text-rose-700">
+                            {cellBsFormatted || "—"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">
+                            Gregorian (AD)
+                          </span>
+                          <span className="font-semibold text-slate-700">
+                            {cell.date}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 pt-1.5 border-t border-slate-100 text-[9.5px] text-slate-400 italic text-center">
+                        Click cell to edit or manage holiday
+                      </div>
+                    </div>
+                  )}
                 </button>
               );
             })}
           </div>
         </div>
 
-        <div className="rounded-2xl border border-[#d8e6f4] bg-white p-3 shadow-sm">
-          <div className="flex items-center justify-between gap-2">
-            <div><h2 className="text-base font-bold text-[#123454]">Holiday List</h2></div>
-            <div className="rounded-full bg-[#eef5fb] px-2 py-0.5 text-[10px] font-bold text-[#355a7a]">{filteredHolidayRows.length} items</div>
-          </div>
-          <div className="mt-3 space-y-2">
-            {!holidayLoading && filteredHolidayRows.length === 0 ? <div className="rounded-xl border border-dashed border-[#c8d9eb] px-3 py-6 text-center text-xs text-[#5f7f9f]">No records found.</div> : null}
-            {!holidayLoading && filteredHolidayRows.map((row) => (
-              <article key={row.id} className={`rounded-xl border p-2 transition duration-300 hover:shadow-sm ${row.isActive ? "border-[#eed0d0] bg-[#fff8f8]" : "border-[#dbe8f4] bg-[#f8fbff]"}`}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <h3 className="truncate text-xs font-bold text-[#123454]">{row.holidayName}</h3>
-                      {row.isRecurring ? <span className="rounded-full bg-[#ffe7c4] px-1.5 py-0.5 text-[8px] font-bold uppercase text-[#b76500]">Rep</span> : null}
-                    </div>
-                    <p className="mt-0.5 text-[10px] font-bold text-[#8f2e2e]">{formatCalendarDate(row.holidayDate, calendarType, row.holidayDate)}</p>
-                    <p className="mt-1 line-clamp-2 text-[11px] text-[#4d6782]">{row.description}</p>
-                  </div>
-                  <div className="flex shrink-0 gap-1">
-                    <button type="button" onClick={() => openHolidayModal(row.holidayDate, row)} className="rounded-md border border-[#d3e1ee] bg-white p-1 text-[#1f5c8f] hover:bg-[#f0f7ff]"><Pencil className="h-3.5 w-3.5" /></button>
-                    <button type="button" onClick={() => void deleteHoliday(row)} className="rounded-md border border-[#efc8c8] bg-white p-1 text-[#b12f2f] hover:bg-[#fff5f5]"><Trash2 className="h-3.5 w-3.5" /></button>
-                  </div>
+        {/* Holiday Quick List */}
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs flex flex-col justify-between">
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">Configured Holidays</h2>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  Showing year {currentCalendarYear} {calendarType.toUpperCase()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={currentCalendarYear}
+                  onChange={(e) => handleSelectYear(Number(e.target.value))}
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-bold text-slate-700 outline-none focus:border-blue-500"
+                  title="Switch holiday list year"
+                >
+                  {availableYears.map((yr) => (
+                    <option key={yr} value={yr}>
+                      {yr} {calendarType.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                  {filteredHolidayRows.length} total
+                </span>
+              </div>
+            </div>
+            <div className="mt-3 space-y-2 max-h-[380px] overflow-y-auto pr-1">
+              {!holidayLoading && filteredHolidayRows.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-400">
+                  No holidays found for year {currentCalendarYear} {calendarType.toUpperCase()}.
                 </div>
-              </article>
-            ))}
+              ) : null}
+              {filteredHolidayRows.map((row, index) => {
+                const parsed = fromAdString(row.holidayDate);
+                const bs = parsed ? adToBs(parsed) : null;
+                const bsFormatted = bs ? `${bs.year}-${pad2(bs.month)}-${pad2(bs.day)} BS` : "";
+                return (
+                  <article
+                    key={row.id}
+                    className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 hover:bg-white hover:shadow-2xs transition"
+                  >
+                    <div className="flex items-start justify-between gap-2.5">
+                      {/* Holiday Number Badge */}
+                      <span className="flex h-6 min-w-6 items-center justify-center rounded-md bg-rose-50 text-[11px] font-bold text-rose-700 border border-rose-200 shrink-0 mt-0.5">
+                        #{index + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-xs font-bold text-slate-900 truncate">{row.holidayName}</h3>
+                          {row.isRecurring && (
+                            <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 border border-amber-200 shrink-0">
+                              Annual
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-0.5 text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 flex-wrap">
+                          {calendarType === "bs" ? (
+                            <>
+                              <span>{bsFormatted || `${row.holidayDate} AD`}</span>
+                              <span className="text-slate-300 font-normal">•</span>
+                              <span className="text-slate-500 font-normal">({row.holidayDate} AD)</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>{row.holidayDate} AD</span>
+                              {bsFormatted && (
+                                <>
+                                  <span className="text-slate-300 font-normal">•</span>
+                                  <span className="text-slate-500 font-normal">({bsFormatted})</span>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </p>
+                        {row.description && <p className="mt-1 text-[11px] text-slate-500 line-clamp-1">{row.description}</p>}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => openHolidayModal(row.holidayDate, row)}
+                          className="rounded p-1 text-slate-500 hover:bg-slate-200"
+                          title="Edit Holiday"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void deleteHoliday(row)}
+                          className="rounded p-1 text-rose-600 hover:bg-rose-50"
+                          title="Delete Holiday"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
           </div>
         </div>
       </section>
 
-      <section className="rounded-2xl border border-[#d8e6f4] bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="text-base font-bold text-[#123454]">Leave Requests</h2></div>
+      {/* 3. Leave Requests Table Card */}
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4 mb-4">
+          <h2 className="text-sm font-bold text-slate-900">Employee Leave Applications</h2>
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative min-w-[180px]">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#6d87a4]" />
-              <input value={leaveSearch} onChange={(event) => setLeaveSearch(event.target.value)} placeholder="Search..." className="w-full rounded-lg border border-[#d3e1ee] bg-[#fbfdff] py-1.5 pl-8 pr-3 text-xs text-[#123454] outline-none focus:ring-1 focus:ring-[#b7d0e6]" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                value={leaveSearch}
+                onChange={(event) => setLeaveSearch(event.target.value)}
+                placeholder="Search staff, leave type..."
+                style={{ paddingLeft: "2.25rem" }}
+                className="w-full rounded-lg border border-slate-300 bg-white py-1.5 pl-9 pr-3 text-xs text-slate-900 outline-none focus:border-blue-600"
+              />
             </div>
-            <select value={leaveAreaFilter} onChange={(event) => setLeaveAreaFilter(event.target.value)} className="rounded-lg border border-[#d3e1ee] bg-[#fbfdff] px-2 py-1.5 text-xs text-[#123454] outline-none">
-              <option value="">All Areas</option>
-              {leaveAreaOptions.map((area) => <option key={area} value={area}>{area}</option>)}
-            </select>
-            <select value={leaveDeptFilter} onChange={(event) => setLeaveDeptFilter(event.target.value)} className="rounded-lg border border-[#d3e1ee] bg-[#fbfdff] px-2 py-1.5 text-xs text-[#123454] outline-none">
-              <option value="">All Departments</option>
-              {leaveDeptOptions.map((dept) => <option key={dept} value={dept}>{dept}</option>)}
-            </select>
-            <select value={leaveStatus} onChange={(event) => setLeaveStatus(event.target.value as LeaveStatus)} className="rounded-lg border border-[#d3e1ee] bg-[#fbfdff] px-2 py-1.5 text-xs text-[#123454] outline-none">
-              <option value="all">All</option>
+            <select
+              value={leaveStatus}
+              onChange={(event) => setLeaveStatus(event.target.value as LeaveStatus)}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-blue-600"
+            >
+              <option value="all">All Status</option>
               <option value="pending">Pending</option>
               <option value="approved">Approved</option>
               <option value="rejected">Rejected</option>
@@ -719,77 +1122,215 @@ export default function LeavesPage() {
           </div>
         </div>
 
-        <div className="mt-3 overflow-x-auto">
-          <table className="min-w-full text-left text-xs">
-            <thead className="bg-[#f8fbff] text-[10px] uppercase tracking-wider text-[#6b88a6] font-bold"><tr><th className="px-3 py-2">Employee ID</th><th className="px-3 py-2">Employee</th><th className="px-3 py-2">Area</th><th className="px-3 py-2">Department</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">From</th><th className="px-3 py-2">To</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Actions</th></tr></thead>
-            <tbody className="divide-y divide-[#e5effa]">
-              {filteredLeaves.length === 0 ? <tr><td colSpan={9} className="px-3 py-6 text-center text-xs text-[#5f7f9f]">No requests found.</td></tr> : null}
-              {filteredLeaves.map((row) => (
-                <tr key={row.id} className="hover:bg-[#fbfdff]">
-                  <td className="px-3 py-2 text-[#355a7a]">{row.employeeCode || "-"}</td>
-                  <td className="px-3 py-2 font-bold text-[#123454]">{row.employee}</td>
-                  <td className="px-3 py-2 text-[#355a7a]">{row.area || "-"}</td>
-                  <td className="px-3 py-2 text-[#355a7a]">{row.department || "-"}</td>
-                  <td className="px-3 py-2 text-[#355a7a]">{row.type}</td>
-                  <td className="px-3 py-2 text-[#355a7a]">{formatCalendarDate(row.from, calendarType, row.from)}</td>
-                  <td className="px-3 py-2 text-[#355a7a]">{formatCalendarDate(row.to, calendarType, row.to)}</td>
-                  <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${leaveStatusClass(row.status)}`}>{row.status}</span></td>
-                  <td className="px-3 py-2">
-                    {row.status === "pending" ? (
-                      <div className="flex gap-1.5">
-                        <button
-                          type="button"
-                          disabled={leaveActionBusyId === row.id}
-                          onClick={() => void decideLeave(row.id, "approved")}
-                          className="rounded-md border border-[#bfe3c9] bg-[#eefbf1] px-2 py-1 text-[10px] font-bold text-[#0f8a45] transition duration-300 hover:bg-[#dff5e4] disabled:opacity-50"
-                        >
-                          Approve
-                        </button>
-                        <button
-                          type="button"
-                          disabled={leaveActionBusyId === row.id}
-                          onClick={() => void decideLeave(row.id, "rejected")}
-                          className="rounded-md border border-[#f3c7c7] bg-[#fff3f3] px-2 py-1 text-[10px] font-bold text-[#a53535] transition duration-300 hover:bg-[#ffe6e6] disabled:opacity-50"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-[10px] text-[#8fa5bd]">—</span>
-                    )}
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
+              <tr>
+                <th className="px-4 py-3">Employee Code</th>
+                <th className="px-4 py-3">Staff Name</th>
+                <th className="px-4 py-3">Leave Type</th>
+                <th className="px-4 py-3">From Date</th>
+                <th className="px-4 py-3">To Date</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredLeaves.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-6 text-center text-xs text-slate-400">
+                    No leave requests found.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                paginatedLeaves.map((row) => (
+                  <tr key={row.id} className="hover:bg-slate-50 transition">
+                    <td className="px-4 py-3 font-semibold text-slate-900">{row.employeeCode}</td>
+                    <td className="px-4 py-3 font-medium text-slate-800">{row.employee}</td>
+                    <td className="px-4 py-3 text-slate-600">{row.type}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {(() => {
+                        const parsed = row.from ? fromAdString(row.from) : null;
+                        const bs = parsed ? adToBs(parsed) : null;
+                        return bs ? (
+                          <div>
+                            <span className="font-semibold text-xs text-slate-800">{`${bs.year}-${pad2(bs.month)}-${pad2(bs.day)} BS`}</span>
+                            <span className="block text-[10px] text-slate-400 tabular-nums">({row.from} AD)</span>
+                          </div>
+                        ) : (
+                          <span>{row.from}</span>
+                        );
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {(() => {
+                        const parsed = row.to ? fromAdString(row.to) : null;
+                        const bs = parsed ? adToBs(parsed) : null;
+                        return bs ? (
+                          <div>
+                            <span className="font-semibold text-xs text-slate-800">{`${bs.year}-${pad2(bs.month)}-${pad2(bs.day)} BS`}</span>
+                            <span className="block text-[10px] text-slate-400 tabular-nums">({row.to} AD)</span>
+                          </div>
+                        ) : (
+                          <span>{row.to}</span>
+                        );
+                      })()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase border ${
+                          row.status === "approved"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : row.status === "pending"
+                            ? "bg-amber-50 text-amber-700 border-amber-200"
+                            : "bg-rose-50 text-rose-700 border-rose-200"
+                        }`}
+                      >
+                        {row.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {row.status === "pending" ? (
+                        <div className="inline-flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => void decideLeave(row.id, "approved")}
+                            className="rounded-md bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void decideLeave(row.id, "rejected")}
+                            className="rounded-md border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-50"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-slate-400 font-medium">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
+
+        {filteredLeaves.length > 0 ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 border-t border-slate-100 pt-3">
+            <div className="flex items-center gap-2">
+              <span>
+                Showing <strong className="text-slate-800 font-semibold">{(leaveCurrentPage - 1) * leavePageSize + 1}</strong> to{" "}
+                <strong className="text-slate-800 font-semibold">{Math.min(leaveCurrentPage * leavePageSize, filteredLeaves.length)}</strong> of{" "}
+                <strong className="text-slate-800 font-semibold">{filteredLeaves.length}</strong> application(s)
+              </span>
+              <span className="text-slate-300">•</span>
+              <div className="flex items-center gap-1.5">
+                <span>Per page:</span>
+                <select
+                  value={leavePageSize}
+                  onChange={(e) => setLeavePageSize(Number(e.target.value))}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 font-medium outline-none focus:border-blue-600"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="inline-flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setLeavePage(1)}
+                disabled={leaveCurrentPage === 1}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                title="First Page"
+              >
+                « First
+              </button>
+              <button
+                type="button"
+                onClick={() => setLeavePage((p) => Math.max(1, p - 1))}
+                disabled={leaveCurrentPage === 1}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Prev
+              </button>
+              <span className="px-2 font-medium text-slate-700">
+                Page {leaveCurrentPage} of {leaveTotalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setLeavePage((p) => Math.min(leaveTotalPages, p + 1))}
+                disabled={leaveCurrentPage >= leaveTotalPages}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setLeavePage(leaveTotalPages)}
+                disabled={leaveCurrentPage >= leaveTotalPages}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                title="Last Page"
+              >
+                Last »
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
-      <section className="rounded-2xl border border-[#d8e6f4] bg-white p-3 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-base font-bold text-[#123454]">Available Leave Types</h2>
-          <button type="button" onClick={() => openLeaveTypeModal()} className="inline-flex items-center gap-1.5 rounded-lg bg-[#1f5c8f] px-3 py-1.5 text-xs font-semibold text-white transition duration-300 hover:bg-[#164a72]">
-            <Plus className="h-3.5 w-3.5" />Add Leave Type
+      {/* 4. Available Leave Types */}
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs">
+        <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+          <h2 className="text-sm font-bold text-slate-900">Available Leave Types</h2>
+          <button
+            type="button"
+            onClick={() => openLeaveTypeModal()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add Leave Type
           </button>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {leaveTypes.map((type) => (
-            <div key={type.Id} className="group relative flex items-center justify-between rounded-xl border border-[#e2effb] bg-[#f8fbff] p-3 transition hover:shadow-md">
+            <div
+              key={type.Id}
+              className="group relative flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/50 p-3 hover:bg-white hover:shadow-2xs transition"
+            >
               <div>
-                <p className="text-sm font-bold text-[#1e4c78]">{type.LeaveName}</p>
+                <p className="text-xs font-bold text-slate-900">{type.LeaveName}</p>
                 <div className="mt-1 flex items-center gap-2">
-                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">{type.MaxPerYear || 0} Days/Year</span>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${type.IsPaid !== false ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}>
+                  <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-100">
+                    {type.MaxPerYear || 0} Days/Year
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold border ${
+                      type.IsPaid !== false
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                        : "bg-amber-50 text-amber-700 border-amber-100"
+                    }`}
+                  >
                     {type.IsPaid !== false ? "Paid" : "Unpaid"}
                   </span>
                 </div>
               </div>
-              <button onClick={() => openLeaveTypeModal(type)} className="rounded-lg p-1.5 text-[#355a7a] opacity-0 transition group-hover:opacity-100 hover:bg-white/50">
+              <button
+                onClick={() => openLeaveTypeModal(type)}
+                className="rounded p-1 text-slate-400 opacity-0 group-hover:opacity-100 hover:text-slate-600"
+              >
                 <Pencil className="h-3.5 w-3.5" />
               </button>
             </div>
           ))}
-          {leaveTypes.length === 0 && <p className="col-span-full py-8 text-center text-xs text-slate-400 italic">No leave types defined.</p>}
+          {leaveTypes.length === 0 && <p className="col-span-full py-6 text-center text-xs text-slate-400 italic">No leave types defined.</p>}
         </div>
       </section>
 
@@ -854,7 +1395,16 @@ export default function LeavesPage() {
               <button type="button" onClick={closeHolidayModal} className="rounded-lg border border-[#d3e1ee] p-1.5 text-[#355a7a]"><X className="h-4 w-4" /></button>
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <div className="space-y-1.5"><label className="text-xs font-bold text-[#123454]">Holiday Date</label><BsDateField value={holidayForm.date} onChange={(value) => setHolidayForm((prev) => ({ ...prev, date: value }))} /></div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#123454]">Holiday Date</label>
+                <BsDateField value={holidayForm.date} onChange={(value) => setHolidayForm((prev) => ({ ...prev, date: value }))} />
+                {(() => {
+                  const parsed = fromAdString(holidayForm.date);
+                  const bs = parsed ? adToBs(parsed) : null;
+                  const bsStr = bs ? `${bs.year}-${pad2(bs.month)}-${pad2(bs.day)} BS` : "";
+                  return bsStr ? <p className="text-[10.5px] text-blue-700 font-semibold">{bsStr} • {holidayForm.date} AD</p> : null;
+                })()}
+              </div>
               <div className="space-y-1.5"><label className="text-xs font-bold text-[#123454]">Holiday Name</label><input value={holidayForm.name} onChange={(event) => setHolidayForm((prev) => ({ ...prev, name: event.target.value }))} placeholder="Holiday name" className="w-full rounded-lg border border-[#d3e1ee] bg-[#fbfdff] px-2.5 py-1.5 text-xs text-[#123454] outline-none ring-[#b7d0e6] focus:ring-1" /></div>
               <div className="space-y-1.5"><label className="text-xs font-bold text-[#123454]">Time Zone ID</label><input value={holidayForm.timeZoneId} onChange={(event) => setHolidayForm((prev) => ({ ...prev, timeZoneId: event.target.value }))} placeholder="e.g. 1" className="w-full rounded-lg border border-[#d3e1ee] bg-[#fbfdff] px-2.5 py-1.5 text-xs text-[#123454] outline-none ring-[#b7d0e6] focus:ring-1" /></div>
               <div className="space-y-1.5 md:col-span-2"><label className="text-xs font-bold text-[#123454]">Holiday Detail</label><textarea value={holidayForm.description} onChange={(event) => setHolidayForm((prev) => ({ ...prev, description: event.target.value }))} rows={3} placeholder="Detail..." className="w-full rounded-xl border border-[#d3e1ee] bg-[#fbfdff] px-2.5 py-1.5 text-xs text-[#123454] outline-none ring-[#b7d0e6] focus:ring-1" /></div>

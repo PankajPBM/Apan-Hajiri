@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { Check, CheckCircle2, ChevronRight, Fingerprint, Loader2, QrCode, Search, User } from "lucide-react";
 import { resolveApiBases } from "@/lib/api-bases";
+import { TimePicker } from "@/components/time/time-picker";
 
 type EmployeeInfo = {
   id: string;
@@ -143,11 +144,9 @@ export default function QrCheckInPage() {
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">Punch Time</label>
-                  <input
-                    type="time"
+                  <TimePicker
                     value={time}
-                    onChange={(e) => setTime(e.target.value)}
-                    className="w-full rounded-xl border border-[#cbd5e1] bg-slate-50 p-3 text-sm font-bold text-[#1e293b] outline-none"
+                    onChange={(v) => setTime(v)}
                   />
                 </div>
               </div>

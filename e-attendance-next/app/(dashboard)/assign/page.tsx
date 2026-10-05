@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Building2, Check, Users, UsersRound } from "lucide-react";
+import Link from "next/link";
+import { Building2, Check, ClipboardCheck, UserCheck, Users, UsersRound } from "lucide-react";
 import { resolveApiBases } from "@/lib/api-bases";
 import { BsDateField } from "@/components/date/dual-date-input";
 import { useCalendarPreference } from "@/components/date/calendar-context";
@@ -751,22 +752,71 @@ export default function AssignPage() {
 
   return (
     <div className="space-y-4">
-      <div className="tab-header">
-        <h1 className="text-2xl font-semibold">{viewMode === "groups" ? "Group Management" : viewMode === "preview" ? "Assigned Shift Preview" : "Schedule Assignment"}</h1>
-        <p className="text-sm text-[--muted-foreground]">
-          {viewMode === "groups"
-            ? "Create, edit, and delete employee groups used for scheduling."
-            : viewMode === "preview"
-              ? "View each employee's resolved shift for any date — department-wise or employee-wise."
-              : "Assign a shift to an employee, group, or department. This is what reports use."}
-        </p>
-      </div>
+      {/* 1. Header Overview */}
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-5 mb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                {viewMode === "groups" ? "Group Management" : viewMode === "preview" ? "Schedule Shift Preview" : "Schedule Assignment"}
+              </h1>
+              <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-100">
+                Roster Dispatcher
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              {viewMode === "groups"
+                ? "Create, edit, and manage custom staff groupings for streamlined shift assignment."
+                : viewMode === "preview"
+                ? "Inspect the resolved work schedule and assigned timetable rules for any chosen calendar date."
+                : "Assign specific daily, weekly, or rotating shift plans to employees, departments, or custom groups."}
+            </p>
+          </div>
+        </div>
 
-      {err ? <div className="rounded-lg border border-[#f2c6c6] bg-[#fff0f0] px-3 py-2 text-sm text-[#8d2f2f]">{err}</div> : null}
-      {msg ? <div className="rounded-lg border border-[#c9e7d1] bg-[#eefcf1] px-3 py-2 text-sm text-[#22603a]">{msg}</div> : null}
+        {/* Section Navigation Tabs matching Sidebar Dropdown */}
+        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1">
+          <Link
+            href="/assign"
+            prefetch={false}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+              viewMode === "assignment"
+                ? "bg-white text-blue-700 shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <UserCheck className="h-3.5 w-3.5" /> Schedule Assignment
+          </Link>
+          <Link
+            href="/assign?section=groups"
+            prefetch={false}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+              viewMode === "groups"
+                ? "bg-white text-blue-700 shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <Users className="h-3.5 w-3.5" /> Group Management
+          </Link>
+          <Link
+            href="/assign?section=preview"
+            prefetch={false}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+              viewMode === "preview"
+                ? "bg-white text-blue-700 shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <ClipboardCheck className="h-3.5 w-3.5" /> Schedule Preview
+          </Link>
+        </div>
+
+        {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700">{err}</div>}
+        {msg && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs font-medium text-emerald-700">{msg}</div>}
+      </section>
 
       {viewMode === "preview" ? (
-        <section className="surface p-4 shadow-sm">
+        <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-semibold text-[#1f4f79]">Resolved schedule for {formatCalendarDate(previewDate, calendarType, previewDate)}</div>
             <div className="flex flex-wrap items-center gap-2">
@@ -881,29 +931,41 @@ export default function AssignPage() {
           )}
         </section>
       ) : (
-      <section className="surface p-4 shadow-sm">
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs">
         {viewMode === "assignment" ? (
-          <div className="tab-toolbar tab-toolbar-controls mb-3">
+          <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1 mb-4">
             <button
               type="button"
               onClick={() => setActiveTab("department")}
-              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${activeTab === "department" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                activeTab === "department"
+                  ? "bg-white text-blue-700 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
             >
-              <Building2 className="h-4 w-4" />Department
+              <Building2 className="h-3.5 w-3.5" /> Department
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("employee")}
-              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${activeTab === "employee" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                activeTab === "employee"
+                  ? "bg-white text-blue-700 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
             >
-              <Users className="h-4 w-4" />Employee
+              <Users className="h-3.5 w-3.5" /> Employee
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("group")}
-              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${activeTab === "group" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                activeTab === "group"
+                  ? "bg-white text-blue-700 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
             >
-              <UsersRound className="h-4 w-4" />Group
+              <UsersRound className="h-3.5 w-3.5" /> Group
             </button>
           </div>
         ) : null}

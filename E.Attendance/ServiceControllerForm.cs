@@ -13,6 +13,7 @@ internal sealed class ServiceControllerForm : Form
     private static readonly Color AccentGreen= Color.FromArgb(22, 163, 74);
     private static readonly Color AccentRed  = Color.FromArgb(220, 38, 38);
     private static readonly Color AccentAmber= Color.FromArgb(217, 119, 6);
+    private static readonly Color AccentSlate= Color.FromArgb(71, 85, 105);
     private static readonly Color TextHead   = Color.FromArgb(17, 24, 39);
     private static readonly Color TextMuted  = Color.FromArgb(107, 114, 128);
 
@@ -32,13 +33,13 @@ internal sealed class ServiceControllerForm : Form
     private CardPanel _webSvcCard = null!;
 
     // Action buttons
-    private readonly LightButton _btnDash      = new("⚡  Open Dashboard",    AccentBlue);
-    private readonly LightButton _btnFixDb     = new("⚙  Fix & Verify DB",   AccentAmber);
+    private readonly LightButton _btnDash      = new("⚡  Open Dashboard",    AccentBlue, isPrimary: true);
+    private readonly LightButton _btnFixDb     = new("⚙  Fix & Verify DB",   AccentSlate);
     private readonly LightButton _btnPgRst     = new("↺   Restart PgSQL",    AccentBlue);
     private readonly LightButton _btnStop      = new("■   Stop All",         AccentRed);
-    private readonly LightButton _btnInitDb    = new("◈  Initialize DB",     AccentAmber);
+    private readonly LightButton _btnInitDb    = new("◈  Initialize DB",     AccentSlate);
     private readonly LightButton _btnBackup    = new("↺  Restore Backup",     AccentBlue);
-    private readonly LightButton _btnSvcAction = new("⬇  Install Services",  AccentGreen); // text changes
+    private readonly LightButton _btnSvcAction = new("⬇  Install Services",  AccentSlate); // text changes
     private readonly LightButton _btnDbConfig  = new("⚙  Database Config",   AccentBlue);
 
     // Port row
@@ -175,17 +176,17 @@ internal sealed class ServiceControllerForm : Form
         var pr = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false, BackColor = BgPage, Padding = Padding.Empty
+            WrapContents = false, BackColor = BgPage, Padding = new Padding(2, 2, 2, 2)
         };
-        var apiLbl = MkLbl("API Port", 8F, FontStyle.Regular, TextMuted, Point.Empty);
-        apiLbl.Margin = new Padding(4, 10, 2, 0); pr.Controls.Add(apiLbl);
-        _apiPort.Width = 65; _apiPort.Margin = new Padding(0, 6, 0, 0); pr.Controls.Add(_apiPort);
-        var webLbl = MkLbl("Web Port", 8F, FontStyle.Regular, TextMuted, Point.Empty);
-        webLbl.Margin = new Padding(8, 10, 2, 0); pr.Controls.Add(webLbl);
-        _webPort.Width = 65; _webPort.Margin = new Padding(0, 6, 0, 0); pr.Controls.Add(_webPort);
-        _btnSave.Height = 32; _btnSave.Width = 90; _btnSave.Margin = new Padding(10, 4, 0, 0);
+        var apiLbl = MkLbl("API Port", 8.5F, FontStyle.Bold, TextMuted, Point.Empty);
+        apiLbl.Margin = new Padding(4, 9, 4, 0); pr.Controls.Add(apiLbl);
+        _apiPort.Width = 70; _apiPort.Margin = new Padding(0, 5, 0, 0); pr.Controls.Add(_apiPort);
+        var webLbl = MkLbl("Web Port", 8.5F, FontStyle.Bold, TextMuted, Point.Empty);
+        webLbl.Margin = new Padding(12, 9, 4, 0); pr.Controls.Add(webLbl);
+        _webPort.Width = 70; _webPort.Margin = new Padding(0, 5, 0, 0); pr.Controls.Add(_webPort);
+        _btnSave.Height = 32; _btnSave.Width = 95; _btnSave.Margin = new Padding(12, 4, 0, 0);
         pr.Controls.Add(_btnSave);
-        Resize += (_, _) => _btnSave.Width = Math.Max(ClientSize.Width - _btnSave.Left - 16, 90);
+        Resize += (_, _) => _btnSave.Width = Math.Max(ClientSize.Width - _btnSave.Left - 16, 95);
         root.Controls.Add(pr, 0, 11);
 
         Controls.Add(root);
@@ -501,7 +502,7 @@ internal sealed class ServiceControllerForm : Form
 
             // Toggle Install / Fix Services button text based on installed state
             _btnSvcAction.UpdateText(_winSvcInstalled ? "⚙  Fix Services" : "⬇  Install Services");
-            _btnSvcAction.UpdateAccent(_winSvcInstalled ? AccentAmber : AccentGreen);
+            _btnSvcAction.UpdateAccent(_winSvcInstalled ? AccentSlate : AccentGreen);
 
             var canEdit = !_isRunning && !_busy;
             _apiPort.Enabled = _webPort.Enabled = _btnSave.Enabled = canEdit;
@@ -939,10 +940,11 @@ internal sealed class StatusPill : Control
 internal sealed class LightButton : Control
 {
     private Color _ac; private bool _hov, _press;
+    private bool _isPrimary;
 
-    public LightButton(string text, Color accent)
+    public LightButton(string text, Color accent, bool isPrimary = false)
     {
-        _ac = accent; Text = text; DoubleBuffered = true; Cursor = Cursors.Hand;
+        _ac = accent; _isPrimary = isPrimary; Text = text; DoubleBuffered = true; Cursor = Cursors.Hand;
         Font = new Font("Segoe UI", 8.5F, FontStyle.Bold);
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                  ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
@@ -950,6 +952,7 @@ internal sealed class LightButton : Control
 
     public void UpdateText(string text)   { Text = text; Invalidate(); }
     public void UpdateAccent(Color color) { _ac = color; Invalidate(); }
+    public void SetPrimary(bool isPrimary) { _isPrimary = isPrimary; Invalidate(); }
 
     protected override void OnMouseEnter(EventArgs e) { _hov = true;  Invalidate(); base.OnMouseEnter(e); }
     protected override void OnMouseLeave(EventArgs e) { _hov = false; Invalidate(); base.OnMouseLeave(e); }
@@ -959,13 +962,25 @@ internal sealed class LightButton : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        if (_isPrimary)
+        {
+            var fill = !Enabled ? Color.FromArgb(147, 197, 253) : _press ? Color.FromArgb(29, 78, 216) : _hov ? Color.FromArgb(30, 64, 175) : _ac;
+            using (var b = new SolidBrush(fill))
+                g.FillRounded(b, ClientRectangle, 8);
+            using (var p = new Pen(Color.FromArgb(Enabled ? 35 : 10, Color.Black), 1f))
+                g.DrawRounded(p, new Rectangle(0, 0, Width - 1, Height - 1), 8);
+            using (var tf = new SolidBrush(Color.White))
+                g.DrawString(Text, Font, tf, ClientRectangle, sf);
+            return;
+        }
+
         var bg = _press ? Color.FromArgb(30, _ac) : _hov ? Color.FromArgb(18, _ac) : Color.FromArgb(10, _ac);
         using (var b = new SolidBrush(bg))     g.FillRounded(b, ClientRectangle, 8);
         using (var p = new Pen(Color.FromArgb(Enabled ? 80 : 30, _ac), 1f))
             g.DrawRounded(p, new Rectangle(0, 0, Width - 1, Height - 1), 8);
-        using var tf = new SolidBrush(Enabled ? _ac : Color.FromArgb(180, _ac));
-        using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-        g.DrawString(Text, Font, tf, ClientRectangle, sf);
+        using (var tf = new SolidBrush(Enabled ? _ac : Color.FromArgb(180, _ac)))
+            g.DrawString(Text, Font, tf, ClientRectangle, sf);
     }
 }
 

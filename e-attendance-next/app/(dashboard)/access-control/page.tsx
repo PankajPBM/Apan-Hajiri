@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Building2, CalendarDays, CheckSquare, Clock, Edit3, Filter, Info, Plus, RotateCcw, Search, Shield, Trash2, Users, X } from "lucide-react";
 import { resolveApiBases } from "@/lib/api-bases";
 import { fetchLicenseStatus } from "@/components/data/license-client";
+import { TimePicker } from "@/components/time/time-picker";
 import {
   ACCESS_CONTROL_UPDATED_EVENT, WEEKDAY_LABELS,
   type AccessControlCombination, type AccessControlDayRule, type AccessControlGroup,
@@ -674,7 +675,15 @@ export default function AccessControlPage() {
   const saveTp = useCallback(async()=>{
     setMsg(null); setErr(null);
     const area=tpForm.area;
-    const resolvedPeriodNo=tpForm.periodNo||nextSlot(snapshot.timePeriods,"periodNo",tpForm.id,area,"All");
+    const cleanPeriod = tpForm.periodNo.trim();
+    if (cleanPeriod) {
+      const num = parseInt(cleanPeriod, 10);
+      if (isNaN(num) || num < 1 || num > 50) {
+        setErr("Period number must be between 1 and 50.");
+        return;
+      }
+    }
+    const resolvedPeriodNo=cleanPeriod||nextSlot(snapshot.timePeriods,"periodNo",tpForm.id,area,"All");
     // Area-only: one Time Period per (area, periodNo). Prevent duplicates within the same area.
     const existing = snapshot.timePeriods.find(x => x.area === area && x.periodNo === resolvedPeriodNo);
     if (existing && existing.id !== tpForm.id) { setErr(`Time Period ${resolvedPeriodNo} already exists in this area.`); return; }
@@ -695,7 +704,15 @@ export default function AccessControlPage() {
   const saveGrp = useCallback(async()=>{
     setMsg(null); setErr(null);
     const area=grpForm.area;
-    const resolvedGroupNo = grpForm.groupNo||nextSlot(snapshot.groups,"groupNo",grpForm.id,area,"All");
+    const cleanGroupNo = grpForm.groupNo.trim();
+    if (cleanGroupNo) {
+      const num = parseInt(cleanGroupNo, 10);
+      if (isNaN(num) || num < 1 || num > 50) {
+        setErr("Group number must be between 1 and 50.");
+        return;
+      }
+    }
+    const resolvedGroupNo = cleanGroupNo||nextSlot(snapshot.groups,"groupNo",grpForm.id,area,"All");
     const existing = snapshot.groups.find(x => x.area === area && x.groupNo === resolvedGroupNo);
     if (existing && existing.id !== grpForm.id) { setErr(`Access Group ${resolvedGroupNo} already exists in this area.`); return; }
     const next: AccessControlGroup = {
@@ -942,7 +959,7 @@ export default function AccessControlPage() {
               )}
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#7a93ab]"/>
-                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search…" className="h-8 w-48 rounded-lg border border-[#c8ddf0] bg-white pl-8 pr-3 text-sm outline-none focus:border-[#4a90c4]"/>
+                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search…" style={{ paddingLeft: "2.25rem" }} className="h-8 w-48 rounded-lg border border-[#c8ddf0] bg-white pl-9 pr-3 text-sm outline-none focus:border-[#4a90c4]"/>
               </div>
               <button type="button" disabled={sel==="combination"&&filt.comb.length>=10} onClick={()=>{if(sel==="time-period")openTp();else if(sel==="groups")openGrp();else if(sel==="combination")openComb();else openPriv();}} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#1a4a73] px-3 text-sm font-semibold text-white hover:bg-[#15395c] disabled:opacity-40">
                 <Plus className="h-4 w-4"/>Add
@@ -1297,7 +1314,8 @@ export default function AccessControlPage() {
                         value={dupDevSearch}
                         onChange={(e) => setDupDevSearch(e.target.value)}
                         placeholder="Search…"
-                        className="h-8 w-40 rounded-lg border border-[#c8ddf0] bg-white pl-8 pr-3 text-xs outline-none focus:border-[#4a90c4]"
+                        style={{ paddingLeft: "2.25rem" }}
+                        className="h-8 w-40 rounded-lg border border-[#c8ddf0] bg-white pl-9 pr-3 text-xs outline-none focus:border-[#4a90c4]"
                       />
                     </div>
 
@@ -1430,8 +1448,27 @@ export default function AccessControlPage() {
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <F label="Area"><select value={tpForm.area} onChange={e=>{setTpForm(c=>({...c,area:e.target.value,department:"All"}));}} className={ic}>{areaOpts.filter(a=>a!=="All").map(a=><option key={a}>{a}</option>)}</select></F>
-              <F label="Period No (1–50)"><input value={tpForm.periodNo} onChange={e=>setTpForm(c=>({...c,periodNo:e.target.value}))} placeholder="Auto" className={ic}/></F>
-              <F label="Name"><input value={tpForm.name} onChange={e=>setTpForm(c=>({...c,name:e.target.value}))} className={ic}/></F>
+              <F label="Period No (1–50)">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={tpForm.periodNo}
+                  onChange={e => {
+                    const raw = e.target.value.replace(/\D/g, "");
+                    if (!raw) {
+                      setTpForm(c => ({ ...c, periodNo: "" }));
+                      return;
+                    }
+                    const num = Math.min(50, Math.max(1, parseInt(raw, 10)));
+                    setTpForm(c => ({ ...c, periodNo: String(num) }));
+                  }}
+                  placeholder="Auto (1–50)"
+                  className={ic}
+                />
+              </F>
+              <div className="sm:col-span-2">
+                <F label="Name"><input value={tpForm.name} onChange={e=>setTpForm(c=>({...c,name:e.target.value}))} placeholder="e.g. Normal Working Hours" className={ic}/></F>
+              </div>
             </div>
             <div>
               <div className="mb-2 flex items-center justify-between">
@@ -1446,8 +1483,8 @@ export default function AccessControlPage() {
                       <tr key={i} className={d.isActive?"":"opacity-50"}>
                         <td className="px-3 py-2 font-medium">{WEEKDAY_LABELS[i]}</td>
                         <td className="px-3 py-2 text-center"><input type="checkbox" checked={d.isActive} onChange={e=>setTpForm(c=>({...c,days:c.days.map(x=>x.dayOfWeek===i?{...x,isActive:e.target.checked}:x)}))} className="h-4 w-4 accent-[#1a4a73]"/></td>
-                        <td className="px-3 py-2"><input type="time" value={d.startTime.slice(0,5)} onChange={e=>setTpForm(c=>({...c,days:c.days.map(x=>x.dayOfWeek===i?{...x,startTime:e.target.value+":00"}:x)}))} className={ic+" w-28"}/></td>
-                        <td className="px-3 py-2"><input type="time" value={d.endTime.slice(0,5)} onChange={e=>setTpForm(c=>({...c,days:c.days.map(x=>x.dayOfWeek===i?{...x,endTime:e.target.value+":00"}:x)}))} className={ic+" w-28"}/></td>
+                        <td className="px-2 py-1.5"><TimePicker value={d.startTime.slice(0,5)} onChange={v=>setTpForm(c=>({...c,days:c.days.map(x=>x.dayOfWeek===i?{...x,startTime:v+":00"}:x)}))} className="w-32"/></td>
+                        <td className="px-2 py-1.5"><TimePicker value={d.endTime.slice(0,5)} onChange={v=>setTpForm(c=>({...c,days:c.days.map(x=>x.dayOfWeek===i?{...x,endTime:v+":00"}:x)}))} className="w-32"/></td>
                         <td className="px-3 py-2"><button type="button" onClick={()=>setTpForm(c=>({...c,days:c.days.map(x=>({...x,startTime:d.startTime,endTime:d.endTime}))}))} className="rounded border border-[#c8ddf0] px-2 py-1 text-xs text-[#1a4a73] hover:bg-[#eef6ff]">Copy to all</button></td>
                       </tr>
                     ))}
@@ -1487,8 +1524,27 @@ export default function AccessControlPage() {
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <F label="Area"><select value={grpForm.area} onChange={e=>{setGrpForm(c=>({...c,area:e.target.value,department:"All"}));}} className={ic}>{areaOpts.filter(a=>a!=="All").map(a=><option key={a}>{a}</option>)}</select></F>
-              <F label="Group No (1–50)"><input value={grpForm.groupNo} onChange={e=>setGrpForm(c=>({...c,groupNo:e.target.value}))} placeholder="Auto" className={ic}/></F>
-              <F label="Name"><input value={grpForm.name} onChange={e=>setGrpForm(c=>({...c,name:e.target.value}))} className={ic}/></F>
+              <F label="Group No (1–50)">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={grpForm.groupNo}
+                  onChange={e => {
+                    const raw = e.target.value.replace(/\D/g, "");
+                    if (!raw) {
+                      setGrpForm(c => ({ ...c, groupNo: "" }));
+                      return;
+                    }
+                    const num = Math.min(50, Math.max(1, parseInt(raw, 10)));
+                    setGrpForm(c => ({ ...c, groupNo: String(num) }));
+                  }}
+                  placeholder="Auto (1–50)"
+                  className={ic}
+                />
+              </F>
+              <div className="sm:col-span-2">
+                <F label="Name"><input value={grpForm.name} onChange={e=>setGrpForm(c=>({...c,name:e.target.value}))} placeholder="e.g. Standard Staff Access" className={ic}/></F>
+              </div>
               <F label="Verification Mode"><select value={grpForm.verificationMode} onChange={e=>setGrpForm(c=>({...c,verificationMode:e.target.value as AccessControlVerificationMode}))} className={ic}>{VERIFY_OPTS.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select></F>
               {([0,1,2] as const).map(i=>(
                 <F key={i} label={`Time Period ${i+1}`}><select value={grpForm.timePeriodIds[i]} onChange={e=>setGrpForm(c=>({...c,timePeriodIds:c.timePeriodIds.map((v,j)=>j===i?e.target.value:v) as [string,string,string]}))} className={ic}><option value="">— None —</option>{snapshot.timePeriods.filter(t => t.area === grpForm.area).map(t=><option key={t.id} value={t.id}>{t.periodNo} - {t.name}</option>)}</select></F>

@@ -11,6 +11,7 @@ import {
   CalendarDays,
   CalendarOff,
   CalendarClock,
+  CheckSquare,
   ChevronDown,
   ClipboardCheck,
   Clock,
@@ -26,6 +27,7 @@ import {
 import { pickForegroundColor, useBrandingSettings } from "@/components/data/app-settings";
 import { initialsFromName, type AuthSession, type FeatureKey } from "@/components/data/auth-store";
 import { fetchLicenseStatus } from "@/components/data/license-client";
+import { ApanHajiriLogo } from "@/components/logo";
 
 type AppSidebarProps = {
   collapsed: boolean;
@@ -77,7 +79,7 @@ const shiftSubItems: NavItem[] = [
   },
   {
     href: { pathname: "/shifts" as Route, query: { tab: "setup" } },
-    label: "Shifts",
+    label: "Shifts & Rotations",
     icon: Clock,
     matchPath: "/shifts" as Route,
     matchQuery: { key: "tab", value: "setup" },
@@ -85,7 +87,7 @@ const shiftSubItems: NavItem[] = [
   },
   {
     href: { pathname: "/shifts" as Route, query: { tab: "overtime" } },
-    label: "OT",
+    label: "Overtime Setup",
     icon: CalendarClock,
     matchPath: "/shifts" as Route,
     matchQuery: { key: "tab", value: "overtime" },
@@ -102,18 +104,18 @@ const scheduleSubItems: NavItem[] = [
     feature: "assign",
   },
   {
-  href: { pathname: "/assign" as Route, query: { section: "groups" } },
+    href: { pathname: "/assign" as Route, query: { section: "groups" } },
     label: "Group Management",
     icon: Users,
-  matchPath: "/assign" as Route,
+    matchPath: "/assign" as Route,
     matchQuery: { key: "section", value: "groups" },
     feature: "assign",
   },
   {
-  href: { pathname: "/assign" as Route, query: { section: "preview" } },
-    label: "Preview",
+    href: { pathname: "/assign" as Route, query: { section: "preview" } },
+    label: "Schedule Preview",
     icon: ClipboardCheck,
-  matchPath: "/assign" as Route,
+    matchPath: "/assign" as Route,
     matchQuery: { key: "section", value: "preview" },
     feature: "assign",
   },
@@ -139,7 +141,7 @@ const accessControlSubItems: NavItem[] = [
   {
     href: { pathname: "/access-control" as Route, query: { section: "combination" } },
     label: "Combination",
-    icon: ClipboardCheck,
+    icon: CheckSquare,
     matchPath: "/access-control" as Route,
     matchQuery: { key: "section", value: "combination" },
     feature: "assign",
@@ -158,139 +160,155 @@ const accessControlSubItems: NavItem[] = [
     icon: Clock,
     matchPath: "/access-control" as Route,
     matchQuery: { key: "section", value: "duplicate-punch" },
-    feature: "assign",
+    feature: "devices",
   },
 ];
 
 const afterShiftNavItems: NavItem[] = [
-  { href: "/transactions" as Route, label: "Transactions", icon: ClipboardCheck, matchPath: "/transactions" as Route, feature: "transactions" },
-  { href: "/leaves" as Route, label: "Leaves and Holiday", icon: CalendarOff, matchPath: "/leaves" as Route, feature: "leaves" },
-  { href: "/reports" as Route, label: "Reports", icon: BarChart3, matchPath: "/reports" as Route, feature: "reports" },
-  { href: "/logs" as Route, label: "Logs", icon: FileText, matchPath: "/logs" as Route, feature: "logs" },
+  { href: "/transactions", label: "Transactions", icon: ClipboardCheck, matchPath: "/transactions", feature: "transactions" },
+  { href: "/leaves", label: "Leaves & Holidays", icon: CalendarOff, matchPath: "/leaves", feature: "leaves" },
+  { href: "/reports", label: "Reports", icon: BarChart3, matchPath: "/reports", feature: "reports" },
+  { href: "/logs", label: "System Logs", icon: FileText, matchPath: "/logs", feature: "logs" },
 ];
 
-export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, session }: AppSidebarProps) {
+export function AppSidebar({
+  collapsed,
+  mobileOpen,
+  onCloseMobile,
+  onNavigate,
+  session,
+}: AppSidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const tab = searchParams.get("tab");
-  const activeTab = tab === "timetable" ? "timetable" : tab === "break" ? "break" : tab === "overtime" ? "overtime" : "setup";
   const accessSection = searchParams.get("section");
-  const legacyShifts = pathname === "/shifts" || pathname.startsWith("/shifts/");
-  const isShiftRoute = pathname === "/shift" || pathname.startsWith("/shift/");
-  const isTimetableRoute = pathname === "/timetable" || pathname.startsWith("/timetable/");
-  const isAssignRoute = pathname === "/assign" || pathname.startsWith("/assign/");
-  const isAccessControlRoute = pathname === "/access-control" || pathname.startsWith("/access-control/");
-  
-  const visibleBaseNavItems = baseNavItems.filter((item) => session?.featureAccess[item.feature]);
-  const visibleShiftSubItems = shiftSubItems.filter((item) => session?.featureAccess[item.feature]);
-  const visibleScheduleSubItems = scheduleSubItems.filter((item) => session?.featureAccess[item.feature]);
-  const visibleAccessControlSubItems = accessControlSubItems.filter((item) => session?.featureAccess[item.feature]);
-  const visibleAfterShiftNavItems = afterShiftNavItems.filter((item) => session?.featureAccess[item.feature]);
-  
-  const initials = initialsFromName(session?.fullName || session?.username || "NA");
   const branding = useBrandingSettings();
-  // Sidebar text is dark or light depending on how bright the configured brand color is, so it
-  // stays readable no matter what color is picked in Settings — not just for a dark navy default.
-  const sidebarFg = pickForegroundColor(branding.primaryColor);
-  
-  const shiftGroupActive = isShiftRoute || isTimetableRoute || legacyShifts;
-  const scheduleGroupActive = isAssignRoute;
-  const accessControlActive = isAccessControlRoute;
 
-  type MenuGroup = "shift" | "schedule" | "accessControl";
-  const initialOpenGroup: MenuGroup | null =
-    accessControlActive ? "accessControl" :
-    scheduleGroupActive ? "schedule" :
-    shiftGroupActive ? "shift" : null;
-
-  const [openGroup, setOpenGroup] = useState<MenuGroup | null>(initialOpenGroup);
-
-  const shiftOpen = openGroup === "shift";
-  const scheduleOpen = openGroup === "schedule";
-  const accessControlOpen = openGroup === "accessControl";
-
-  const toggleGroup = (group: MenuGroup) => {
-    if (collapsed) return;
-    setOpenGroup((prev) => (prev === group ? null : group));
-  };
-
+  const [shiftOpen, setShiftOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [accessControlOpen, setAccessControlOpen] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
 
   useEffect(() => {
-    if (accessControlActive) {
-      setOpenGroup("accessControl");
-    } else if (scheduleGroupActive) {
-      setOpenGroup("schedule");
-    } else if (shiftGroupActive) {
-      setOpenGroup("shift");
-    }
-  }, [accessControlActive, scheduleGroupActive, shiftGroupActive]);
-
-  useEffect(() => {
-    let active = true;
     fetchLicenseStatus()
       .then((status) => {
-        if (active) {
-          setIsLocked(!status.isValid);
-        }
+        setIsLocked(!status.isValid);
       })
-      .catch((err) => {
-        console.error("Sidebar license fetch failed", err);
-      });
-    return () => { active = false; };
+      .catch(() => {});
   }, []);
+
+  const hasFeature = (key: FeatureKey) => {
+    if (!session) return false;
+    if (session.role === "Admin" || session.role === "Manager") return true;
+    return Boolean(session.featureAccess[key]);
+  };
+
+  const isShiftRoute = pathname.startsWith("/shift");
+  const isTimetableRoute = pathname.startsWith("/timetable");
+  const legacyShifts = pathname.startsWith("/shifts");
+  const shiftGroupActive = isShiftRoute || isTimetableRoute || legacyShifts;
+  const scheduleGroupActive = pathname.startsWith("/assign");
+  const accessControlActive = pathname.startsWith("/access-control");
+
+  useEffect(() => {
+    if (shiftGroupActive) {
+      setShiftOpen(true);
+      setScheduleOpen(false);
+      setAccessControlOpen(false);
+    } else if (scheduleGroupActive) {
+      setScheduleOpen(true);
+      setShiftOpen(false);
+      setAccessControlOpen(false);
+    } else if (accessControlActive) {
+      setAccessControlOpen(true);
+      setShiftOpen(false);
+      setScheduleOpen(false);
+    }
+  }, [shiftGroupActive, scheduleGroupActive, accessControlActive]);
+
+  const toggleGroup = (group: "shift" | "schedule" | "accessControl") => {
+    if (group === "shift") {
+      setShiftOpen((prev) => {
+        const next = !prev;
+        if (next) {
+          setScheduleOpen(false);
+          setAccessControlOpen(false);
+        }
+        return next;
+      });
+    } else if (group === "schedule") {
+      setScheduleOpen((prev) => {
+        const next = !prev;
+        if (next) {
+          setShiftOpen(false);
+          setAccessControlOpen(false);
+        }
+        return next;
+      });
+    } else if (group === "accessControl") {
+      setAccessControlOpen((prev) => {
+        const next = !prev;
+        if (next) {
+          setShiftOpen(false);
+          setScheduleOpen(false);
+        }
+        return next;
+      });
+    }
+  };
+
+  const visibleBaseNavItems = baseNavItems.filter((item) => hasFeature(item.feature));
+  const visibleShiftSubItems = shiftSubItems.filter((item) => hasFeature(item.feature));
+  const visibleScheduleSubItems = scheduleSubItems.filter((item) => hasFeature(item.feature));
+  const visibleAccessControlSubItems = accessControlSubItems.filter((item) => hasFeature(item.feature));
+  const visibleAfterShiftNavItems = afterShiftNavItems.filter((item) => hasFeature(item.feature));
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-40 flex h-screen flex-col border-r border-[#1c4670] text-[color:var(--sidebar-fg)] shadow-[0_0_35px_-28px_rgba(8,31,61,0.95)] transition-transform duration-200 md:sticky md:translate-x-0 ${
-        mobileOpen ? "translate-x-0" : "-translate-x-full"
-      }`}
-      style={{
-        width: collapsed ? "4.4rem" : "18.5rem",
-        // Derive the sidebar from the configured branding color so it updates live — a plain,
-        // subtle top-to-bottom gradient (brand color fading slightly darker), nothing busier.
-        background: `linear-gradient(180deg, ${branding.primaryColor} 0%, color-mix(in srgb, ${branding.primaryColor}, #000 22%) 100%)`,
-        // Every text/icon color in this sidebar reads from this variable (at full or reduced
-        // opacity) instead of hardcoded light-blue hex values, so it stays legible regardless of
-        // which brand color is configured — light text on a dark brand color, dark text on light.
-        ["--sidebar-fg" as string]: sidebarFg,
-      }}
+      className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200 bg-white transition-all duration-200 md:sticky md:top-0 md:h-screen md:translate-x-0 shrink-0 ${
+        collapsed ? "w-16" : "w-64"
+      } ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
     >
-      <div className="flex h-[4.8rem] min-h-[4.8rem] items-center gap-3 border-b border-white/20 px-3.5 py-2.5">
-        <div className={`grid ${collapsed ? "h-10 w-10" : "h-12 w-12"} shrink-0 place-items-center transition-all duration-200`}>
-          <img
-            src={branding.logoUrl || "/apan_logo.png"}
-            alt={branding.systemTitle || "Apan Hajiri"}
-            className="h-full w-full object-contain filter drop-shadow-[0_3px_8px_rgba(0,0,0,0.35)]"
-          />
+      {/* Brand Header */}
+      <div
+        className={`flex h-16 shrink-0 items-center border-b border-slate-200 ${
+          collapsed ? "justify-center px-0" : "justify-between px-4"
+        }`}
+      >
+        <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3 overflow-hidden"}`}>
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center">
+            <img
+              src={branding.logoUrl || "/apan_logo.png"}
+              alt={branding.systemTitle || "Apan Hajiri"}
+              className="max-h-full max-w-full object-contain drop-shadow-sm select-none"
+            />
+          </div>
+          {!collapsed && (
+            <div className="min-w-0">
+              <span className="block truncate text-sm font-bold text-slate-900 font-nepali leading-tight">
+                {branding.organizationName || "अपन हाजिरी"}
+              </span>
+              <span className="block truncate text-[11px] font-medium text-slate-500">
+                {branding.systemTitle || "Apan Hajiri"}
+              </span>
+            </div>
+          )}
         </div>
         {!collapsed && (
-          <div className="min-w-0">
-            <div className="truncate text-lg font-bold text-white font-nepali tracking-wide leading-tight">
-              {branding.organizationName || "अपन हाजिरी"}
-            </div>
-            <div className="truncate text-xs text-[color:var(--sidebar-fg)]/80 font-medium">
-              {branding.systemTitle || "Apan Hajiri Console"}
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={onCloseMobile}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 md:hidden"
+            aria-label="Close sidebar navigation"
+          >
+            <X className="h-5 w-5" />
+          </button>
         )}
-        <button
-          type="button"
-          onClick={onCloseMobile}
-          className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/30 text-[color:var(--sidebar-fg)]/85 hover:bg-white/10 md:hidden"
-        >
-          <X className="h-4 w-4" />
-        </button>
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
+      {/* Nav items list */}
+      <nav className={`flex-1 min-h-0 space-y-1 overflow-y-auto py-4 ${collapsed ? "px-1.5" : "px-2.5"}`}>
         {visibleBaseNavItems.map((item) => {
-          let active = false;
-          if (item.matchPath === "/") {
-            active = pathname === "/";
-          } else {
-            active = pathname.startsWith(item.matchPath as string);
-          }
+          const active = item.matchPath === "/" ? pathname === "/" : pathname.startsWith(item.matchPath as string);
           const Icon = item.icon;
           return (
             <Link
@@ -298,17 +316,19 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
               href={item.href}
               onClick={onNavigate}
               prefetch={false}
-              className={`group flex items-center rounded-xl px-3 py-2.5 text-[0.95rem] font-semibold tracking-[0.01em] transition ${
+              className={`flex items-center rounded-lg py-2 text-[13.5px] font-medium transition ${
+                collapsed ? "justify-center px-0 w-full" : "px-3"
+              } ${
                 active
-                  ? "border border-white/30 bg-white/18 text-white shadow-[0_12px_20px_-16px_rgba(8,31,61,0.9)]"
-                  : "border border-transparent text-[color:var(--sidebar-fg)]/90 hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/10 hover:text-white"
+                  ? "bg-blue-50 text-blue-700 font-semibold"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
               }`}
               title={collapsed ? item.label : undefined}
             >
-              <Icon className="h-4 w-4 shrink-0" />
-              {!collapsed && <span className="ml-3 flex-1 text-left leading-tight">{item.label}</span>}
+              <Icon className={`h-4.5 w-4.5 shrink-0 ${active ? "text-blue-600" : "text-slate-400"}`} />
+              {!collapsed && <span className="ml-3 truncate">{item.label}</span>}
               {!collapsed && item.badge ? (
-                <span className="rounded-full bg-[#2f6e9c] px-2 py-0.5 text-xs text-white">
+                <span className="ml-auto rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">
                   {item.badge}
                 </span>
               ) : null}
@@ -316,57 +336,50 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
           );
         })}
 
+        {/* Shift Setup Dropdown */}
         {visibleShiftSubItems.length > 0 ? (
-          <div className="space-y-1">
+          <div>
             <button
               type="button"
               onClick={() => toggleGroup("shift")}
-              className={`group flex w-full items-center rounded-xl px-3 py-2.5 text-left text-[0.95rem] font-semibold tracking-[0.01em] transition ${
+              className={`flex w-full items-center rounded-lg py-2 text-[13.5px] font-medium transition ${
+                collapsed ? "justify-center px-0" : "justify-between px-3"
+              } ${
                 shiftGroupActive
-                  ? "border border-white/30 bg-white/18 text-white shadow-[0_12px_20px_-16px_rgba(8,31,61,0.9)]"
-                  : "border border-transparent text-[color:var(--sidebar-fg)]/90 hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/10 hover:text-white"
+                  ? "bg-blue-50/60 text-blue-800 font-semibold"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
               }`}
               title={collapsed ? "Shift Setup" : undefined}
             >
-              <Clock className="h-4 w-4 shrink-0" />
-              {!collapsed && <span className="ml-3 flex-1 text-left leading-tight">Shift Setup</span>}
-              {!collapsed && <ChevronDown className={`ml-auto h-4 w-4 transition ${shiftOpen ? "rotate-180" : ""}`} />}
+              <div className={`flex items-center ${collapsed ? "justify-center" : ""}`}>
+                <Clock className={`h-4.5 w-4.5 shrink-0 ${shiftGroupActive ? "text-blue-600" : "text-slate-400"}`} />
+                {!collapsed && <span className="ml-3 truncate">Shift Setup</span>}
+              </div>
+              {!collapsed && (
+                <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition ${shiftOpen ? "rotate-180" : ""}`} />
+              )}
             </button>
 
             {!collapsed && shiftOpen ? (
-              <div className="space-y-1 pl-6">
+              <div className="mt-1 space-y-0.5 pl-7">
                 {visibleShiftSubItems.map((item) => {
-                  let active = pathname.startsWith(item.matchPath as string);
-                  if (item.matchQuery) {
-                    active = active && searchParams.get(item.matchQuery.key) === item.matchQuery.value;
-                  }
-                  if (item.label === "Time Table") {
-                    active = (isTimetableRoute && !searchParams.get("section")) || (legacyShifts && activeTab === "timetable");
-                  }
-                  if (item.label === "Break Time") {
-                    active = (isTimetableRoute && searchParams.get("section") === "break") || (legacyShifts && searchParams.get("tab") === "break");
-                  }
-                  if (item.label === "Shifts") {
-                    active = (isShiftRoute && tab !== "overtime") || (legacyShifts && activeTab === "setup");
-                  }
-                  if (item.label === "OT") {
-                    active = legacyShifts && activeTab === "overtime";
-                  }
-                  const Icon = item.icon;
+                  const currentShiftTab = searchParams.get("tab") || "break";
+                  const active =
+                    pathname.startsWith(item.matchPath as string) &&
+                    (!item.matchQuery || currentShiftTab === item.matchQuery.value);
                   return (
                     <Link
                       key={item.label}
                       href={item.href}
                       onClick={onNavigate}
                       prefetch={false}
-                      className={`group flex items-center rounded-lg px-3 py-2 text-[0.95rem] font-semibold transition ${
+                      className={`block rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
                         active
-                          ? "border border-white/30 bg-white/18 text-white shadow-[0_8px_16px_-12px_rgba(8,31,61,0.9)]"
-                          : "border border-transparent text-[color:var(--sidebar-fg)]/90 hover:border-white/20 hover:bg-white/10 hover:text-white"
+                          ? "bg-blue-100/70 text-blue-700 font-semibold"
+                          : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
                       }`}
                     >
-                      <Icon className="h-4 w-4 shrink-0" />
-                      <span className="ml-3 flex-1">{item.label}</span>
+                      {item.label}
                     </Link>
                   );
                 })}
@@ -375,47 +388,52 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
           </div>
         ) : null}
 
+        {/* Schedule Assignment Dropdown */}
         {visibleScheduleSubItems.length > 0 ? (
-          <div className="space-y-1">
+          <div>
             <button
               type="button"
               onClick={() => toggleGroup("schedule")}
-              className={`group flex w-full items-center rounded-xl px-3 py-2.5 text-left text-[0.95rem] font-semibold tracking-[0.01em] transition ${
+              className={`flex w-full items-center rounded-lg py-2 text-[13.5px] font-medium transition ${
+                collapsed ? "justify-center px-0" : "justify-between px-3"
+              } ${
                 scheduleGroupActive
-                  ? "border border-white/30 bg-white/18 text-white shadow-[0_12px_20px_-16px_rgba(8,31,61,0.9)]"
-                  : "border border-transparent text-[color:var(--sidebar-fg)]/90 hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/10 hover:text-white"
+                  ? "bg-blue-50/60 text-blue-800 font-semibold"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
               }`}
               title={collapsed ? "Schedule Shift" : undefined}
             >
-              <UserCheck className="h-4 w-4 shrink-0" />
-              {!collapsed && <span className="ml-3 flex-1 text-left leading-tight">Schedule Shift</span>}
-              {!collapsed && <ChevronDown className={`ml-auto h-4 w-4 transition ${scheduleOpen ? "rotate-180" : ""}`} />}
+              <div className={`flex items-center ${collapsed ? "justify-center" : ""}`}>
+                <UserCheck className={`h-4.5 w-4.5 shrink-0 ${scheduleGroupActive ? "text-blue-600" : "text-slate-400"}`} />
+                {!collapsed && <span className="ml-3 truncate">Schedule Shift</span>}
+              </div>
+              {!collapsed && (
+                <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition ${scheduleOpen ? "rotate-180" : ""}`} />
+              )}
             </button>
 
             {!collapsed && scheduleOpen ? (
-              <div className="space-y-1 pl-6">
+              <div className="mt-1 space-y-0.5 pl-7">
                 {visibleScheduleSubItems.map((item) => {
-                  let active = pathname.startsWith(item.matchPath as string);
-                  if (item.matchQuery) {
-                    active = active && searchParams.get(item.matchQuery.key) === item.matchQuery.value;
-                  } else {
-                    active = active && !searchParams.get("section");
-                  }
-                  const Icon = item.icon;
+                  const currentAssignSection = searchParams.get("section");
+                  const active =
+                    pathname.startsWith(item.matchPath as string) &&
+                    (item.matchQuery
+                      ? currentAssignSection === item.matchQuery.value
+                      : !currentAssignSection || currentAssignSection === "assignment");
                   return (
                     <Link
                       key={item.label}
                       href={item.href}
                       onClick={onNavigate}
                       prefetch={false}
-                      className={`group flex items-center rounded-lg px-3 py-2 text-[0.95rem] font-semibold transition ${
+                      className={`block rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
                         active
-                          ? "border border-white/30 bg-white/18 text-white shadow-[0_8px_16px_-12px_rgba(8,31,61,0.9)]"
-                          : "border border-transparent text-[color:var(--sidebar-fg)]/90 hover:border-white/20 hover:bg-white/10 hover:text-white"
+                          ? "bg-blue-100/70 text-blue-700 font-semibold"
+                          : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
                       }`}
                     >
-                      <Icon className="h-4 w-4 shrink-0" />
-                      <span className="ml-3 flex-1 text-left leading-tight">{item.label}</span>
+                      {item.label}
                     </Link>
                   );
                 })}
@@ -424,47 +442,53 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
           </div>
         ) : null}
 
+        {/* Access Control Dropdown */}
         {visibleAccessControlSubItems.length > 0 ? (
-          <div className="space-y-1">
+          <div>
             <button
               type="button"
               onClick={() => toggleGroup("accessControl")}
-              className={`group flex w-full items-center rounded-xl px-3 py-2.5 text-left text-[0.95rem] font-semibold tracking-[0.01em] transition ${
+              className={`flex w-full items-center rounded-lg py-2 text-[13.5px] font-medium transition ${
+                collapsed ? "justify-center px-0" : "justify-between px-3"
+              } ${
                 accessControlActive
-                  ? "border border-white/30 bg-white/18 text-white shadow-[0_12px_20px_-16px_rgba(8,31,61,0.9)]"
-                  : "border border-transparent text-[color:var(--sidebar-fg)]/90 hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/10 hover:text-white"
+                  ? "bg-blue-50/60 text-blue-800 font-semibold"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
               }`}
-              title={collapsed ? (isLocked ? "Access Control (Locked)" : "Access Control") : undefined}
+              title={collapsed ? "Access Control" : undefined}
             >
-              <Shield className="h-4 w-4 shrink-0" />
-              {!collapsed && <span className="ml-3 flex-1 text-left leading-tight">Access Control</span>}
-              {!collapsed && isLocked && (
-                <span className="mr-1.5 flex items-center gap-0.5 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-300">
-                  <Lock className="h-2.5 w-2.5" /> Locked
-                </span>
+              <div className={`flex items-center ${collapsed ? "justify-center" : ""}`}>
+                <Shield className={`h-4.5 w-4.5 shrink-0 ${accessControlActive ? "text-blue-600" : "text-slate-400"}`} />
+                {!collapsed && <span className="ml-3 truncate">Access Control</span>}
+              </div>
+              {!collapsed && (
+                <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition ${accessControlOpen ? "rotate-180" : ""}`} />
               )}
-              {!collapsed && <ChevronDown className={`ml-auto h-4 w-4 transition ${accessControlOpen ? "rotate-180" : ""}`} />}
             </button>
 
             {!collapsed && accessControlOpen ? (
-              <div className="space-y-1 pl-6">
+              <div className="mt-1 space-y-0.5 pl-7">
                 {visibleAccessControlSubItems.map((item) => {
-                  const active = pathname === item.matchPath && (!item.matchQuery || accessSection === item.matchQuery.value);
-                  const Icon = item.icon;
+                  const pathSection = pathname.startsWith("/access-control/")
+                    ? pathname.replace("/access-control/", "")
+                    : null;
+                  const effectiveAccessSection = accessSection || pathSection || "time-period";
+                  const active =
+                    (pathname === item.matchPath || pathname.startsWith((item.matchPath as string) + "/")) &&
+                    (!item.matchQuery || effectiveAccessSection === item.matchQuery.value);
                   return (
                     <Link
                       key={item.label}
                       href={item.href}
                       onClick={onNavigate}
                       prefetch={false}
-                      className={`group flex items-center rounded-lg px-3 py-2 text-[0.95rem] font-semibold transition ${
+                      className={`block rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
                         active
-                          ? "border border-white/30 bg-white/18 text-white shadow-[0_8px_16px_-12px_rgba(8,31,61,0.9)]"
-                          : "border border-transparent text-[color:var(--sidebar-fg)]/90 hover:border-white/20 hover:bg-white/10 hover:text-white"
+                          ? "bg-blue-100/70 text-blue-700 font-semibold"
+                          : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
                       }`}
                     >
-                      <Icon className="h-4 w-4 shrink-0" />
-                      <span className="ml-3 flex-1 text-left leading-tight">{item.label}</span>
+                      {item.label}
                     </Link>
                   );
                 })}
@@ -473,13 +497,9 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
           </div>
         ) : null}
 
+        {/* Remaining Main Nav items */}
         {visibleAfterShiftNavItems.map((item) => {
-          let active = false;
-          if (item.matchPath === "/") {
-            active = pathname === "/";
-          } else {
-            active = pathname.startsWith(item.matchPath as string);
-          }
+          const active = pathname.startsWith(item.matchPath as string);
           const Icon = item.icon;
           return (
             <Link
@@ -487,17 +507,19 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
               href={item.href}
               onClick={onNavigate}
               prefetch={false}
-              className={`group flex items-center rounded-xl px-3 py-2.5 text-[0.95rem] font-semibold tracking-[0.01em] transition ${
+              className={`flex items-center rounded-lg py-2 text-[13.5px] font-medium transition ${
+                collapsed ? "justify-center px-0 w-full" : "px-3"
+              } ${
                 active
-                  ? "border border-white/30 bg-white/18 text-white shadow-[0_12px_20px_-16px_rgba(8,31,61,0.9)]"
-                  : "border border-transparent text-[color:var(--sidebar-fg)]/90 hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/10 hover:text-white"
+                  ? "bg-blue-50 text-blue-700 font-semibold"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
               }`}
               title={collapsed ? item.label : undefined}
             >
-              <Icon className="h-4 w-4 shrink-0" />
-              {!collapsed && <span className="ml-3 flex-1 text-left leading-tight">{item.label}</span>}
+              <Icon className={`h-4.5 w-4.5 shrink-0 ${active ? "text-blue-600" : "text-slate-400"}`} />
+              {!collapsed && <span className="ml-3 truncate">{item.label}</span>}
               {!collapsed && item.badge ? (
-                <span className="rounded-full bg-[#2f6e9c] px-2 py-0.5 text-xs text-white">
+                <span className="ml-auto rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">
                   {item.badge}
                 </span>
               ) : null}
@@ -506,34 +528,27 @@ export function AppSidebar({ collapsed, mobileOpen, onCloseMobile, onNavigate, s
         })}
       </nav>
 
-      <div className="mt-auto border-t border-white/20 bg-white/5 p-2">
-        {session?.featureAccess.settings ? (
+      {/* Settings at bottom */}
+      {hasFeature("settings") ? (
+        <div className="shrink-0 border-t border-slate-200 p-2.5 bg-white">
           <Link
             href="/settings"
             onClick={onNavigate}
             prefetch={false}
-            className="flex items-center rounded-xl border border-transparent px-3 py-2 text-sm font-bold text-[color:var(--sidebar-fg)]/90 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
+            className={`flex items-center rounded-lg py-2 text-[13.5px] font-medium transition ${
+              collapsed ? "justify-center px-0 w-full" : "px-3"
+            } ${
+              pathname.startsWith("/settings")
+                ? "bg-blue-50 text-blue-700 font-semibold"
+                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            }`}
             title={collapsed ? "Settings" : undefined}
           >
-            <Settings className="h-4 w-4" />
-            {!collapsed && <span className="ml-3">Settings</span>}
+            <Settings className="h-4.5 w-4.5 text-slate-400 shrink-0" />
+            {!collapsed && <span className="ml-3 truncate">Settings</span>}
           </Link>
-        ) : null}
-        <button
-          className="mt-1 flex w-full items-center rounded-xl border border-transparent px-3 py-2 text-sm text-[color:var(--sidebar-fg)]/90 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
-          title={collapsed ? "Admin" : undefined}
-          type="button"
-        >
-          <div className="grid h-7 w-7 place-items-center rounded-full bg-white/20 text-xs font-bold text-white">{initials}</div>
-          {!collapsed && (
-            <div className="ml-3 min-w-0 text-left">
-              <div className="truncate text-white">{session?.fullName || "User"}</div>
-              <div className="truncate text-xs text-[color:var(--sidebar-fg)]/75">{session?.role || "Role"}</div>
-            </div>
-          )}
-          {!collapsed && <Shield className="ml-auto h-4 w-4 text-[color:var(--sidebar-fg)]/75" />}
-        </button>
-      </div>
+        </div>
+      ) : null}
     </aside>
   );
 }

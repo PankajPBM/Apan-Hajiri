@@ -21,21 +21,177 @@ public sealed record RestoreRunResult(
 /// </summary>
 public static class BackupService
 {
-    public static string ResolvePgDumpExePath()
+    public static string ResolvePgDumpExePath() => ResolvePostgreSqlBinaryPath("pg_dump.exe", "pg_dump");
+
+    public static string ResolvePsqlExePath() => ResolvePostgreSqlBinaryPath("psql.exe", "psql");
+
+    private static string ResolvePostgreSqlBinaryPath(string binaryFileName, string fallbackName)
     {
-        var candidate = Path.Combine(AppContext.BaseDirectory, "PostgreSQL", "18", "bin", "pg_dump.exe");
-        if (File.Exists(candidate)) return candidate;
-        candidate = Path.Combine(AppContext.BaseDirectory, "PostgreSQL", "15", "bin", "pg_dump.exe");
-        return File.Exists(candidate) ? candidate : "pg_dump";
+        // 1. Probe candidate directories from Windows Service ImagePath (Registry)
+        if (OperatingSystem.IsWindows())
+        {
+            var serviceNames = new[]
+            {
+                "E_Attendance_PostgreSQL",
+                "E-Attendance-PostgreSQL",
+                "postgresql-x64-15",
+                "postgresql-x64-18",
+                "postgresql-x64-16",
+                "postgresql-x64-17"
+            };
+
+            foreach (var svc in serviceNames)
+            {
+                try
+                {
+                    using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{svc}");
+                    if (key?.GetValue("ImagePath") is string imagePath && !string.IsNullOrWhiteSpace(imagePath))
+                    {
+                        var extractedExe = ExtractExecutablePath(imagePath);
+                        if (!string.IsNullOrWhiteSpace(extractedExe))
+                        {
+                            var binDir = Path.GetDirectoryName(extractedExe);
+                            if (!string.IsNullOrWhiteSpace(binDir))
+                            {
+                                var candidate = Path.Combine(binDir, binaryFileName);
+                                if (File.Exists(candidate)) return candidate;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // Ignore registry read errors
+                }
+            }
+        }
+
+        // 2. Relative to AppContext.BaseDirectory
+        var baseDir = AppContext.BaseDirectory;
+        if (!string.IsNullOrWhiteSpace(baseDir))
+        {
+            var localCandidates = new[]
+            {
+                Path.Combine(baseDir, "PostgreSQL", "18", "bin", binaryFileName),
+                Path.Combine(baseDir, "PostgreSQL", "15", "bin", binaryFileName),
+                Path.Combine(baseDir, "..", "PostgreSQL", "18", "bin", binaryFileName),
+                Path.Combine(baseDir, "..", "PostgreSQL", "15", "bin", binaryFileName),
+                Path.Combine(baseDir, "..", "..", "PostgreSQL", "18", "bin", binaryFileName),
+                Path.Combine(baseDir, "..", "..", "PostgreSQL", "15", "bin", binaryFileName),
+            };
+
+            foreach (var cand in localCandidates)
+            {
+                try
+                {
+                    var fullPath = Path.GetFullPath(cand);
+                    if (File.Exists(fullPath)) return fullPath;
+                }
+                catch
+                {
+                    // Ignore invalid path errors
+                }
+            }
+        }
+
+        // 3. Known Program Files and System installation paths
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var searchRoots = new[] { programFiles, programFilesX86, @"C:\Program Files", @"C:\Program Files (x86)" }
+            .Where(p => !string.IsNullOrWhiteSpace(p) && Directory.Exists(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        var subPaths = new[]
+        {
+            Path.Combine("E-Attendance", "PostgreSQL", "15", "bin", binaryFileName),
+            Path.Combine("E-Attendance", "PostgreSQL", "18", "bin", binaryFileName),
+            Path.Combine("E_Attendance", "PostgreSQL", "15", "bin", binaryFileName),
+            Path.Combine("E_Attendance", "PostgreSQL", "18", "bin", binaryFileName),
+            Path.Combine("Apan Hajiri", "PostgreSQL", "15", "bin", binaryFileName),
+            Path.Combine("Apan Hajiri", "PostgreSQL", "18", "bin", binaryFileName),
+            Path.Combine("PostgreSQL", "15", "bin", binaryFileName),
+            Path.Combine("PostgreSQL", "18", "bin", binaryFileName),
+            Path.Combine("PostgreSQL", "16", "bin", binaryFileName),
+            Path.Combine("PostgreSQL", "17", "bin", binaryFileName),
+        };
+
+        foreach (var root in searchRoots)
+        {
+            foreach (var sub in subPaths)
+            {
+                try
+                {
+                    var candidate = Path.Combine(root, sub);
+                    if (File.Exists(candidate)) return candidate;
+                }
+                catch
+                {
+                    // Ignore invalid path errors
+                }
+            }
+        }
+
+        // 4. Check workspace/repo installer location (for dev/debugging runs)
+        try
+        {
+            var cur = baseDir;
+            for (var i = 0; i < 5 && !string.IsNullOrWhiteSpace(cur); i++)
+            {
+                var devCandidate = Path.Combine(cur, "installer", "pgsql", "bin", binaryFileName);
+                if (File.Exists(devCandidate)) return Path.GetFullPath(devCandidate);
+                var parent = Directory.GetParent(cur);
+                cur = parent?.FullName;
+            }
+        }
+        catch
+        {
+            // Ignore dev path traversal errors
+        }
+
+        // 5. Check PATH environment variable directories
+        try
+        {
+            var pathVar = Environment.GetEnvironmentVariable("PATH");
+            if (!string.IsNullOrWhiteSpace(pathVar))
+            {
+                foreach (var segment in pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    try
+                    {
+                        var candidate = Path.Combine(segment, binaryFileName);
+                        if (File.Exists(candidate)) return candidate;
+                    }
+                    catch
+                    {
+                        // Ignore invalid paths in PATH
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore environment variable read errors
+        }
+
+        return fallbackName;
     }
 
-    public static string ResolvePsqlExePath()
+    private static string? ExtractExecutablePath(string rawImagePath)
     {
-        var candidate = Path.Combine(AppContext.BaseDirectory, "PostgreSQL", "18", "bin", "psql.exe");
-        if (File.Exists(candidate)) return candidate;
-        candidate = Path.Combine(AppContext.BaseDirectory, "PostgreSQL", "15", "bin", "psql.exe");
-        return File.Exists(candidate) ? candidate : "psql";
+        if (string.IsNullOrWhiteSpace(rawImagePath)) return null;
+        var trimmed = rawImagePath.Trim();
+        if (trimmed.StartsWith("\""))
+        {
+            var closeQuote = trimmed.IndexOf('"', 1);
+            if (closeQuote > 1)
+            {
+                return trimmed.Substring(1, closeQuote - 1);
+            }
+        }
+        var spaceIdx = trimmed.IndexOf(' ');
+        return spaceIdx > 0 ? trimmed.Substring(0, spaceIdx) : trimmed;
     }
+
 
     public static string ResolveDefaultBackupLocation()
     {

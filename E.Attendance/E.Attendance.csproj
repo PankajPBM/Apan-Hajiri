@@ -23,9 +23,9 @@
     <RollForward>LatestMinor</RollForward>
     <!-- Ship only English satellite resources (no cs/de/fr/ja/... waste folders) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <Version>1.1.14</Version>
-    <FileVersion>1.1.14.0</FileVersion>
-    <AssemblyVersion>1.1.14.0</AssemblyVersion>
+    <Version>1.1.15</Version>
+    <FileVersion>1.1.15.0</FileVersion>
+    <AssemblyVersion>1.1.15.0</AssemblyVersion>
     <Company>PB Tech Zone</Company>
     <Authors>PB Tech Zone</Authors>
     <Product>Apan Hajiri</Product>
@@ -79,10 +79,6 @@
     <Exec Command="dotnet publish &quot;$(MSBuildProjectFullPath)&quot; -c Release -r win-x64 --self-contained true -o &quot;$(MSBuildProjectDirectory)\..\artifacts\self-contained\E.Attendance.Controller&quot; --nologo /p:IsPublishing=true" IgnoreExitCode="false" />
     <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\E.Attendance.Web\E.Attendance.Web.csproj&quot; -c Release -r win-x64 --self-contained true -o &quot;$(MSBuildProjectDirectory)\..\artifacts\self-contained\E.Attendance.Web&quot; --nologo /p:IsPublishing=true" IgnoreExitCode="false" />
     <Message Importance="High" Text="Self-contained artifacts ready. Compile ISS now." />
-  </Target>
-
-  <Target Name="StopRunningAttendanceApp" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
-    <Exec IgnoreExitCode="true" Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$p = Get-Process -Name 'E.Attendance' -ErrorAction SilentlyContinue; if ($p) { $p | Stop-Process -Force -ErrorAction SilentlyContinue }; exit 0&quot;" />
   </Target>
 
 </Project>

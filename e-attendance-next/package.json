@@ -1,6 +1,6 @@
 {
   "name": "e-attendance-next",
-  "version": "1.1.14",
+  "version": "1.1.15",
   "private": true,
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.0.0",
+    "bootstrap": "^5.3.3",
     "date-fns": "^4.1.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.511.0",

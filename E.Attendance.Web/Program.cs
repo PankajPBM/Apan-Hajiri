@@ -115,9 +115,89 @@ var settingsPath = Path.Combine(appDataRoot, "websettings.json");
 var settings = EnsureBindableRuntimePorts(WebAppSettings.Load(settingsPath), settingsPath);
 builder.WebHost.UseUrls(BuildListenUrls(settings.Port, settings.FrontendPort, serviceRole));
 
+static async Task<bool> TryServeNextFlightFileAsync(HttpContext context, string? webRoot)
+{
+    if (string.IsNullOrWhiteSpace(webRoot))
+    {
+        return false;
+    }
+
+    var path = context.Request.Path.Value ?? string.Empty;
+    if (!HttpMethods.IsGet(context.Request.Method) || !path.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var trimmed = path.Trim('/');
+    if (string.IsNullOrEmpty(trimmed))
+    {
+        return false;
+    }
+
+    // 1. Direct file check on disk
+    var directPath = Path.Combine(webRoot, trimmed.Replace('/', Path.DirectorySeparatorChar));
+    if (File.Exists(directPath))
+    {
+        context.Response.ContentType = "text/plain; charset=utf-8";
+        await context.Response.SendFileAsync(directPath);
+        return true;
+    }
+
+    // 2. Next.js 16 RSC flight mapping:
+    // Requested URL: .../__next.{group}.{subpath}.__PAGE__.txt
+    // On disk:       .../__next.{group}/{subpath}/__PAGE__.txt
+    if (trimmed.Contains("__next."))
+    {
+        var lastSlash = trimmed.LastIndexOf('/');
+        var dirPrefix = lastSlash >= 0 ? trimmed[..lastSlash] : string.Empty;
+        var fileName = lastSlash >= 0 ? trimmed[(lastSlash + 1)..] : trimmed;
+
+        if (fileName.StartsWith("__next.", StringComparison.OrdinalIgnoreCase) &&
+            fileName.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+        {
+            var withoutExt = fileName[..^4]; // strip ".txt"
+            var expandedPath = withoutExt.Replace('.', Path.DirectorySeparatorChar) + ".txt";
+            var mappedCandidate = string.IsNullOrEmpty(dirPrefix)
+                ? Path.Combine(webRoot, expandedPath)
+                : Path.Combine(webRoot, dirPrefix.Replace('/', Path.DirectorySeparatorChar), expandedPath);
+
+            if (File.Exists(mappedCandidate))
+            {
+                context.Response.ContentType = "text/plain; charset=utf-8";
+                await context.Response.SendFileAsync(mappedCandidate);
+                return true;
+            }
+        }
+    }
+
+    // 3. Fallback to index.txt if present in the target route directory
+    var lastSlashIdx = trimmed.LastIndexOf('/');
+    var routeDir = lastSlashIdx >= 0 ? trimmed[..lastSlashIdx] : string.Empty;
+    if (!string.IsNullOrEmpty(routeDir))
+    {
+        var indexTxtPath = Path.Combine(webRoot, routeDir.Replace('/', Path.DirectorySeparatorChar), "index.txt");
+        if (File.Exists(indexTxtPath))
+        {
+            context.Response.ContentType = "text/plain; charset=utf-8";
+            await context.Response.SendFileAsync(indexTxtPath);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 if (string.Equals(serviceRole, "web", StringComparison.OrdinalIgnoreCase))
 {
     var webOnlyApp = builder.Build();
+    webOnlyApp.Use(async (context, next) =>
+    {
+        if (await TryServeNextFlightFileAsync(context, webOnlyApp.Environment.WebRootPath))
+        {
+            return;
+        }
+        await next();
+    });
     webOnlyApp.UseDefaultFiles();
     webOnlyApp.UseStaticFiles();
     webOnlyApp.MapGet("/api-config.json", () => Results.Json(new { apiPort = settings.Port, webPort = settings.FrontendPort }));
@@ -525,6 +605,11 @@ app.Use(async (context, next) =>
         !path.StartsWith("/iclock", StringComparison.OrdinalIgnoreCase) &&
         HttpMethods.IsGet(context.Request.Method))
     {
+        if (await TryServeNextFlightFileAsync(context, webRootPath))
+        {
+            return;
+        }
+
         var trimmed = path.Trim('/');
         if (!string.IsNullOrEmpty(trimmed))
         {
@@ -5079,10 +5164,8 @@ app.MapGet("/api/devices", (string? search, int page = 1, int pageSize = 200) =>
             DefaultDepartmentCode,
             DefaultDepartmentName);
 
-        // Use DB count when we have records; fall back to the device's self-reported count
-        // (from its INFO push) so newly-added devices show a meaningful number instead of 0.
-        // Never surface the -1 "unknown" sentinel — clamp to 0 so the UI shows a clean count.
-        var transactionQty = deviceTx > 0 ? deviceTx : Math.Max(0, discovered?.TransactionQty ?? 0);
+        // Punch Logs in Device Manager reflects actual hardware count currently on the device
+        var transactionQty = Math.Max(0, discovered?.TransactionQty ?? 0);
 
         var maxUserQty = 10000;
         var maxFpQty = 10000;
@@ -6520,45 +6603,32 @@ app.MapPost("/api/devices/{serial}/commands/preset", async (string serial, HttpR
 
         if (action is "clear-log" or "clear-data")
         {
-            var device = service.ListDevices()
-                .FirstOrDefault(d => string.Equals(d.SerialNumber, normalizedSerial, StringComparison.OrdinalIgnoreCase));
-            var deviceId = device?.Id;
-
-            var matchedAttendanceIds = service.ListAttendance(null, null)
-                .Where(a =>
-                    (deviceId.HasValue && a.DeviceId.HasValue && a.DeviceId.Value == deviceId.Value) ||
-                    (!string.IsNullOrWhiteSpace(a.DeviceSerialNumber) &&
-                     string.Equals(a.DeviceSerialNumber, normalizedSerial, StringComparison.OrdinalIgnoreCase)))
-                .Select(a => a.Id)
-                .Distinct()
-                .ToList();
-
-            foreach (var attendanceId in matchedAttendanceIds)
-            {
-                if (repository.DeleteAttendance(attendanceId))
-                {
-                    removedAttendance++;
-                }
-            }
-
-            if (removedAttendance > 0)
-            {
-                AddLog("WARN", "Attendance", $"Attendance cleaned for {normalizedSerial}: {removedAttendance} row(s) removed.");
-            }
+            // Database records are kept completely untouched for payroll/history.
+            // Only device hardware memory is cleared via the queued command.
 
             // The device list's transactionQty falls back to this cached self-reported count
             // whenever our own AttendanceRecords count is 0 (see LoadDevicePunchCounts usage) —
             // without resetting it here, a just-cleared device kept showing its stale pre-clear
             // count until the device happened to report a fresh INFO/options payload.
-            if (action is "clear-data" && discoveredDevices.TryGetValue(normalizedSerial, out var discoveredForClear))
+            if (discoveredDevices.TryGetValue(normalizedSerial, out var discoveredForClear))
             {
-                discoveredDevices[normalizedSerial] = discoveredForClear with
+                if (action is "clear-data")
                 {
-                    TransactionQty = 0,
-                    UserQty = 0,
-                    FpQty = 0,
-                    FaceQty = 0
-                };
+                    discoveredDevices[normalizedSerial] = discoveredForClear with
+                    {
+                        TransactionQty = 0,
+                        UserQty = 0,
+                        FpQty = 0,
+                        FaceQty = 0
+                    };
+                }
+                else if (action is "clear-log")
+                {
+                    discoveredDevices[normalizedSerial] = discoveredForClear with
+                    {
+                        TransactionQty = 0
+                    };
+                }
             }
         }
 
@@ -8762,23 +8832,51 @@ _ = Task.Run(async () =>
     }
 });
 
-// E-Attendance-Health-Monitor: internal production status monitor. It keeps the service names consistent
-// with the planned split-service architecture without requiring extra Windows services yet.
+// E-Attendance-Health-Monitor: internal production status monitor.
+// Only logs when service health state changes, or as a throttled periodic status update (not every minute).
 _ = Task.Run(async () =>
 {
+    string? lastUnhealthySignature = null;
+    DateTime lastLoggedAtUtc = DateTime.MinValue;
+
     while (!app.Lifetime.ApplicationStopping.IsCancellationRequested)
     {
         try
         {
             var snapshot = BuildEAttServicesSnapshot();
-            var unhealthy = snapshot.Services.Where(s => !string.Equals(s.Status, "Healthy", StringComparison.OrdinalIgnoreCase)).ToList();
+            // Only flag services that are actively Warning or Critical.
+            // Planned status represents future roadmap services and is not an error/issue.
+            var unhealthy = snapshot.Services.Where(s =>
+                string.Equals(s.Status, "Critical", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(s.Status, "Warning", StringComparison.OrdinalIgnoreCase)).ToList();
+
             if (unhealthy.Count > 0)
             {
+                var currentSignature = string.Join("; ", unhealthy.Select(s => $"{s.Name}={s.Status}: {s.Message}"));
+                var now = DateTime.UtcNow;
+
+                // Only write to logs if the issue state changed, or as a reminder once every 4 hours (prevents 1440 logs/day)
+                if (currentSignature != lastUnhealthySignature || (now - lastLoggedAtUtc) >= TimeSpan.FromHours(4))
+                {
+                    AddLog(
+                        "WARN",
+                        "E-Attendance-Health-Monitor",
+                        $"Health monitor found {unhealthy.Count} service issue(s).",
+                        currentSignature);
+
+                    lastUnhealthySignature = currentSignature;
+                    lastLoggedAtUtc = now;
+                }
+            }
+            else if (lastUnhealthySignature != null)
+            {
+                // Services recovered back to healthy state
                 AddLog(
-                    "WARN",
+                    "INFO",
                     "E-Attendance-Health-Monitor",
-                    $"Health monitor found {unhealthy.Count} service issue(s).",
-                    string.Join("; ", unhealthy.Select(s => $"{s.Name}={s.Status}: {s.Message}")));
+                    "All services recovered to Healthy.",
+                    "Health monitor reports all active services are operating normally.");
+                lastUnhealthySignature = null;
             }
         }
         catch (Exception ex)
@@ -8788,7 +8886,7 @@ _ = Task.Run(async () =>
 
         try
         {
-            await Task.Delay(TimeSpan.FromMinutes(1), app.Lifetime.ApplicationStopping);
+            await Task.Delay(TimeSpan.FromMinutes(2), app.Lifetime.ApplicationStopping);
         }
         catch (TaskCanceledException)
         {
@@ -16108,6 +16206,70 @@ static void ApplyMappedDepartmentAndPosition(Employee employee, string? mappedDe
     }
 }
 
+static string DescribeDeviceOpLog(string line)
+{
+    var tokens = line.Split('\t', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (tokens.Length < 2)
+    {
+        tokens = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    if (tokens.Length < 2)
+    {
+        return $"Device operation: {line}";
+    }
+
+    var opTypeCodeStr = tokens.Length > 1 ? tokens[1].Trim() : "";
+    if (!int.TryParse(opTypeCodeStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out var opType))
+    {
+        return $"Device operation: {line}";
+    }
+
+    var opWho = tokens.Length > 2 ? tokens[2].Trim() : "";
+    var opTime = tokens.Length > 3 ? tokens[3].Trim() : "";
+    var val1 = tokens.Length > 4 ? tokens[4].Trim() : "";
+    var val2 = tokens.Length > 5 ? tokens[5].Trim() : "";
+
+    var whoText = string.IsNullOrWhiteSpace(opWho) || opWho == "0" ? "Admin" : $"User {opWho}";
+    var timeText = string.IsNullOrWhiteSpace(opTime) ? "" : $" at {opTime}";
+
+    return opType switch
+    {
+        0 => $"Device startup / power on{timeText}",
+        1 => $"Device shutdown / power off{timeText}",
+        2 => $"Device rebooted{timeText}",
+        3 => $"{whoText} accessed device menu{timeText}",
+        4 => $"{whoText} exited device menu{timeText}",
+        5 => $"Device system settings changed by {whoText}{timeText}",
+        6 => $"Device date/time changed by {whoText}{timeText}",
+        7 => $"Device communication settings changed by {whoText}{timeText}",
+        8 => $"Device access control settings changed by {whoText}{timeText}",
+        9 => $"Device alarm/bell settings changed by {whoText}{timeText}",
+        10 => $"Device record parameters changed by {whoText}{timeText}",
+        11 => $"Device power management changed by {whoText}{timeText}",
+        12 => $"Device Mifare card settings changed by {whoText}{timeText}",
+        13 => $"Device lock/unlock state changed{timeText}",
+        20 => $"User {(!string.IsNullOrWhiteSpace(val1) ? val1 : "enrolled")} registered on device by {whoText}{timeText}",
+        21 => $"Fingerprint enrolled for user {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} by {whoText}{timeText}",
+        22 => $"Password set for user {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} by {whoText}{timeText}",
+        23 => $"Card enrolled for user {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} by {whoText}{timeText}",
+        24 => $"User {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} info modified on device by {whoText}{timeText}",
+        25 => $"Fingerprint modified for user {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} by {whoText}{timeText}",
+        26 => $"Password modified for user {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} by {whoText}{timeText}",
+        27 => $"Card modified for user {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} by {whoText}{timeText}",
+        28 => $"User {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} deleted on device by {whoText}{timeText}",
+        29 => $"Fingerprint deleted for user {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} by {whoText}{timeText}",
+        30 => $"Password deleted for user {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} by {whoText}{timeText}",
+        31 => $"Card deleted for user {(!string.IsNullOrWhiteSpace(val1) ? val1 : "")} by {whoText}{timeText}",
+        32 => $"Device data cleared by {whoText}{timeText}",
+        33 => $"Admin privileges cleared on device by {whoText}{timeText}",
+        34 => $"Attendance log cleared on device by {whoText}{timeText}",
+        35 => $"Photo records cleared on device by {whoText}{timeText}",
+        36 => $"All data wiped on device by {whoText}{timeText}",
+        _ => $"Device operation (code {opType}) by {whoText}{timeText}"
+    };
+}
+
 (int Attendance, int UserInfo, int BioData, int BioPhoto, int FingerTmp, int Face, int UserPic) HandleOperLogPayload(
     AttendanceService service,
     PostgresAttendanceRepository repository,
@@ -16152,6 +16314,15 @@ static void ApplyMappedDepartmentAndPosition(Employee employee, string? mappedDe
                 upper.Equals("OPLOG", StringComparison.Ordinal))
             {
                 opLogLinesCount++;
+                try
+                {
+                    var desc = DescribeDeviceOpLog(line);
+                    AddLog("INFO", "DeviceAction", $"[{deviceSerialNumber ?? "Device"}] {desc}", line);
+                }
+                catch
+                {
+                    AddLog("INFO", "DeviceAction", $"[{deviceSerialNumber ?? "Device"}] Operation log: {line}");
+                }
                 continue;
             }
 

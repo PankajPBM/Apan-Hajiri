@@ -24,7 +24,18 @@ To release a new version: run `.\bump-version.ps1 <version>`, rebuild (Release),
 installer, and add an entry below. Or run `.\build-installer.ps1 -Version <version>` to bump,
 build Release, and compile the installer in one flow.
 
-## Unreleased
+## [1.1.15] - 2026-09-26
+
+Database backup path resolution fix, Settings page enhancements, and device port conflict prevention.
+
+### Fixed
+- **PostgreSQL Binary Discovery in BackupService:** Added multi-tier resolution (Registry Service `ImagePath`, Program Files, AppContext, and PATH) for `pg_dump.exe` and `psql.exe`. Fixes `The system cannot find the file specified` when running as a Windows Service under `LocalSystem`/`NetworkService`.
+- **Settings Device Port Conflict:** Added pre-save validation for Web UI port and prohibited setting API Push port and Web UI port to the same value.
+- **Settings Backup UI Polish:** Tailored top metric cards on the Backup tab to show Total Backups, Schedule Status, and Latest Backup; prevented history table column stretching on long error messages; fixed retention count input UX.
+
+### Added
+- **Settings Branding Support Email:** Added editable `Support Email` input with email format validation.
+- **Protected App Logo Status:** Formally designated the official Apan Hajiri logo as protected and locked to prevent accidental branding changes.
 
 ## [1.1.14] - 2026-09-05
 

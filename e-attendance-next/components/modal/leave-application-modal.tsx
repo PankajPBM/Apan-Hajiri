@@ -222,7 +222,8 @@ export function LeaveApplicationModal({ onClose, onSuccess }: LeaveApplicationMo
                   placeholder="Search by name or ID..."
                   value={employeeSearch}
                   onChange={(e) => setEmployeeSearch(e.target.value)}
-                  className="w-full rounded-xl border border-[#d3e1ee] bg-[#fbfdff] py-1.5 pl-8 pr-3 text-xs text-[#123454] outline-none focus:ring-1 focus:ring-[#b7d0e6]"
+                  style={{ paddingLeft: "2.25rem" }}
+                  className="w-full rounded-xl border border-[#d3e1ee] bg-[#fbfdff] py-1.5 pl-9 pr-3 text-xs text-[#123454] outline-none focus:ring-1 focus:ring-[#b7d0e6]"
                 />
               </div>
               <select 

@@ -89,7 +89,14 @@ internal sealed class ServiceControllerContext : ApplicationContext
         {
             _manager.EnsureDefaults();
             try { _manager.EnsurePostgreSqlReadyWithReport(); } catch { }
-            _manager.StartWindowsService(WebServiceManager.ApiWindowsServiceName);
+            if (_manager.GetWindowsServiceInstalled(WebServiceManager.ApiWindowsServiceName))
+            {
+                _manager.StartWindowsService(WebServiceManager.ApiWindowsServiceName);
+            }
+            if (_manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName))
+            {
+                _manager.StartWindowsService(WebServiceManager.WebWindowsServiceName);
+            }
             return;
         }
 
@@ -101,7 +108,14 @@ internal sealed class ServiceControllerContext : ApplicationContext
         var apiInstalled = _manager.GetWindowsServiceInstalled();
         if (apiInstalled)
         {
-            try { _manager.StopWindowsService(WebServiceManager.ApiWindowsServiceName); } catch { }
+            if (_manager.GetWindowsServiceInstalled(WebServiceManager.WebWindowsServiceName))
+            {
+                try { _manager.StopWindowsService(WebServiceManager.WebWindowsServiceName); } catch { }
+            }
+            if (_manager.GetWindowsServiceInstalled(WebServiceManager.ApiWindowsServiceName))
+            {
+                try { _manager.StopWindowsService(WebServiceManager.ApiWindowsServiceName); } catch { }
+            }
             return;
         }
 
@@ -112,10 +126,11 @@ internal sealed class ServiceControllerContext : ApplicationContext
     {
         var state = _manager.GetState();
         var configuredFrontendPort = state.FrontendPort;
-        _statusItem.Text = $"Status: {(state.IsWebReachable ? "Running" : "Stopped")} (API {state.Port}, UI {configuredFrontendPort})";
-        _startItem.Enabled = !_actionInProgress && !state.IsWebReachable;
-        _stopItem.Enabled = !_actionInProgress && state.IsWebReachable;
-        _trayIcon.Text = $"E_Att_Service {((state.IsWebReachable) ? "Running" : "Stopped")} API:{state.Port} UI:{configuredFrontendPort}";
+        var isRunning = state.IsWebReachable && (!state.ApiWinSvcInstalled || state.IsFrontendReachable);
+        _statusItem.Text = $"Status: {(isRunning ? "Running" : "Stopped")} (API {state.Port}, UI {configuredFrontendPort})";
+        _startItem.Enabled = !_actionInProgress && !isRunning;
+        _stopItem.Enabled = !_actionInProgress && isRunning;
+        _trayIcon.Text = $"E_Att_Service {(isRunning ? "Running" : "Stopped")} API:{state.Port} UI:{configuredFrontendPort}";
 
         _controllerForm?.RefreshState();
     }

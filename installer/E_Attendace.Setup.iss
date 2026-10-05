@@ -1,6 +1,6 @@
 #define MyAppId "{{AF12B76A-7F83-4F7F-8CA6-8C32A67D39C1}"
 #define MyAppName "Apan Hajiri"
-#define MyAppVersion "1.1.14"
+#define MyAppVersion "1.1.15"
 #define MyAppPublisher "PB Tech Zone"
 #define MyAppPublisherPhone "+9779814891277"
 #define MyAppPublisherEmail "pbtechzone77@gmail.com"
@@ -182,18 +182,18 @@ Source: "{#DesktopRuntimeInstallerPath}"; DestDir: "{tmp}"; DestName: "{#Desktop
 ; Ship the HD app icon so shortcuts reference a deterministic, high-resolution .ico.
 Source: "{#SetupIconPath}"; DestDir: "{app}"; DestName: "E_Att.ico"; Flags: ignoreversion
 
-; Feature preview screenshots displayed on the installer billboard
-Source: "slide_dashboard.bmp"; Flags: dontcopy
-Source: "slide_login.bmp"; Flags: dontcopy
-Source: "slide_employees.bmp"; Flags: dontcopy
-Source: "slide_devices.bmp"; Flags: dontcopy
-Source: "slide_shifts.bmp"; Flags: dontcopy
-Source: "slide_attendance.bmp"; Flags: dontcopy
-Source: "slide_leaves.bmp"; Flags: dontcopy
-Source: "slide_reports.bmp"; Flags: dontcopy
-Source: "slide_settings.bmp"; Flags: dontcopy
-Source: "slide_setup.bmp"; Flags: dontcopy
-Source: "slide_access.bmp"; Flags: dontcopy
+; Feature preview screenshots displayed on the installer billboard (crisp high-DPI PNGs)
+Source: "staging_png\slide_dashboard.png"; Flags: dontcopy
+Source: "staging_png\slide_login.png"; Flags: dontcopy
+Source: "staging_png\slide_employees.png"; Flags: dontcopy
+Source: "staging_png\slide_devices.png"; Flags: dontcopy
+Source: "staging_png\slide_shifts.png"; Flags: dontcopy
+Source: "staging_png\slide_attendance.png"; Flags: dontcopy
+Source: "staging_png\slide_leaves.png"; Flags: dontcopy
+Source: "staging_png\slide_reports.png"; Flags: dontcopy
+Source: "staging_png\slide_settings.png"; Flags: dontcopy
+Source: "staging_png\slide_setup.png"; Flags: dontcopy
+Source: "staging_png\slide_access.png"; Flags: dontcopy
 
 [Icons]
 #if defined(ControllerExePath)
@@ -249,7 +249,7 @@ begin
   CurrentSlideIndex := Idx;
   try
     if FileExists(SlideFiles[Idx]) then
-      PreviewImage.Bitmap.LoadFromFile(SlideFiles[Idx]);
+      PreviewImage.PngImage.LoadFromFile(SlideFiles[Idx]);
     if PreviewTitle <> nil then
       PreviewTitle.Caption := SlideTitles[Idx];
   except
@@ -491,39 +491,39 @@ begin
     'Please wait while setup completes...');
 
   try
-    ExtractTemporaryFile('slide_dashboard.bmp');
-    ExtractTemporaryFile('slide_login.bmp');
-    ExtractTemporaryFile('slide_employees.bmp');
-    ExtractTemporaryFile('slide_devices.bmp');
-    ExtractTemporaryFile('slide_shifts.bmp');
-    ExtractTemporaryFile('slide_attendance.bmp');
-    ExtractTemporaryFile('slide_leaves.bmp');
-    ExtractTemporaryFile('slide_reports.bmp');
-    ExtractTemporaryFile('slide_settings.bmp');
-    ExtractTemporaryFile('slide_setup.bmp');
-    ExtractTemporaryFile('slide_access.bmp');
+    ExtractTemporaryFile('slide_dashboard.png');
+    ExtractTemporaryFile('slide_login.png');
+    ExtractTemporaryFile('slide_employees.png');
+    ExtractTemporaryFile('slide_devices.png');
+    ExtractTemporaryFile('slide_shifts.png');
+    ExtractTemporaryFile('slide_attendance.png');
+    ExtractTemporaryFile('slide_leaves.png');
+    ExtractTemporaryFile('slide_reports.png');
+    ExtractTemporaryFile('slide_settings.png');
+    ExtractTemporaryFile('slide_setup.png');
+    ExtractTemporaryFile('slide_access.png');
 
-    SlideFiles[0]  := ExpandConstant('{tmp}\slide_dashboard.bmp');
+    SlideFiles[0]  := ExpandConstant('{tmp}\slide_dashboard.png');
     SlideTitles[0] := 'Feature Preview: Real-Time Attendance Dashboard & Statistics';
-    SlideFiles[1]  := ExpandConstant('{tmp}\slide_login.bmp');
+    SlideFiles[1]  := ExpandConstant('{tmp}\slide_login.png');
     SlideTitles[1] := 'Feature Preview: Secure Multi-User Login & Role Authentication';
-    SlideFiles[2]  := ExpandConstant('{tmp}\slide_employees.bmp');
+    SlideFiles[2]  := ExpandConstant('{tmp}\slide_employees.png');
     SlideTitles[2] := 'Feature Preview: Employee Directory & Biometric Profile Management';
-    SlideFiles[3]  := ExpandConstant('{tmp}\slide_devices.bmp');
+    SlideFiles[3]  := ExpandConstant('{tmp}\slide_devices.png');
     SlideTitles[3] := 'Feature Preview: Biometric Device Fleet & ZKTeco Push Protocol';
-    SlideFiles[4]  := ExpandConstant('{tmp}\slide_shifts.bmp');
+    SlideFiles[4]  := ExpandConstant('{tmp}\slide_shifts.png');
     SlideTitles[4] := 'Feature Preview: Flexible Shift Cycles, Rosters & Work Timetables';
-    SlideFiles[5]  := ExpandConstant('{tmp}\slide_attendance.bmp');
+    SlideFiles[5]  := ExpandConstant('{tmp}\slide_attendance.png');
     SlideTitles[5] := 'Feature Preview: Live Biometric Punch Logs & Audit Trail';
-    SlideFiles[6]  := ExpandConstant('{tmp}\slide_leaves.bmp');
+    SlideFiles[6]  := ExpandConstant('{tmp}\slide_leaves.png');
     SlideTitles[6] := 'Feature Preview: Nepali Bikram Sambat (BS) Calendar & Leave Management';
-    SlideFiles[7]  := ExpandConstant('{tmp}\slide_reports.bmp');
+    SlideFiles[7]  := ExpandConstant('{tmp}\slide_reports.png');
     SlideTitles[7] := 'Feature Preview: Comprehensive Attendance & Overtime Reports';
-    SlideFiles[8]  := ExpandConstant('{tmp}\slide_settings.bmp');
+    SlideFiles[8]  := ExpandConstant('{tmp}\slide_settings.png');
     SlideTitles[8] := 'Feature Preview: Organization Settings & Department Configuration';
-    SlideFiles[9]  := ExpandConstant('{tmp}\slide_setup.bmp');
+    SlideFiles[9]  := ExpandConstant('{tmp}\slide_setup.png');
     SlideTitles[9] := 'Feature Preview: Automated Device Sync & Service Controller';
-    SlideFiles[10] := ExpandConstant('{tmp}\slide_access.bmp');
+    SlideFiles[10] := ExpandConstant('{tmp}\slide_access.png');
     SlideTitles[10]:= 'Feature Preview: Access Control Time Periods & Door Privileges';
 
     CurrentSlideIndex := -1;
@@ -538,16 +538,16 @@ begin
     AvailW := InstallProgressPage.SurfaceWidth;
     AvailH := InstallProgressPage.SurfaceHeight - ScaleY(90);
     ImgW := ScaleX(620);
-    ImgH := ScaleY(295);
+    ImgH := ScaleY(280);
     if ImgW > AvailW then
     begin
       ImgW := AvailW;
-      ImgH := ImgW * 295 div 620;
+      ImgH := ImgW * 280 div 620;
     end;
     if ImgH > AvailH then
     begin
       ImgH := AvailH;
-      ImgW := ImgH * 620 div 295;
+      ImgW := ImgH * 620 div 280;
     end;
 
     PreviewImage := TBitmapImage.Create(InstallProgressPage);
@@ -561,7 +561,7 @@ begin
     PreviewImage.Center := True;
     if FileExists(SlideFiles[0]) then
     begin
-      PreviewImage.Bitmap.LoadFromFile(SlideFiles[0]);
+      PreviewImage.PngImage.LoadFromFile(SlideFiles[0]);
       CurrentSlideIndex := 0;
     end;
   except

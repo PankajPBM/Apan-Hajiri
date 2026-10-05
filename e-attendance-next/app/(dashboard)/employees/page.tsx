@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowRightLeft, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, CreditCard, Eye, Fingerprint, FolderOpen, Hand, KeyRound, Pencil, Plus, RotateCcw, ScanFace, Search, Settings2, Trash2, User, UserPlus, X } from "lucide-react";
 import { type Employee } from "@/components/data/mock-data";
+import { initialsFromName } from "@/components/data/auth-store";
 import { BsDateField } from "@/components/date/dual-date-input";
 import { resolveApiBases } from "@/lib/api-bases";
 
@@ -1800,9 +1801,24 @@ export default function EmployeesPage() {
           departmentByCode.get(initialDepartmentCode)?.areaLabel ?? "",
         )
       : areaSelectionOptions[0]?.filterKey ?? "";
-    setTransferDepartmentCodes([]);
-    setTransferPrimaryDepartmentCode("");
-    setTransferAreaFilters(initialAreaFilterKey ? [initialAreaFilterKey] : []);
+
+    const targetAreaKey = initialAreaFilterKey || areaSelectionOptions[0]?.filterKey || "";
+    setTransferAreaFilters(targetAreaKey ? [targetAreaKey] : []);
+
+    const entries = Array.from(departmentByCode.values());
+    const deptsInArea = targetAreaKey
+      ? entries.filter((item) => getAreaFilterKey(item.areaCode, item.areaLabel) === targetAreaKey)
+      : entries;
+    const sortedDepts = [...deptsInArea].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    const autoDeptCode = initialDepartmentCode && sortedDepts.some((d) => d.code === initialDepartmentCode)
+      ? initialDepartmentCode
+      : (sortedDepts[0]?.code ?? "");
+
+    if (autoDeptCode) {
+      applyTransferDepartmentSelection([autoDeptCode], autoDeptCode);
+    } else {
+      applyTransferDepartmentSelection([], "");
+    }
     setTransferModalOpen(true);
   }
 
@@ -1824,16 +1840,17 @@ export default function EmployeesPage() {
   function toggleTransferAreaFilter(filterKey: string) {
     const nextFilterKey = filterKey.trim();
     setTransferAreaFilters(nextFilterKey ? [nextFilterKey] : []);
-    const allowedCodes = new Set(
-      Array.from(departmentByCode.values())
-        .filter((item) => !nextFilterKey || getAreaFilterKey(item.areaCode, item.areaLabel) === nextFilterKey)
-        .map((item) => item.code),
-    );
-    const filteredDepartmentCodes = transferDepartmentCodes.filter((value) => allowedCodes.has(value));
-    const preferredPrimaryCode = filteredDepartmentCodes.includes(transferPrimaryDepartmentCode)
-      ? transferPrimaryDepartmentCode
-      : filteredDepartmentCodes[0] ?? "";
-    applyTransferDepartmentSelection(filteredDepartmentCodes, preferredPrimaryCode);
+    const entries = Array.from(departmentByCode.values());
+    const deptsInArea = nextFilterKey
+      ? entries.filter((item) => getAreaFilterKey(item.areaCode, item.areaLabel) === nextFilterKey)
+      : entries;
+    const sortedDepts = [...deptsInArea].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    const autoDeptCode = sortedDepts[0]?.code ?? "";
+    if (autoDeptCode) {
+      applyTransferDepartmentSelection([autoDeptCode], autoDeptCode);
+    } else {
+      applyTransferDepartmentSelection([], "");
+    }
   }
 
   function toggleAddDepartmentSelection(code: string, checked: boolean) {
@@ -3784,29 +3801,79 @@ export default function EmployeesPage() {
   const editingExtra = editingEmployeeId ? employeeExtras[editingEmployeeId] : undefined;
 
   return (
-    <div className="employee-page space-y-4 px-2 pb-2 pt-0 sm:px-4 sm:pb-4 sm:pt-1 lg:px-6 lg:pb-6 lg:pt-1">
-      <div className="tab-header w-full p-4">
-        <h1 className="text-2xl font-semibold text-[#103856]">Employees</h1>
-        <p className="text-sm text-[#5f7f9d]">Clean personnel directory with quick filters, import templates, and bulk actions.</p>
-        <div className="metric-grid mt-3 sm:grid-cols-3">
-          <div className="metric-card"><p className="metric-card__label">Total</p><p className="metric-card__value">{filtered.length}</p></div>
-          <div className="metric-card"><p className="metric-card__label">Active</p><p className="metric-card__value">{activeFilteredCount}</p></div>
-          <div className="metric-card"><p className="metric-card__label">Inactive</p><p className="metric-card__value">{inactiveFilteredCount}</p></div>
-        </div>
-      </div>
+    <div className="employee-page space-y-4">
+      {/* 1. Header Overview & Summary Cards */}
+      <div className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                Employee Management
+              </h1>
+              <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-100">
+                Personnel Directory
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Manage employee profiles, biometric face & fingerprint enrollments, and department transfers.
+            </p>
+          </div>
 
-      <section className="employee-main-shell w-full p-4 sm:p-5 lg:p-5">
-        <div className="tab-toolbar mb-4 space-y-3 rounded-2xl border border-[#dbe9f7] bg-gradient-to-br from-[#f7fbff] to-[#eef6ff] p-3.5">
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={openCreateModal}
-              className="inline-flex h-9 items-center gap-2 rounded-full border border-[#3f7fbd] bg-gradient-to-r from-[#1d4ed8] to-[#0369a1] px-4 text-xs font-semibold text-white shadow-[0_10px_16px_-12px_rgba(29,78,216,0.9)] transition-colors hover:from-[#1e40af] hover:to-[#075985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8eb9e3] focus-visible:ring-offset-2 focus-visible:ring-offset-[#f7fbff] sm:text-sm"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 shadow-xs transition"
             >
               <Plus className="h-4 w-4" />
               Add Employee
             </button>
-            <div className="flex items-center gap-2">
+          </div>
+        </div>
+
+        {/* 3 Metric Cards */}
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Filtered</span>
+              <p className="text-2xl font-extrabold text-slate-900 leading-tight mt-1">{filtered.length}</p>
+              <p className="text-[11px] text-slate-400">Total staff records</p>
+            </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+              <User className="h-5 w-5" />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Active Staff</span>
+              <p className="text-2xl font-extrabold text-emerald-600 leading-tight mt-1">{activeFilteredCount}</p>
+              <p className="text-[11px] text-slate-400">Can log attendance</p>
+            </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+              <Check className="h-5 w-5" />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Inactive Staff</span>
+              <p className="text-2xl font-extrabold text-slate-500 leading-tight mt-1">{inactiveFilteredCount}</p>
+              <p className="text-[11px] text-slate-400">Access disabled</p>
+            </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+              <X className="h-5 w-5" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. Main Directory Surface */}
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs">
+        {/* Action Toolbar */}
+        <div className="mb-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="relative" style={{ position: "relative" }}>
                 <button
                   ref={importMenuButtonRef}
@@ -3836,7 +3903,7 @@ export default function EmployeesPage() {
                 {importMenuOpen && importMenuPos && typeof document !== "undefined"
                   ? createPortal(
                       <div
-                        className="min-w-[220px] rounded-xl border border-[#c8def4] bg-white p-1.5 shadow-[0_20px_30px_-12px_rgba(10,40,70,0.45)]"
+                        className="w-72 rounded-2xl border border-[#c8def4] bg-white p-2 shadow-[0_20px_35px_-12px_rgba(10,40,70,0.35)]"
                         style={{ position: "fixed", left: importMenuPos.left, top: importMenuPos.top, zIndex: 9999 }}
                         onClick={(event) => event.stopPropagation()}
                       >
@@ -3847,9 +3914,10 @@ export default function EmployeesPage() {
                             setImportMenuPos(null);
                             importEmployeesInputRef.current?.click();
                           }}
-                          className="block w-full rounded-md px-3 py-2 text-left text-xs text-[#1a4a73] transition hover:bg-[#eef6ff]"
+                          className="group flex w-full flex-col rounded-xl px-3 py-2 text-left transition hover:bg-[#eef6ff]"
                         >
-                          Import Employee (UserId + Area + Department required)
+                          <span className="text-xs font-semibold text-[#1a4a73] group-hover:text-[#0d3456]">Import Employees</span>
+                          <span className="text-[11px] text-[#698ba8]">Excel / CSV with User ID, Area, Dept</span>
                         </button>
                         <button
                           type="button"
@@ -3858,9 +3926,10 @@ export default function EmployeesPage() {
                             setImportMenuPos(null);
                             importEmployeePhotoFilesInputRef.current?.click();
                           }}
-                          className="block w-full rounded-md px-3 py-2 text-left text-xs text-[#1a4a73] transition hover:bg-[#eef6ff]"
+                          className="group flex w-full flex-col rounded-xl px-3 py-2 text-left transition hover:bg-[#eef6ff]"
                         >
-                          Import Employee Photo (Image files: filename = UserId)
+                          <span className="text-xs font-semibold text-[#1a4a73] group-hover:text-[#0d3456]">Import Photos (Files / ZIP)</span>
+                          <span className="text-[11px] text-[#698ba8]">Image files named as User ID (e.g. 101.jpg)</span>
                         </button>
                         <button
                           type="button"
@@ -3869,9 +3938,10 @@ export default function EmployeesPage() {
                             setImportMenuPos(null);
                             importEmployeePhotosInputRef.current?.click();
                           }}
-                          className="block w-full rounded-md px-3 py-2 text-left text-xs text-[#1a4a73] transition hover:bg-[#eef6ff]"
+                          className="group flex w-full flex-col rounded-xl px-3 py-2 text-left transition hover:bg-[#eef6ff]"
                         >
-                          Import Employee Photo (Template: PictureDataUrl)
+                          <span className="text-xs font-semibold text-[#1a4a73] group-hover:text-[#0d3456]">Import Photos (Excel Sheet)</span>
+                          <span className="text-[11px] text-[#698ba8]">Spreadsheet with photo data</span>
                         </button>
                       </div>,
                       document.body,
@@ -3910,7 +3980,7 @@ export default function EmployeesPage() {
                 {exportMenuOpen && exportMenuPos && typeof document !== "undefined"
                   ? createPortal(
                       <div
-                        className="min-w-[220px] rounded-xl border border-[#c8def4] bg-white p-1.5 shadow-[0_20px_30px_-12px_rgba(10,40,70,0.45)]"
+                        className="w-72 rounded-2xl border border-[#c8def4] bg-white p-2 shadow-[0_20px_35px_-12px_rgba(10,40,70,0.35)]"
                         style={{ position: "fixed", left: exportMenuPos.left, top: exportMenuPos.top, zIndex: 9999 }}
                         onClick={(event) => event.stopPropagation()}
                       >
@@ -3921,9 +3991,10 @@ export default function EmployeesPage() {
                             setExportMenuPos(null);
                             void openExportModal("employee");
                           }}
-                          className="block w-full rounded-md px-3 py-2 text-left text-xs text-[#1a4a73] transition hover:bg-[#eef6ff]"
+                          className="group flex w-full flex-col rounded-xl px-3 py-2 text-left transition hover:bg-[#eef6ff]"
                         >
-                          Export Employee
+                          <span className="text-xs font-semibold text-[#1a4a73] group-hover:text-[#0d3456]">Export Employees</span>
+                          <span className="text-[11px] text-[#698ba8]">Export employee data to Excel / CSV</span>
                         </button>
                         <button
                           type="button"
@@ -3932,9 +4003,10 @@ export default function EmployeesPage() {
                             setExportMenuPos(null);
                             void openExportModal("photo");
                           }}
-                          className="block w-full rounded-md px-3 py-2 text-left text-xs text-[#1a4a73] transition hover:bg-[#eef6ff]"
+                          className="group flex w-full flex-col rounded-xl px-3 py-2 text-left transition hover:bg-[#eef6ff]"
                         >
-                          Export Employee Photo
+                          <span className="text-xs font-semibold text-[#1a4a73] group-hover:text-[#0d3456]">Export Employee Photos</span>
+                          <span className="text-[11px] text-[#698ba8]">Download photos as ZIP archive</span>
                         </button>
                         <button
                           type="button"
@@ -3943,9 +4015,10 @@ export default function EmployeesPage() {
                             setExportMenuPos(null);
                             void exportEmployees("template");
                           }}
-                          className="block w-full rounded-md px-3 py-2 text-left text-xs text-[#1a4a73] transition hover:bg-[#eef6ff]"
+                          className="group flex w-full flex-col rounded-xl px-3 py-2 text-left transition hover:bg-[#eef6ff]"
                         >
-                          Export Employee Template
+                          <span className="text-xs font-semibold text-[#1a4a73] group-hover:text-[#0d3456]">Export Import Template</span>
+                          <span className="text-[11px] text-[#698ba8]">Blank template for employee import</span>
                         </button>
                         <button
                           type="button"
@@ -3954,9 +4027,10 @@ export default function EmployeesPage() {
                             setExportMenuPos(null);
                             void exportEmployees("photo-template");
                           }}
-                          className="block w-full rounded-md px-3 py-2 text-left text-xs text-[#1a4a73] transition hover:bg-[#eef6ff]"
+                          className="group flex w-full flex-col rounded-xl px-3 py-2 text-left transition hover:bg-[#eef6ff]"
                         >
-                          Export Employee Photo Template
+                          <span className="text-xs font-semibold text-[#1a4a73] group-hover:text-[#0d3456]">Export Photo Template</span>
+                          <span className="text-[11px] text-[#698ba8]">Template for spreadsheet photo import</span>
                         </button>
                       </div>,
                       document.body,
@@ -4181,17 +4255,18 @@ export default function EmployeesPage() {
             </div>
           </div>
 
-          <div className="grid w-full gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(300px,1.5fr)_minmax(160px,0.9fr)_minmax(190px,1fr)_minmax(140px,0.8fr)]">
+          <div className="grid w-full gap-2.5 sm:grid-cols-2 xl:grid-cols-[minmax(280px,1.5fr)_minmax(160px,0.9fr)_minmax(180px,1fr)_minmax(140px,0.8fr)]">
             <div className="relative min-w-0">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[--muted-foreground]" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 value={search}
                 onChange={(event) => {
                   setPage(1);
                   setSearch(event.target.value);
                 }}
-                placeholder="Search name, user ID, phone..."
-                className="h-10 w-full rounded-full border border-[#c4daf1] bg-white py-2 pl-9 pr-3 text-[14px] text-[#1e4162] outline-none ring-[#8db6df] transition duration-200 hover:border-[#95bee6] focus:ring-2"
+                placeholder="Search by name, ID, or phone..."
+                style={{ paddingLeft: "2.35rem" }}
+                className="h-9 w-full rounded-lg border border-slate-300 bg-white py-1.5 pl-9 pr-3 text-xs text-slate-900 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20"
               />
             </div>
 
@@ -4201,9 +4276,9 @@ export default function EmployeesPage() {
                 setPage(1);
                 setAreaFilter(event.target.value);
               }}
-              className="h-10 rounded-full border border-[#c4daf1] bg-white px-4 py-2 text-[14px] font-medium text-[#1e4162] transition duration-200 hover:border-[#95bee6]"
+              className="h-9 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-blue-600"
             >
-              <option value="all">All Areas</option>
+              <option value="all">All Geographic Areas</option>
               {areaOptions.map((item) => (
                 <option key={item} value={item}>
                   {item}
@@ -4217,7 +4292,7 @@ export default function EmployeesPage() {
                 setPage(1);
                 setDepartmentFilter(event.target.value);
               }}
-              className="h-10 rounded-full border border-[#c4daf1] bg-white px-4 py-2 text-[14px] font-medium text-[#1e4162] transition duration-200 hover:border-[#95bee6]"
+              className="h-9 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-blue-600"
             >
               <option value="all">All Departments</option>
               {departmentOptions.map((item) => (
@@ -4233,11 +4308,11 @@ export default function EmployeesPage() {
                 setPage(1);
                 setStatus(event.target.value);
               }}
-              className="h-10 rounded-full border border-[#c4daf1] bg-white px-4 py-2 text-[14px] font-medium text-[#1e4162] transition duration-200 hover:border-[#95bee6]"
+              className="h-9 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-blue-600"
             >
               <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
+              <option value="active">Active Staff</option>
+              <option value="inactive">Inactive Staff</option>
             </select>
           </div>
           {sendUserError ? (
@@ -4262,86 +4337,86 @@ export default function EmployeesPage() {
           ) : null}
         </div>
 
-        <div className="overflow-x-auto rounded-[22px] border border-[#e0ecf7] bg-white">
-          <table className="min-w-full text-left text-sm [&_td]:align-middle [&_th]:align-middle">
-            <thead className="bg-[#f2f8ff] text-xs uppercase text-[#1b4970]">
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
               <tr>
-                <th className="px-3 py-2">
+                <th className="px-3 py-3 w-10">
                   <input type="checkbox" checked={allFilteredSelected} onChange={(event) => toggleAllFilteredSelection(event.target.checked)} aria-label="Select all employees" />
                 </th>
-                {colPrefs.photo ? <th className="px-3 py-2">Photo</th> : null}
-                <th className="px-3 py-2">
-                  <button type="button" onClick={() => updateSort("code")} className="font-semibold hover:text-[--foreground] inline-flex items-center gap-0.5">
+                {colPrefs.photo ? <th className="px-3 py-3 w-12">Photo</th> : null}
+                <th className="px-3 py-3">
+                  <button type="button" onClick={() => updateSort("code")} className="font-bold hover:text-slate-900 inline-flex items-center gap-1">
                     User ID
                     {sortKey === "code" && <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>}
                   </button>
                 </th>
-                <th className="px-3 py-2">
-                  <button type="button" onClick={() => updateSort("name")} className="font-semibold hover:text-[--foreground] inline-flex items-center gap-0.5">
-                    Name
+                <th className="px-3 py-3">
+                  <button type="button" onClick={() => updateSort("name")} className="font-bold hover:text-slate-900 inline-flex items-center gap-1">
+                    Full Name
                     {sortKey === "name" && <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>}
                   </button>
                 </th>
                 {colPrefs.area ? (
-                  <th className="px-3 py-2">
-                    <button type="button" onClick={() => updateSort("area")} className="font-semibold hover:text-[--foreground] inline-flex items-center gap-0.5">
+                  <th className="px-3 py-3">
+                    <button type="button" onClick={() => updateSort("area")} className="font-bold hover:text-slate-900 inline-flex items-center gap-1">
                       Area
                       {sortKey === "area" && <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>}
                     </button>
                   </th>
                 ) : null}
                 {colPrefs.department ? (
-                  <th className="px-3 py-2">
-                    <button type="button" onClick={() => updateSort("department")} className="font-semibold hover:text-[--foreground] inline-flex items-center gap-0.5">
+                  <th className="px-3 py-3">
+                    <button type="button" onClick={() => updateSort("department")} className="font-bold hover:text-slate-900 inline-flex items-center gap-1">
                       Department
                       {sortKey === "department" && <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>}
                     </button>
                   </th>
                 ) : null}
                 {colPrefs.privilege ? (
-                  <th className="px-3 py-2">
-                    <button type="button" onClick={() => updateSort("designation")} className="font-semibold hover:text-[--foreground] inline-flex items-center gap-0.5">
+                  <th className="px-3 py-3">
+                    <button type="button" onClick={() => updateSort("designation")} className="font-bold hover:text-slate-900 inline-flex items-center gap-1">
                       Privilege
                       {sortKey === "designation" && <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>}
                     </button>
                   </th>
                 ) : null}
                 {colPrefs.card ? (
-                  <th className="px-3 py-2">
-                    <button type="button" onClick={() => updateSort("cardNumber")} className="font-semibold hover:text-[--foreground] inline-flex items-center gap-0.5">
+                  <th className="px-3 py-3">
+                    <button type="button" onClick={() => updateSort("cardNumber")} className="font-bold hover:text-slate-900 inline-flex items-center gap-1">
                       Card No
                       {sortKey === "cardNumber" && <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>}
                     </button>
                   </th>
                 ) : null}
                 {colPrefs.biometric ? (
-                  <th className="px-3 py-2">
-                    <button type="button" onClick={() => updateSort("biometric")} className="font-semibold hover:text-[--foreground] inline-flex items-center gap-0.5">
-                      Biometric
+                  <th className="px-3 py-3">
+                    <button type="button" onClick={() => updateSort("biometric")} className="font-bold hover:text-slate-900 inline-flex items-center gap-1">
+                      Biometrics
                       {sortKey === "biometric" && <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>}
                     </button>
                   </th>
                 ) : null}
                 {colPrefs.phone ? (
-                  <th className="px-3 py-2">
-                    <button type="button" onClick={() => updateSort("phone")} className="font-semibold hover:text-[--foreground] inline-flex items-center gap-0.5">
+                  <th className="px-3 py-3">
+                    <button type="button" onClick={() => updateSort("phone")} className="font-bold hover:text-slate-900 inline-flex items-center gap-1">
                       Phone
                       {sortKey === "phone" && <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>}
                     </button>
                   </th>
                 ) : null}
                 {colPrefs.status ? (
-                  <th className="px-3 py-2">
-                    <button type="button" onClick={() => updateSort("status")} className="font-semibold hover:text-[--foreground] inline-flex items-center gap-0.5">
+                  <th className="px-3 py-3">
+                    <button type="button" onClick={() => updateSort("status")} className="font-bold hover:text-slate-900 inline-flex items-center gap-1">
                       Status
                       {sortKey === "status" && <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>}
                     </button>
                   </th>
                 ) : null}
-                <th className="px-3 py-2 text-right">Actions</th>
+                <th className="px-3 py-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-slate-100">
               {rows.map((employee, rowIndex) => (
                 (() => {
                   const extra = employeeExtras[employee.id];
@@ -4365,10 +4440,10 @@ export default function EmployeesPage() {
                   {colPrefs.photo ? (
                     <td className="px-3 py-2">
                       {employee.avatar ? (
-                        <img src={employee.avatar} alt={employee.name} className="h-9 w-9 rounded-full border border-[--border] object-cover" />
+                        <img src={employee.avatar} alt={employee.name} className="h-8 w-8 rounded-full border border-slate-200 object-cover" />
                       ) : (
-                        <div className="grid h-9 w-9 place-items-center rounded-full border border-[--border] bg-[#f2f8ff] text-[10px] font-semibold text-[#5f7f9d]">
-                          N/A
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 border border-blue-100 text-[11px] font-bold text-blue-700">
+                          {initialsFromName(employee.name || employee.code || "NA")}
                         </div>
                       )}
                     </td>
@@ -5002,27 +5077,29 @@ export default function EmployeesPage() {
 
       {transferModalOpen ? (
         <div className="fixed inset-0 z-[55] grid place-items-center bg-[rgba(12,33,56,0.45)] p-4" onClick={() => setTransferModalOpen(false)}>
-          <div className="w-full max-w-2xl rounded-2xl border border-[#d8e6f4] bg-white p-4 shadow-[0_20px_40px_-16px_rgba(10,40,70,0.6)]" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between">
+          <div className="w-full max-w-lg rounded-2xl border border-[#d8e6f4] bg-white p-5 shadow-[0_20px_40px_-16px_rgba(10,40,70,0.6)]" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-base font-semibold text-[#0f3857]">Transfer Selected Employees</h3>
-                <p className="text-xs text-[#5f7f9f]">Choose one area, select one or more departments from that area, then apply the transfer to the selected employees.</p>
+                <p className="text-xs text-[#5f7f9f]">Select target area and department for the selected employees.</p>
               </div>
-              <button type="button" onClick={() => setTransferModalOpen(false)} className="rounded-full border border-[#d8e6f4] p-1.5 text-[#4f7697]">
+              <button type="button" onClick={() => setTransferModalOpen(false)} className="rounded-full border border-[#d8e6f4] p-1.5 text-[#4f7697] transition hover:bg-[#f1f6fc]">
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <p className="mb-3 text-xs text-[#5f7f9f]">
-              Selected employees: <span className="font-semibold">{selectedEmployeeIds.length}</span>
-            </p>
+            <div className="mb-4 flex items-center gap-2 rounded-xl bg-[#f0f6fc] px-3.5 py-2 text-xs text-[#1e4f78]">
+              <span>Selected employees:</span>
+              <span className="rounded-full bg-[#1b5585] px-2 py-0.5 font-semibold text-white">{selectedEmployeeIds.length}</span>
+            </div>
+
             {transferError ? (
               <div className="mb-3 rounded-xl border border-[#f2c6c6] bg-[#fff0f0] px-3 py-2 text-xs text-[#8d2f2f]">
                 {transferError}
               </div>
             ) : null}
 
-            <div className="grid gap-3">
+            <div className="grid gap-3.5">
               <label className="grid gap-1 text-sm text-[#1e4162]">
                 <span className="text-xs font-semibold uppercase tracking-wide text-[#1e4f78]">Target Area</span>
                 <select
@@ -5039,74 +5116,43 @@ export default function EmployeesPage() {
                 </select>
               </label>
 
-              <div className="relative block text-sm text-[#1e4162]">
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[#1e4f78]">Department</span>
-                <details className="group w-full">
-                  <summary className="flex h-[42px] list-none cursor-pointer items-center justify-between gap-3 rounded-xl border border-[#b9d2f0] bg-white px-4 py-2.5 text-sm text-[#1e4162] outline-none transition hover:border-[#9fc2e6]">
-                    <span className={`truncate ${selectedTransferDepartments.length === 0 ? "text-[#6f89a1]" : ""}`}>{transferDepartmentSummary}</span>
-                    <ChevronDown className="h-4 w-4 shrink-0 text-[#5f7f9f] transition group-open:rotate-180" />
-                  </summary>
-                  <div className="absolute left-0 right-0 z-30 mt-2 w-full rounded-2xl border border-[#d2e5f7] bg-white p-3 shadow-[0_20px_40px_-18px_rgba(10,40,70,0.45)]">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-[#1e4f78]">Department List</span>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={selectAllVisibleTransferDepartments}
-                          className="rounded-full border border-[#c7dbf2] bg-white px-3 py-1 text-[11px] font-semibold text-[#1a4a73] transition hover:bg-[#eef6ff]"
-                        >
-                          Select All
-                        </button>
-                        <button
-                          type="button"
-                          onClick={clearTransferDepartmentSelection}
-                          className="rounded-full border border-[#f0caca] bg-white px-3 py-1 text-[11px] font-semibold text-[#8d2f2f] transition hover:bg-[#fff0f0]"
-                        >
-                          Clear
-                        </button>
-                      </div>
-                    </div>
-                    <div className="grid max-h-56 min-h-0 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
-                      {availableTransferDepartmentSelections.length === 0 ? (
-                        <p className="col-span-full px-2 py-6 text-center text-sm text-[#6f89a1]">
-                          Select an area first.
-                        </p>
-                      ) : (
-                        availableTransferDepartmentSelections.map((department) => {
-                          const checked = transferDepartmentCodes.includes(department.code);
-                          return (
-                            <label
-                              key={department.code}
-                              className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm transition ${checked ? "border-[#7fb2df] bg-[#eef7ff] text-[#103856]" : "border-[#dbe8f6] bg-white text-[#1e4162] hover:bg-[#f6fbff]"}`}
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={(event) => toggleTransferDepartmentSelection(department.code, event.target.checked)}
-                                />
-                                <span>{department.name}</span>
-                              </span>
-                              <span className="text-[11px] text-[#6a89a5]">{department.code}</span>
-                            </label>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                </details>
-              </div>
+              <label className="grid gap-1 text-sm text-[#1e4162]">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#1e4f78]">Department</span>
+                <select
+                  value={transferDepartmentCodes[0] ?? ""}
+                  onChange={(event) => {
+                    const code = event.target.value;
+                    applyTransferDepartmentSelection(code ? [code] : [], code);
+                  }}
+                  disabled={availableTransferDepartmentSelections.length === 0}
+                  className="w-full rounded-xl border border-[#b9d2f0] bg-white px-4 py-2.5 text-sm text-[#1e4162] outline-none ring-[#8db6df] focus:ring-2 disabled:bg-slate-50 disabled:text-[#8ba3ba]"
+                >
+                  {availableTransferDepartmentSelections.length === 0 ? (
+                    <option value="">No departments available for this area</option>
+                  ) : (
+                    availableTransferDepartmentSelections.map((department) => (
+                      <option key={department.code} value={department.code}>
+                        {department.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
             </div>
 
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setTransferModalOpen(false)} className="rounded-full border border-[#b9cff0] bg-white px-5 py-2 text-sm font-medium text-[#1a4a73]">
+            <div className="mt-5 flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setTransferModalOpen(false)}
+                className="rounded-full border border-[#b9cff0] bg-white px-5 py-2 text-sm font-medium text-[#1a4a73] transition hover:bg-[#f6f9fc]"
+              >
                 Cancel
               </button>
               <button
                 type="button"
                 disabled={transferBusy || selectedEmployeeIds.length === 0 || transferDepartmentCodes.length === 0}
                 onClick={() => void applyDepartmentTransfer()}
-                className="rounded-full bg-[#1b5585] px-5 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-full bg-[#1b5585] px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-[#15466f] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {transferBusy ? "Transferring..." : "Apply Transfer"}
               </button>

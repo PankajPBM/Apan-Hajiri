@@ -100,7 +100,7 @@ export function DualDateInput({ value, onChange, className }: DualDateInputProps
     const updatePopupPosition = () => {
       if (!rootRef.current) return;
       const rect = rootRef.current.getBoundingClientRect();
-      const popupWidth = 336;
+      const popupWidth = 356;
       const viewportPadding = 8;
       const maxLeft = Math.max(viewportPadding, window.innerWidth - popupWidth - viewportPadding);
       const left = Math.min(Math.max(rect.left, viewportPadding), maxLeft);
@@ -210,12 +210,14 @@ export function DualDateInput({ value, onChange, className }: DualDateInputProps
   };
 
   const applyManualDate = () => {
+    const fallbackValue = calendarType === "bs" ? formatBs(selectedBs) : toAdString(selectedDate);
     const clean = manualValue.trim().replaceAll("/", "-");
     const [yRaw, mRaw, dRaw] = clean.split("-");
     const year = Number.parseInt(yRaw ?? "", 10);
     const month = Number.parseInt(mRaw ?? "", 10);
     const day = Number.parseInt(dRaw ?? "", 10);
-    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    if (!clean || !Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) || !yRaw || !mRaw || !dRaw) {
+      setManualValue(fallbackValue);
       setManualError("Use YYYY-MM-DD format.");
       return;
     }
@@ -224,16 +226,19 @@ export function DualDateInput({ value, onChange, className }: DualDateInputProps
     if (calendarType === "bs") {
       ad = bsToAd(year, month, day);
       if (!ad) {
+        setManualValue(fallbackValue);
         setManualError("Invalid BS date.");
         return;
       }
     } else {
       if (month < 1 || month > 12 || day < 1 || day > 31) {
+        setManualValue(fallbackValue);
         setManualError("Invalid AD date.");
         return;
       }
       const candidate = new Date(year, month - 1, day);
       if (candidate.getFullYear() !== year || candidate.getMonth() !== month - 1 || candidate.getDate() !== day) {
+        setManualValue(fallbackValue);
         setManualError("Invalid AD date.");
         return;
       }
@@ -271,8 +276,14 @@ export function DualDateInput({ value, onChange, className }: DualDateInputProps
         <input
           type="text"
           value={manualValue}
+          maxLength={10}
           onChange={(event) => {
-            setManualValue(event.target.value);
+            let val = event.target.value.replace(/[^0-9/-]/g, "").replace(/\//g, "-");
+            val = val.replace(/--+/g, "-");
+            if (val.length > 10) {
+              val = val.slice(0, 10);
+            }
+            setManualValue(val);
             if (manualError) setManualError(null);
           }}
           onKeyDown={(event) => {
@@ -300,7 +311,7 @@ export function DualDateInput({ value, onChange, className }: DualDateInputProps
       {open && portalReady ? createPortal(
         <div
           ref={popupRef}
-          className="fixed z-[9999] w-[336px] rounded-xl border border-[#bfd4ea] bg-white p-3 shadow-[0_20px_34px_-22px_rgba(18,54,88,0.85)]"
+          className="fixed z-[9999] w-[356px] rounded-xl border border-[#bfd4ea] bg-white p-3 shadow-[0_20px_34px_-22px_rgba(18,54,88,0.85)]"
           style={{
             top: popupPos?.top ?? 0,
             left: popupPos?.left ?? 0,
@@ -369,7 +380,7 @@ export function DualDateInput({ value, onChange, className }: DualDateInputProps
                     setOpen(false);
                   }}
                   className={classNames(
-                    "flex h-14 flex-col rounded-md border px-1.5 py-1 text-left transition-colors",
+                    "flex h-14 flex-col rounded-md border px-1 py-1 text-left transition-colors overflow-hidden",
                     isSelected ? "border-[#1f5c8f] bg-[#e6f1ff]" : "border-[#e2edf8] bg-white hover:bg-[#f4f9ff]",
                     !cell.inCurrentMonth && "opacity-45",
                     isToday && !isSelected && "ring-1 ring-[#0f8a45]",
@@ -379,7 +390,9 @@ export function DualDateInput({ value, onChange, className }: DualDateInputProps
                   <div className={classNames("text-sm font-semibold leading-none", isHoliday || isWeeklyOff ? "text-[#be2f2f]" : "text-[#11395e]")}>
                     {primary}
                   </div>
-                  <div className="mt-auto text-right text-[10px] leading-none text-[#5f7f9f]">{secondary}</div>
+                  <div className="mt-auto text-right text-[9.5px] font-medium leading-none text-[#5f7f9f] tabular-nums whitespace-nowrap tracking-tight">
+                    {secondary}
+                  </div>
                 </button>
               );
             })}

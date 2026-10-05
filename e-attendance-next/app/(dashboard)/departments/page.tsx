@@ -3,12 +3,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
-import { Building2, Check, Layers3, MapPin, Pencil, Plus, Trash2, X } from "lucide-react";
+import {
+  Building2,
+  Check,
+  Layers3,
+  MapPin,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+  ChevronRight,
+  ShieldCheck,
+  FolderTree,
+} from "lucide-react";
 import { resolveApiBases } from "@/lib/api-bases";
-import { 
-  ensureAccessControlDefaults, 
-  loadAccessControlFromApi, 
-  readAccessControlSnapshot 
+import {
+  ensureAccessControlDefaults,
+  loadAccessControlFromApi,
+  readAccessControlSnapshot,
 } from "@/components/data/access-control-store";
 
 type SectionKey = "areas" | "departments" | "positions";
@@ -70,9 +82,6 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   throw new Error(lastError ?? "Failed to fetch");
 }
 
-const inputClass = "w-full rounded-md border border-[#cadced] bg-white px-2 py-1 text-sm";
-const btnBase = "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs";
-
 export default function SetupPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -105,7 +114,7 @@ export default function SetupPage() {
   const areaOptions = useMemo(() => areas.map((a) => ({ value: a.code, label: `${a.code} - ${a.name}` })), [areas]);
   const departmentNameOptions = useMemo(
     () => Array.from(new Set(departments.map((d) => d.name.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [departments],
+    [departments]
   );
 
   const setSection = (next: SectionKey) => {
@@ -119,65 +128,55 @@ export default function SetupPage() {
     const loadingTimer = setTimeout(() => setShowLoading(true), 180);
     setError(null);
     try {
-      const payload = await requestJson<SetupPayload>("/api/personnel/setup");
-      setAreas(payload?.areas ?? []);
-      setDepartments(payload?.departments ?? []);
-      setPositions(payload?.positions ?? []);
-      return payload;
+      const data = await requestJson<SetupPayload>("/api/personnel/setup");
+      const normalizedAreas = Array.isArray(data?.areas) ? data.areas : [];
+      const normalizedDepartments = Array.isArray(data?.departments) ? data.departments : [];
+      const normalizedPositions = Array.isArray(data?.positions) ? data.positions : [];
+      setAreas(normalizedAreas);
+      setDepartments(normalizedDepartments);
+      setPositions(normalizedPositions);
+      return { areas: normalizedAreas, departments: normalizedDepartments, positions: normalizedPositions };
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load setup data.");
+      setError(err instanceof Error ? err.message : "Failed to load master configuration.");
       return null;
     } finally {
       clearTimeout(loadingTimer);
-      setLoading(false);
       setShowLoading(false);
+      setLoading(false);
     }
   }, []);
+
+  const seedAccessControl = async () => {
+    try {
+      const snap = await loadAccessControlFromApi();
+      if (snap) {
+        await ensureAccessControlDefaults(
+          areas.map((a) => ({ name: a.name, code: a.code })),
+          [],
+          snap
+        );
+      }
+    } catch {
+      // Best-effort access control seeding
+    }
+  };
 
   useEffect(() => {
     void loadAll();
+    void seedAccessControl();
   }, [loadAll]);
-
-  const clearEditors = () => {
-    setEditingAreaId(null);
-    setEditingDeptId(null);
-    setEditingPositionId(null);
-  };
-
-  const seedAccessControl = useCallback(async () => {
-    try {
-      const payload = await requestJson<SetupPayload>("/api/personnel/setup");
-      if (!payload) return;
-      
-      let ac = readAccessControlSnapshot();
-      try { ac = await loadAccessControlFromApi(); } catch { /* ignore */ }
-      
-      const devicesPayload = await requestJson<any[]>("/api/devices").catch(() => []);
-      const devices = Array.isArray(devicesPayload) ? devicesPayload : [];
-      
-      await ensureAccessControlDefaults(
-        payload.areas.map(a => ({ name: a.name, code: a.code })),
-        devices.map(d => ({ serialNumber: String(d.serialNumber || d.sn || ""), area: String(d.location || d.area || "") })),
-        ac
-      );
-    } catch (e) {
-      console.error("Failed to seed access control defaults during setup change", e);
-    }
-  }, []);
-
-  const toggleAdd = (key: SectionKey) => {
-    setOpenAdd((prev) => ({ ...prev, [key]: !prev[key] }));
-    setError(null);
-  };
 
   async function createArea() {
     if (creatingArea) return;
     const code = areaForm.code.trim();
     const name = areaForm.name.trim();
-    if (!code || !name) return setError("Area ID and Area Name are required.");
+    if (!code || !name) return setError("Area code and name are required.");
     setCreatingArea(true);
     try {
-      await requestJson("/api/personnel/areas", { method: "POST", body: JSON.stringify({ code, name, remark: areaForm.remark.trim() }) });
+      await requestJson("/api/personnel/areas", {
+        method: "POST",
+        body: JSON.stringify({ code, name, remark: areaForm.remark.trim() }),
+      });
       setAreaForm({ code: "", name: "", remark: "" });
       setOpenAdd((prev) => ({ ...prev, areas: false }));
       await loadAll();
@@ -198,20 +197,32 @@ export default function SetupPage() {
   }
 
   async function saveArea(item: AreaRow) {
-    // Area ID is fixed once created — only the name (and remark) can be edited.
-    const code = item.code;
     const name = editingAreaForm.name.trim();
-    if (!code || !name) return setError("Area ID and Area Name are required.");
+    if (!name) return setError("Area name is required.");
+    const payload = item.isDefault || item.canDelete === false
+      ? { code: item.code, name, remark: item.remark ?? "" }
+      : { code: item.code, name, remark: editingAreaForm.remark.trim() };
     try {
-      await requestJson(`/api/personnel/areas/${item.id}`, {
-        method: "PUT",
-        body: JSON.stringify({ code, name, remark: editingAreaForm.remark.trim() }),
-      });
+      await requestJson(`/api/personnel/areas/${item.id}`, { method: "PUT", body: JSON.stringify(payload) });
       setEditingAreaId(null);
       await loadAll();
       void seedAccessControl();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update area.");
+    }
+  }
+
+  async function deleteArea(item: AreaRow) {
+    if (item.isDefault || item.canDelete === false) {
+      return setError("Default Area (Code: 1) is system-protected and cannot be deleted.");
+    }
+    if (!confirm(`Are you sure you want to delete area "${item.name}"?`)) return;
+    try {
+      await requestJson(`/api/personnel/areas/${item.id}`, { method: "DELETE" });
+      await loadAll();
+      void seedAccessControl();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete area.");
     }
   }
 
@@ -258,8 +269,6 @@ export default function SetupPage() {
     const payload = protectedDepartment
       ? { code: item.code, name, areaCode: item.areaCode || "1", superior: item.superior ?? "", manager: item.manager ?? "" }
       : {
-          // Department code/ID is fixed once created — only the name (and other
-          // details) can be edited.
           code: item.code,
           name,
           areaCode: editingDeptForm.areaCode || "1",
@@ -274,6 +283,20 @@ export default function SetupPage() {
       void seedAccessControl();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update department.");
+    }
+  }
+
+  async function deleteDepartment(item: DepartmentRow) {
+    if (item.isDefault || item.canDelete === false) {
+      return setError("Default Department (Code: 1) is system-protected and cannot be deleted.");
+    }
+    if (!confirm(`Are you sure you want to delete department "${item.name}"?`)) return;
+    try {
+      await requestJson(`/api/personnel/departments/${item.id}`, { method: "DELETE" });
+      await loadAll();
+      void seedAccessControl();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete department.");
     }
   }
 
@@ -321,54 +344,380 @@ export default function SetupPage() {
     }
   }
 
-  const sectionBtn = (active: boolean) =>
-    `rounded-lg border px-3 py-2 text-sm font-medium ${active ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[#cfdfef] bg-white text-[#355a7a]"}`;
-  const hasSetupData = areas.length > 0 || departments.length > 0 || positions.length > 0;
+  async function deletePosition(item: PositionRow) {
+    if (!confirm(`Are you sure you want to delete position "${item.name}"?`)) return;
+    try {
+      await requestJson(`/api/personnel/positions/${item.id}`, { method: "DELETE" });
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete position.");
+    }
+  }
 
   return (
     <div className="space-y-5">
-      <div className="tab-header rounded-2xl border border-[#d9e8f7] bg-[linear-gradient(120deg,#eef5ff,#f8fbff)] p-5">
-        <h1 className="text-2xl font-semibold text-[#0f3b61]">Setup</h1>
-        <p className="mt-1 text-sm text-[#587894]">Manage Area, Department, and Position masters.</p>
-        <div className="metric-grid mt-4 md:grid-cols-3">
-          <article className="metric-card"><p className="metric-card__label">Areas</p><p className="metric-card__value">{areas.length}</p></article>
-          <article className="metric-card"><p className="metric-card__label">Departments</p><p className="metric-card__value">{departments.length}</p></article>
-          <article className="metric-card"><p className="metric-card__label">Positions</p><p className="metric-card__value">{positions.length}</p></article>
+      {/* 1. Header Overview & Master KPI Segment Control */}
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                Setup & Master Control
+              </h1>
+              <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-100">
+                Personnel Architecture
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Manage physical branch areas, organizational departments, and staff position titles.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setOpenAdd((prev) => ({ ...prev, [section]: !prev[section] }))}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 shadow-xs transition"
+          >
+            {openAdd[section] ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            {openAdd[section] ? "Close Form" : `Add New ${section.slice(0, -1)}`}
+          </button>
         </div>
-      </div>
 
-      {error ? <div className="rounded-lg border border-[#f1cdcd] bg-[#fff2f2] px-3 py-2 text-sm text-[#9a2f2f]">{error}</div> : null}
+        {/* 3 Interactive Master Cards */}
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {[
+            {
+              key: "areas" as SectionKey,
+              label: "Areas",
+              count: areas.length,
+              icon: MapPin,
+              color: "text-blue-600",
+              bg: "bg-blue-50",
+              desc: "Physical branch zones",
+            },
+            {
+              key: "departments" as SectionKey,
+              label: "Departments",
+              count: departments.length,
+              icon: Building2,
+              color: "text-emerald-600",
+              bg: "bg-emerald-50",
+              desc: "Operational divisions",
+            },
+            {
+              key: "positions" as SectionKey,
+              label: "Positions",
+              count: positions.length,
+              icon: Layers3,
+              color: "text-indigo-600",
+              bg: "bg-indigo-50",
+              desc: "Designation roles",
+            },
+          ].map((item) => {
+            const isActive = section === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setSection(item.key)}
+                className={`relative flex items-center justify-between rounded-xl border p-4 text-left transition ${
+                  isActive
+                    ? "border-blue-600 bg-blue-50/50 shadow-xs ring-1 ring-blue-600"
+                    : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50"
+                }`}
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${item.bg} ${item.color}`}>
+                    <item.icon className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{item.label}</span>
+                    <p className="text-xl font-extrabold text-slate-900 leading-tight">{item.count}</p>
+                    <p className="text-[11px] text-slate-400">{item.desc}</p>
+                  </div>
+                </div>
 
-      <div className="tab-toolbar tab-toolbar-controls">
-        <button type="button" onClick={() => setSection("areas")} className={sectionBtn(section === "areas")}><MapPin className="mr-2 inline h-4 w-4" />Area</button>
-        <button type="button" onClick={() => setSection("departments")} className={sectionBtn(section === "departments")}><Building2 className="mr-2 inline h-4 w-4" />Department</button>
-        <button type="button" onClick={() => setSection("positions")} className={sectionBtn(section === "positions")}><Layers3 className="mr-2 inline h-4 w-4" />Position</button>
-      </div>
+                <ChevronRight className={`h-4 w-4 transition ${isActive ? "text-blue-600 translate-x-0.5" : "text-slate-300"}`} />
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
-      {section === "areas" ? (
-        <section className="space-y-4 rounded-2xl border border-[#d9e8f7] bg-white p-4">
-          <div className="overflow-x-auto rounded-xl border border-[#d9e8f7]">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-[#f6faff] text-xs uppercase text-[#5a7892]"><tr><th className="px-3 py-2">Area ID</th><th className="px-3 py-2">Area Name</th><th className="px-3 py-2">Remark</th><th className="px-3 py-2 text-right">Action</th></tr></thead>
-              <tbody>
+      {error && (
+        <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs font-medium text-rose-700">
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* 2. Main Table Card & Inline Forms */}
+      <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs">
+        {/* --- ADD NEW AREA FORM --- */}
+        {section === "areas" && openAdd.areas && (
+          <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-blue-900 mb-3">Add New Geographic Area</h3>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Area Code / ID *</label>
+                <input
+                  value={areaForm.code}
+                  onChange={(e) => setAreaForm((p) => ({ ...p, code: e.target.value }))}
+                  placeholder="e.g. 2"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Area Name *</label>
+                <input
+                  value={areaForm.name}
+                  onChange={(e) => setAreaForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="e.g. Branch Office"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Remark</label>
+                <input
+                  value={areaForm.remark}
+                  onChange={(e) => setAreaForm((p) => ({ ...p, remark: e.target.value }))}
+                  placeholder="Optional notes"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setOpenAdd((p) => ({ ...p, areas: false }))}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={creatingArea}
+                onClick={() => void createArea()}
+                className="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {creatingArea ? "Saving..." : "Save Area"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* --- ADD NEW DEPARTMENT FORM --- */}
+        {section === "departments" && openAdd.departments && (
+          <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-blue-900 mb-3">Add New Department</h3>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Dept Code *</label>
+                <input
+                  value={deptForm.code}
+                  onChange={(e) => setDeptForm((p) => ({ ...p, code: e.target.value }))}
+                  placeholder="e.g. 2"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Department Name *</label>
+                <input
+                  value={deptForm.name}
+                  onChange={(e) => setDeptForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="e.g. Finance"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Assigned Area</label>
+                <select
+                  value={deptForm.areaCode}
+                  onChange={(e) => setDeptForm((p) => ({ ...p, areaCode: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  {areaOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Manager / Supervisor</label>
+                <input
+                  value={deptForm.manager}
+                  onChange={(e) => setDeptForm((p) => ({ ...p, manager: e.target.value }))}
+                  placeholder="Optional"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setOpenAdd((p) => ({ ...p, departments: false }))}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={creatingDepartment}
+                onClick={() => void createDepartment()}
+                className="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {creatingDepartment ? "Saving..." : "Save Department"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* --- ADD NEW POSITION FORM --- */}
+        {section === "positions" && openAdd.positions && (
+          <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-blue-900 mb-3">Add New Position / Designation</h3>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Position Code *</label>
+                <input
+                  value={positionForm.code}
+                  onChange={(e) => setPositionForm((p) => ({ ...p, code: e.target.value }))}
+                  placeholder="e.g. ACC-01"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Position Title *</label>
+                <input
+                  value={positionForm.name}
+                  onChange={(e) => setPositionForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="e.g. Senior Accountant"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Department</label>
+                <select
+                  value={positionForm.department}
+                  onChange={(e) => setPositionForm((p) => ({ ...p, department: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  <option value="">Select Department (Optional)</option>
+                  {departmentNameOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setOpenAdd((p) => ({ ...p, positions: false }))}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={creatingPosition}
+                onClick={() => void createPosition()}
+                className="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {creatingPosition ? "Saving..." : "Save Position"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* --- SECTION TABLE: AREAS --- */}
+        {section === "areas" && (
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                <tr>
+                  <th className="px-4 py-3">Area Code</th>
+                  <th className="px-4 py-3">Area Name</th>
+                  <th className="px-4 py-3">Remark</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
                 {areas.map((item) => {
                   const edit = editingAreaId === item.id;
-                  const protectedArea = item.isDefault || item.canDelete === false;
+                  const isProtected = item.isDefault || item.canDelete === false;
                   return (
-                    <tr key={item.id} className="border-t border-[#e5effa]">
-                      <td className="px-3 py-2">{edit ? <input value={editingAreaForm.code} disabled title="Area ID cannot be changed after creation" onChange={(e) => setEditingAreaForm((p) => ({ ...p, code: e.target.value }))} className={`${inputClass} disabled:bg-[#f2f6fb] disabled:cursor-not-allowed`} /> : <span className="font-medium">{item.code}</span>}</td>
-                      <td className="px-3 py-2">{edit ? <input value={editingAreaForm.name} onChange={(e) => setEditingAreaForm((p) => ({ ...p, name: e.target.value }))} className={inputClass} /> : <>{item.name}{item.isDefault ? <span className="ml-1 rounded-full border border-[#bfd5ee] bg-[#edf5ff] px-2 py-0.5 text-[10px] text-[#21537f]">Default</span> : null}</>}</td>
-                      <td className="px-3 py-2">{edit ? <input value={editingAreaForm.remark} onChange={(e) => setEditingAreaForm((p) => ({ ...p, remark: e.target.value }))} className={inputClass} /> : item.remark || "-"}</td>
-                      <td className="px-3 py-2 text-right">
+                    <tr key={item.id} className="hover:bg-slate-50/70 transition">
+                      <td className="px-4 py-3 font-semibold text-slate-900">{item.code}</td>
+                      <td className="px-4 py-3">
                         {edit ? (
-                          <div className="inline-flex gap-1">
-                            <button type="button" onClick={() => void saveArea(item)} className={`${btnBase} border-[#c6e3cd] bg-[#eefcf1] text-[#22603a]`}><Check className="h-3.5 w-3.5" />Save</button>
-                            <button type="button" onClick={() => setEditingAreaId(null)} className={`${btnBase} border-[#d6e3ef] bg-white text-[#355a7a]`}><X className="h-3.5 w-3.5" />Cancel</button>
+                          <input
+                            value={editingAreaForm.name}
+                            onChange={(e) => setEditingAreaForm((p) => ({ ...p, name: e.target.value }))}
+                            className="rounded border border-slate-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          <span className="font-medium text-slate-800">
+                            {item.name}
+                            {item.isDefault && (
+                              <span className="ml-2 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-200">
+                                System Default
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500">
+                        {edit ? (
+                          <input
+                            value={editingAreaForm.remark}
+                            onChange={(e) => setEditingAreaForm((p) => ({ ...p, remark: e.target.value }))}
+                            className="rounded border border-slate-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          item.remark || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {edit ? (
+                          <div className="inline-flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void saveArea(item)}
+                              className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
+                            >
+                              <Check className="h-3 w-3" /> Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingAreaId(null)}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                            >
+                              <X className="h-3 w-3" /> Cancel
+                            </button>
                           </div>
                         ) : (
-                          <div className="inline-flex gap-1">
-                            <button type="button" onClick={() => { clearEditors(); setEditingAreaId(item.id); setEditingAreaForm({ code: item.code, name: item.name, remark: item.remark ?? "" }); }} className={`${btnBase} border-[#c5d8ed] bg-white text-[#1e4c78]`}><Pencil className="h-3.5 w-3.5" />Edit</button>
-                            <button type="button" disabled={protectedArea} onClick={() => void (async () => { if (!(typeof window === "undefined" ? true : window.confirm(`Delete area ${item.name}? This will delete all departments, devices, employees, and positions under it.`))) return; await requestJson(`/api/personnel/areas/${item.id}`, { method: "DELETE" }); await loadAll(); })()} className={`${btnBase} border-[#e5c8c8] bg-white text-[#a33a3a] disabled:cursor-not-allowed disabled:opacity-50`}><Trash2 className="h-3.5 w-3.5" />Delete</button>
+                          <div className="inline-flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingAreaId(item.id);
+                                setEditingAreaForm({ code: item.code, name: item.name, remark: item.remark || "" });
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              <Pencil className="h-3 w-3 text-slate-500" /> Edit
+                            </button>
+                            {!isProtected && (
+                              <button
+                                type="button"
+                                onClick={() => void deleteArea(item)}
+                                className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
+                              >
+                                <Trash2 className="h-3 w-3" /> Delete
+                              </button>
+                            )}
                           </div>
                         )}
                       </td>
@@ -378,49 +727,125 @@ export default function SetupPage() {
               </tbody>
             </table>
           </div>
-          <div className="flex justify-end"><button type="button" onClick={() => toggleAdd("areas")} className="inline-flex items-center gap-2 rounded-lg border border-[#c5d8ed] bg-white px-3 py-2 text-sm font-medium text-[#1e4c78]"><Plus className="h-4 w-4" />{openAdd.areas ? "Close Add Area" : "Add Area"}</button></div>
-          {openAdd.areas ? (
-            <div className="rounded-xl border border-[#d9e8f7] bg-[#f8fbff] p-4">
-              <div className="mb-3 text-sm font-semibold text-[#0f3b61]">New Area</div>
-              <div className="grid gap-2 md:grid-cols-4">
-                <input value={areaForm.code} onChange={(e) => setAreaForm((p) => ({ ...p, code: e.target.value }))} placeholder="Area ID" className={inputClass} />
-                <input value={areaForm.name} onChange={(e) => setAreaForm((p) => ({ ...p, name: e.target.value }))} placeholder="Area Name" className={inputClass} />
-                <input value={areaForm.remark} onChange={(e) => setAreaForm((p) => ({ ...p, remark: e.target.value }))} placeholder="Remark" className={inputClass} />
-                <button type="button" disabled={creatingArea} onClick={() => void createArea()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1f5c8f] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"><Plus className="h-4 w-4" />{creatingArea ? "Saving..." : "Save Area"}</button>
-              </div>
-            </div>
-          ) : null}
-        </section>
-      ) : null}
+        )}
 
-      {section === "departments" ? (
-        <section className="space-y-4 rounded-2xl border border-[#d9e8f7] bg-white p-4">
-          <div className="overflow-x-auto rounded-xl border border-[#d9e8f7]">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-[#f6faff] text-xs uppercase text-[#5a7892]"><tr><th className="px-3 py-2">Code</th><th className="px-3 py-2">Name</th><th className="px-3 py-2">Area</th><th className="px-3 py-2">Superior</th><th className="px-3 py-2">Manager</th><th className="px-3 py-2">Active</th><th className="px-3 py-2">Resigned</th><th className="px-3 py-2 text-right">Action</th></tr></thead>
-              <tbody>
+        {/* --- SECTION TABLE: DEPARTMENTS --- */}
+        {section === "departments" && (
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                <tr>
+                  <th className="px-4 py-3">Code</th>
+                  <th className="px-4 py-3">Department Name</th>
+                  <th className="px-4 py-3">Area</th>
+                  <th className="px-4 py-3">Manager</th>
+                  <th className="px-4 py-3">Staff Qty</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
                 {departments.map((item) => {
                   const edit = editingDeptId === item.id;
-                  const protectedDepartment = item.isDefault || item.canDelete === false;
+                  const isProtected = item.isDefault || item.canDelete === false;
                   return (
-                    <tr key={item.id} className="border-t border-[#e5effa]">
-                      <td className="px-3 py-2">{edit ? <input value={editingDeptForm.code} disabled title="Department ID cannot be changed after creation" onChange={(e) => setEditingDeptForm((p) => ({ ...p, code: e.target.value }))} className={`${inputClass} disabled:bg-[#f2f6fb] disabled:cursor-not-allowed`} /> : <span className="font-medium">{item.code}</span>}</td>
-                      <td className="px-3 py-2">{edit ? <input value={editingDeptForm.name} onChange={(e) => setEditingDeptForm((p) => ({ ...p, name: e.target.value }))} className={inputClass} /> : <>{item.name}{item.isDefault ? <span className="ml-1 rounded-full border border-[#bfd5ee] bg-[#edf5ff] px-2 py-0.5 text-[10px] text-[#21537f]">Default</span> : null}</>}</td>
-                      <td className="px-3 py-2">{edit ? <select value={editingDeptForm.areaCode} disabled={protectedDepartment} onChange={(e) => setEditingDeptForm((p) => ({ ...p, areaCode: e.target.value }))} className={`${inputClass} disabled:bg-[#f2f6fb]`}>{areaOptions.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}</select> : (item.areaName || item.areaCode || "-")}</td>
-                      <td className="px-3 py-2">{edit ? <input value={editingDeptForm.superior} disabled={protectedDepartment} onChange={(e) => setEditingDeptForm((p) => ({ ...p, superior: e.target.value }))} className={`${inputClass} disabled:bg-[#f2f6fb]`} /> : (item.superior || "-")}</td>
-                      <td className="px-3 py-2">{edit ? <input value={editingDeptForm.manager} disabled={protectedDepartment} onChange={(e) => setEditingDeptForm((p) => ({ ...p, manager: e.target.value }))} className={`${inputClass} disabled:bg-[#f2f6fb]`} /> : (item.manager || "-")}</td>
-                      <td className="px-3 py-2">{item.employeeQty ?? 0}</td>
-                      <td className="px-3 py-2">{item.resignedQty ?? 0}</td>
-                      <td className="px-3 py-2 text-right">
+                    <tr key={item.id} className="hover:bg-slate-50/70 transition">
+                      <td className="px-4 py-3 font-semibold text-slate-900">{item.code}</td>
+                      <td className="px-4 py-3">
                         {edit ? (
-                          <div className="inline-flex gap-1">
-                            <button type="button" onClick={() => void saveDepartment(item)} className={`${btnBase} border-[#c6e3cd] bg-[#eefcf1] text-[#22603a]`}><Check className="h-3.5 w-3.5" />Save</button>
-                            <button type="button" onClick={() => setEditingDeptId(null)} className={`${btnBase} border-[#d6e3ef] bg-white text-[#355a7a]`}><X className="h-3.5 w-3.5" />Cancel</button>
+                          <input
+                            value={editingDeptForm.name}
+                            onChange={(e) => setEditingDeptForm((p) => ({ ...p, name: e.target.value }))}
+                            className="rounded border border-slate-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          <span className="font-medium text-slate-800">
+                            {item.name}
+                            {item.isDefault && (
+                              <span className="ml-2 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-200">
+                                System Default
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {edit && !isProtected ? (
+                          <select
+                            value={editingDeptForm.areaCode}
+                            onChange={(e) => setEditingDeptForm((p) => ({ ...p, areaCode: e.target.value }))}
+                            className="rounded border border-slate-300 px-2 py-1 text-xs"
+                          >
+                            {areaOptions.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          item.areaName || item.areaCode || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500">
+                        {edit ? (
+                          <input
+                            value={editingDeptForm.manager}
+                            onChange={(e) => setEditingDeptForm((p) => ({ ...p, manager: e.target.value }))}
+                            className="rounded border border-slate-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          item.manager || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="rounded-md bg-slate-100 px-2 py-0.5 font-bold text-slate-700">
+                          {item.employeeQty ?? 0}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {edit ? (
+                          <div className="inline-flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void saveDepartment(item)}
+                              className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
+                            >
+                              <Check className="h-3 w-3" /> Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingDeptId(null)}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                            >
+                              <X className="h-3 w-3" /> Cancel
+                            </button>
                           </div>
                         ) : (
-                          <div className="inline-flex gap-1">
-                            <button type="button" onClick={() => { clearEditors(); setEditingDeptId(item.id); setEditingDeptForm({ code: item.code, name: item.name, areaCode: item.areaCode || "1", superior: item.superior ?? "", manager: item.manager ?? "" }); }} className={`${btnBase} border-[#c5d8ed] bg-white text-[#1e4c78]`}><Pencil className="h-3.5 w-3.5" />Edit</button>
-                            <button type="button" disabled={protectedDepartment} onClick={() => void (async () => { if (!(typeof window === "undefined" ? true : window.confirm(`Delete department ${item.name}?`))) return; await requestJson(`/api/personnel/departments/${item.id}`, { method: "DELETE" }); await loadAll(); })()} className={`${btnBase} border-[#e5c8c8] bg-white text-[#a33a3a] disabled:cursor-not-allowed disabled:opacity-50`}><Trash2 className="h-3.5 w-3.5" />Delete</button>
+                          <div className="inline-flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingDeptId(item.id);
+                                setEditingDeptForm({
+                                  code: item.code,
+                                  name: item.name,
+                                  areaCode: item.areaCode || "1",
+                                  superior: item.superior || "",
+                                  manager: item.manager || "",
+                                });
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              <Pencil className="h-3 w-3 text-slate-500" /> Edit
+                            </button>
+                            {!isProtected && (
+                              <button
+                                type="button"
+                                onClick={() => void deleteDepartment(item)}
+                                className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
+                              >
+                                <Trash2 className="h-3 w-3" /> Delete
+                              </button>
+                            )}
                           </div>
                         )}
                       </td>
@@ -430,72 +855,121 @@ export default function SetupPage() {
               </tbody>
             </table>
           </div>
-          <div className="flex justify-end"><button type="button" onClick={() => toggleAdd("departments")} className="inline-flex items-center gap-2 rounded-lg border border-[#c5d8ed] bg-white px-3 py-2 text-sm font-medium text-[#1e4c78]"><Plus className="h-4 w-4" />{openAdd.departments ? "Close Add Department" : "Add Department"}</button></div>
-          {openAdd.departments ? (
-            <div className="rounded-xl border border-[#d9e8f7] bg-[#f8fbff] p-4">
-              <div className="mb-3 text-sm font-semibold text-[#0f3b61]">New Department</div>
-              <div className="grid gap-2 md:grid-cols-6">
-                <input value={deptForm.code} onChange={(e) => setDeptForm((p) => ({ ...p, code: e.target.value }))} placeholder="Dept Code" className={inputClass} />
-                <input value={deptForm.name} onChange={(e) => setDeptForm((p) => ({ ...p, name: e.target.value }))} placeholder="Department Name" className={inputClass} />
-                <select value={deptForm.areaCode} onChange={(e) => setDeptForm((p) => ({ ...p, areaCode: e.target.value }))} className={inputClass}>{areaOptions.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}</select>
-                <input value={deptForm.superior} onChange={(e) => setDeptForm((p) => ({ ...p, superior: e.target.value }))} placeholder="Superior" className={inputClass} />
-                <input value={deptForm.manager} onChange={(e) => setDeptForm((p) => ({ ...p, manager: e.target.value }))} placeholder="Manager" className={inputClass} />
-                <button type="button" disabled={creatingDepartment} onClick={() => void createDepartment()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1f5c8f] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"><Plus className="h-4 w-4" />{creatingDepartment ? "Saving..." : "Save Department"}</button>
-              </div>
-            </div>
-          ) : null}
-        </section>
-      ) : null}
+        )}
 
-      {section === "positions" ? (
-        <section className="space-y-4 rounded-2xl border border-[#d9e8f7] bg-white p-4">
-          <div className="overflow-x-auto rounded-xl border border-[#d9e8f7]">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-[#f6faff] text-xs uppercase text-[#5a7892]"><tr><th className="px-3 py-2">Code</th><th className="px-3 py-2">Position</th><th className="px-3 py-2">Department</th><th className="px-3 py-2">Employee Qty</th><th className="px-3 py-2 text-right">Action</th></tr></thead>
-              <tbody>
-                {positions.map((item) => {
-                  const edit = editingPositionId === item.id;
-                  return (
-                    <tr key={item.id} className="border-t border-[#e5effa]">
-                      <td className="px-3 py-2">{edit ? <input value={editingPositionForm.code} onChange={(e) => setEditingPositionForm((p) => ({ ...p, code: e.target.value }))} className={inputClass} /> : <span className="font-medium">{item.code}</span>}</td>
-                      <td className="px-3 py-2">{edit ? <input value={editingPositionForm.name} onChange={(e) => setEditingPositionForm((p) => ({ ...p, name: e.target.value }))} className={inputClass} /> : item.name}</td>
-                      <td className="px-3 py-2">{edit ? <select value={editingPositionForm.department} onChange={(e) => setEditingPositionForm((p) => ({ ...p, department: e.target.value }))} className={inputClass}><option value="">Department</option>{departmentNameOptions.map((d) => <option key={d} value={d}>{d}</option>)}</select> : (item.department || "-")}</td>
-                      <td className="px-3 py-2">{item.employeeQty ?? 0}</td>
-                      <td className="px-3 py-2 text-right">
-                        {edit ? (
-                          <div className="inline-flex gap-1">
-                            <button type="button" onClick={() => void savePosition(item)} className={`${btnBase} border-[#c6e3cd] bg-[#eefcf1] text-[#22603a]`}><Check className="h-3.5 w-3.5" />Save</button>
-                            <button type="button" onClick={() => setEditingPositionId(null)} className={`${btnBase} border-[#d6e3ef] bg-white text-[#355a7a]`}><X className="h-3.5 w-3.5" />Cancel</button>
-                          </div>
-                        ) : (
-                          <div className="inline-flex gap-1">
-                            <button type="button" onClick={() => { clearEditors(); setEditingPositionId(item.id); setEditingPositionForm({ code: item.code, name: item.name, department: item.department || "" }); }} className={`${btnBase} border-[#c5d8ed] bg-white text-[#1e4c78]`}><Pencil className="h-3.5 w-3.5" />Edit</button>
-                            <button type="button" onClick={() => void (async () => { if (!(typeof window === "undefined" ? true : window.confirm(`Delete position ${item.name}?`))) return; await requestJson(`/api/personnel/positions/${item.id}`, { method: "DELETE" }); await loadAll(); })()} className={`${btnBase} border-[#e5c8c8] bg-white text-[#a33a3a]`}><Trash2 className="h-3.5 w-3.5" />Delete</button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+        {/* --- SECTION TABLE: POSITIONS --- */}
+        {section === "positions" && (
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                <tr>
+                  <th className="px-4 py-3">Position Code</th>
+                  <th className="px-4 py-3">Position Title</th>
+                  <th className="px-4 py-3">Department</th>
+                  <th className="px-4 py-3">Active Staff</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {positions.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-6 text-center text-xs text-slate-400">
+                      No positions configured yet. Click "Add New Position" above to create one.
+                    </td>
+                  </tr>
+                ) : (
+                  positions.map((item) => {
+                    const edit = editingPositionId === item.id;
+                    return (
+                      <tr key={item.id} className="hover:bg-slate-50/70 transition">
+                        <td className="px-4 py-3 font-semibold text-slate-900">{item.code}</td>
+                        <td className="px-4 py-3 font-medium text-slate-800">
+                          {edit ? (
+                            <input
+                              value={editingPositionForm.name}
+                              onChange={(e) => setEditingPositionForm((p) => ({ ...p, name: e.target.value }))}
+                              className="rounded border border-slate-300 px-2 py-1 text-xs"
+                            />
+                          ) : (
+                            item.name
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {edit ? (
+                            <select
+                              value={editingPositionForm.department}
+                              onChange={(e) => setEditingPositionForm((p) => ({ ...p, department: e.target.value }))}
+                              className="rounded border border-slate-300 px-2 py-1 text-xs"
+                            >
+                              <option value="">None</option>
+                              {departmentNameOptions.map((name) => (
+                                <option key={name} value={name}>
+                                  {name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            item.department || "—"
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 font-bold text-slate-700">
+                            {item.employeeQty ?? 0}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {edit ? (
+                            <div className="inline-flex gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => void savePosition(item)}
+                                className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
+                              >
+                                <Check className="h-3 w-3" /> Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingPositionId(null)}
+                                className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                              >
+                                <X className="h-3 w-3" /> Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="inline-flex gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingPositionId(item.id);
+                                  setEditingPositionForm({
+                                    code: item.code,
+                                    name: item.name,
+                                    department: item.department || "",
+                                  });
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                              >
+                                <Pencil className="h-3 w-3 text-slate-500" /> Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void deletePosition(item)}
+                                className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
+                              >
+                                <Trash2 className="h-3 w-3" /> Delete
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
-          <div className="flex justify-end"><button type="button" onClick={() => toggleAdd("positions")} className="inline-flex items-center gap-2 rounded-lg border border-[#c5d8ed] bg-white px-3 py-2 text-sm font-medium text-[#1e4c78]"><Plus className="h-4 w-4" />{openAdd.positions ? "Close Add Position" : "Add Position"}</button></div>
-          {openAdd.positions ? (
-            <div className="rounded-xl border border-[#d9e8f7] bg-[#f8fbff] p-4">
-              <div className="mb-3 text-sm font-semibold text-[#0f3b61]">New Position</div>
-              <div className="grid gap-2 md:grid-cols-4">
-                <input value={positionForm.code} onChange={(e) => setPositionForm((p) => ({ ...p, code: e.target.value }))} placeholder="Position Code" className={inputClass} />
-                <input value={positionForm.name} onChange={(e) => setPositionForm((p) => ({ ...p, name: e.target.value }))} placeholder="Position Name" className={inputClass} />
-                <select value={positionForm.department} onChange={(e) => setPositionForm((p) => ({ ...p, department: e.target.value }))} className={inputClass}><option value="">Department</option>{departmentNameOptions.map((d) => <option key={d} value={d}>{d}</option>)}</select>
-                <button type="button" disabled={creatingPosition} onClick={() => void createPosition()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1f5c8f] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"><Plus className="h-4 w-4" />{creatingPosition ? "Saving..." : "Save Position"}</button>
-              </div>
-            </div>
-          ) : null}
-        </section>
-      ) : null}
-
-      {loading && showLoading && !hasSetupData ? <p className="text-sm text-[#6a8298]">Loading setup data...</p> : null}
+        )}
+      </div>
     </div>
   );
 }

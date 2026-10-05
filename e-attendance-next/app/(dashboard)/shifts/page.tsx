@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { CalendarClock, CalendarDays, ChevronDown, ChevronRight, Clock3 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { resolveApiBases } from "@/lib/api-bases";
+import { TimeField } from "@/components/time/time-picker";
 import {
   WEEKDAY_LABELS,
   defaultShiftCalendarSettings,
@@ -274,140 +275,7 @@ function formatOtMinutes(value: number): string {
   return `${rest}m`;
 }
 
-function TimeField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const popupRef = useRef<HTMLDivElement | null>(null);
-  const [open, setOpen] = useState(false);
-  const [portalReady, setPortalReady] = useState(false);
-  const [popupPos, setPopupPos] = useState<{ top: number; left: number; width: number } | null>(null);
-  const amPm = toAmPmLabel(value);
-  const options = useMemo(
-    () =>
-      Array.from({ length: 96 }, (_, index) => {
-        const hour = Math.floor(index / 4);
-        const minute = (index % 4) * 15;
-        const val = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-        return { value: val, label: `${val} ${hour >= 12 ? "PM" : "AM"}` };
-      }),
-    [],
-  );
 
-  useEffect(() => {
-    setPortalReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const updatePopupPosition = () => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const viewportPadding = 8;
-      const popupWidth = Math.max(220, rect.width);
-      const maxLeft = Math.max(viewportPadding, window.innerWidth - popupWidth - viewportPadding);
-      const left = Math.min(Math.max(rect.left, viewportPadding), maxLeft);
-      const estimatedHeight = 220;
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const openUpward = spaceBelow < estimatedHeight && rect.top > estimatedHeight;
-      const top = openUpward ? Math.max(viewportPadding, rect.top - estimatedHeight - 6) : rect.bottom + 6;
-      setPopupPos({ top, left, width: popupWidth });
-    };
-    updatePopupPosition();
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (containerRef.current?.contains(target)) return;
-      if (popupRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    const onWindowChange = () => updatePopupPosition();
-    window.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("keydown", onEscape);
-    window.addEventListener("resize", onWindowChange);
-    window.addEventListener("scroll", onWindowChange, true);
-    return () => {
-      window.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("keydown", onEscape);
-      window.removeEventListener("resize", onWindowChange);
-      window.removeEventListener("scroll", onWindowChange, true);
-    };
-  }, [open]);
-
-  return (
-    <label className="grid gap-1 text-xs text-[--muted-foreground]">
-      <span className="text-sm font-medium text-[#1f4f79]">{label}</span>
-      <div ref={containerRef} className="relative overflow-visible">
-        <div className="relative overflow-hidden rounded-lg border border-[--input] bg-white">
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onFocus={() => setOpen(false)}
-          placeholder="HH:mm"
-          inputMode="numeric"
-          maxLength={5}
-          className="w-full border-0 bg-transparent px-3 py-2 pr-20 text-sm text-[--foreground] outline-none [appearance:none] [-webkit-appearance:none] [-moz-appearance:none]"
-        />
-        <span className="pointer-events-none absolute right-10 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-[#5f7f9f]">
-          {amPm}
-        </span>
-        <button
-          type="button"
-          onClick={() => setOpen((prev) => !prev)}
-          className="!absolute !right-2 !top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-[#d3e2f3] bg-white text-[#1f4f79] hover:bg-[#eef6ff]"
-          aria-label={`Toggle time options for ${label}`}
-          aria-expanded={open}
-        >
-          <Clock3 className="h-4 w-4" />
-        </button>
-        </div>
-        {open && portalReady
-          ? createPortal(
-              <div
-                ref={popupRef}
-                className="fixed z-[9999] overflow-y-auto rounded-lg border border-[#c8dbf0] bg-white p-1 shadow-[0_16px_30px_-14px_rgba(20,60,90,0.55)]"
-                style={{
-                  top: popupPos?.top ?? 0,
-                  left: popupPos?.left ?? 0,
-                  width: popupPos?.width ?? 220,
-                  maxHeight: "calc(100vh - 2rem)",
-                }}
-              >
-                {options.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      onChange(option.value);
-                      setOpen(false);
-                    }}
-                    className={`block w-full rounded-md px-2 py-1.5 text-left text-xs ${
-                      value.trim() === option.value ? "bg-[#e8f2ff] text-[#1f4f79]" : "text-[#294a68] hover:bg-[#f3f8ff]"
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>,
-              document.body,
-            )
-          : null}
-      </div>
-    </label>
-  );
-}
 
 let apiBase = "";
 async function req<T>(path: string): Promise<T> {
@@ -453,9 +321,9 @@ export default function ShiftsPage() {
       : (isTimetableRoute || isAccessTimePeriod)
         ? "timetable"
         : isShiftsRoute
-          ? (queryTab === "break" ? "break" : queryTab === "overtime" ? "overtime" : queryTab === "timetable" ? "timetable" : "setup")
+          ? (queryTab === "setup" ? "setup" : queryTab === "overtime" ? "overtime" : queryTab === "timetable" ? "timetable" : "break")
           : null;
-  const initialTab = routeTab ?? (queryTab === "timetable" ? "timetable" : queryTab === "overtime" ? "overtime" : queryTab === "break" ? "break" : "setup");
+  const initialTab = routeTab ?? (queryTab === "timetable" ? "timetable" : queryTab === "overtime" ? "overtime" : queryTab === "setup" ? "setup" : "break");
   const [tab, setTab] = useState<"setup" | "timetable" | "overtime" | "break">(initialTab);
   const [weekStart, setWeekStart] = useState(sundayOfWeek(now));
   const [msg, setMsg] = useState<string | null>(null);
@@ -667,11 +535,11 @@ export default function ShiftsPage() {
       setTab("overtime");
       return;
     }
-    if (tabFromQuery === "break") {
-      setTab("break");
+    if (tabFromQuery === "setup") {
+      setTab("setup");
       return;
     }
-    setTab("setup");
+    setTab("break");
   }, [routeTab, searchParams]);
 
   useEffect(() => {
@@ -770,65 +638,97 @@ export default function ShiftsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="tab-header">
-        <h1 className="text-2xl font-semibold">Shift and Timetable Management</h1>
-        <p className="text-sm text-[--muted-foreground]">Timetable defines time windows. Shift maps timetables into daily, weekly, or monthly cycles.</p>
-      </div>
-      {err ? <div className="rounded-lg border border-[#f2c6c6] bg-[#fff0f0] px-3 py-2 text-sm text-[#8d2f2f]">{err}</div> : null}
-      {msg ? <div className="rounded-lg border border-[#c9e7d1] bg-[#eefcf1] px-3 py-2 text-sm text-[#22603a]">{msg}</div> : null}
+      {/* 1. Header Overview */}
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-5 mb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                Shift & Schedule Management
+              </h1>
+              <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-100">
+                Work Schedule Engine
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Configure daily work shifts, weekly/monthly rotation plans, flexible break intervals, and overtime thresholds.
+            </p>
+          </div>
+        </div>
 
-      <section className="surface p-4 shadow-sm">
-        <div className="tab-toolbar tab-toolbar-controls mb-3 justify-start">
-          {showBreakTab ? (
+        {/* Tab Selection Navigation */}
+        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1">
+          {showBreakTab && (
             <button
               type="button"
               onClick={() => {
                 setTab("break");
                 router.replace("/shifts?tab=break");
               }}
-              className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "break" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                tab === "break"
+                  ? "bg-white text-blue-700 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
             >
-              <CalendarClock className="h-4 w-4" />Break Time
+              <CalendarClock className="h-3.5 w-3.5" /> Break Time
             </button>
-          ) : null}
-          {showTimetableTab ? (
+          )}
+          {showTimetableTab && (
             <button
               type="button"
               onClick={() => {
                 setTab("timetable");
                 router.replace("/shifts?tab=timetable");
               }}
-              className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "timetable" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                tab === "timetable"
+                  ? "bg-white text-blue-700 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
             >
-              <CalendarDays className="h-4 w-4" />Time Table
+              <CalendarDays className="h-3.5 w-3.5" /> Time Table
             </button>
-          ) : null}
-          {showShiftTab ? (
+          )}
+          {showShiftTab && (
             <button
               type="button"
               onClick={() => {
                 setTab("setup");
                 router.replace("/shifts?tab=setup");
               }}
-              className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "setup" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                tab === "setup"
+                  ? "bg-white text-blue-700 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
             >
-              <Clock3 className="h-4 w-4" />Shifts
+              <Clock3 className="h-3.5 w-3.5" /> Shifts & Rotations
             </button>
-          ) : null}
-          {showOvertimeTab ? (
+          )}
+          {showOvertimeTab && (
             <button
               type="button"
               onClick={() => {
                 setTab("overtime");
                 router.replace("/shifts?tab=overtime");
               }}
-              className={`inline-flex min-w-[150px] items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm ${tab === "overtime" ? "border-[#1f5c8f] bg-[#1f5c8f] text-white" : "border-[--border] bg-white text-[#355a7a]"}`}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                tab === "overtime"
+                  ? "bg-white text-blue-700 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
             >
-              <CalendarClock className="h-4 w-4" />OT
+              <Clock3 className="h-3.5 w-3.5" /> Overtime Setup
             </button>
-          ) : null}
+          )}
         </div>
 
+        {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700">{err}</div>}
+        {msg && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs font-medium text-emerald-700">{msg}</div>}
+      </section>
+
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs">
         {tab === "setup" ? (
           <div className="space-y-4">
             <div id="shift-section" className="rounded-lg border border-[--border] p-3">
@@ -1165,17 +1065,34 @@ export default function ShiftsPage() {
                             {d.useBreakTime && (
                               <div className="flex items-center gap-2">
                                 <span className="text-[11px] font-bold text-[#5f7f9f] uppercase tracking-wider">Profile:</span>
-                                <select
-                                  multiple
-                                  value={d.breakTimeIds}
-                                  onChange={(e) => {
-                                    const selected = Array.from(e.target.selectedOptions).map((o) => o.value).filter(Boolean);
-                                    setTtForm((p) => ({ ...p, days: p.days.map((x) => x.dayOfWeek === d.dayOfWeek ? { ...x, breakTimeIds: selected, breakTimeId: selected[0] ?? "", useBreakTime: selected.length > 0 } : x) }));
-                                  }}
-                                  className="rounded border border-[#d3e2f3] bg-white px-2 py-1 text-[11px] font-semibold text-[#1f4f79] outline-none"
-                                >
-                                  {activeBreakProfiles.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                                </select>
+                                {activeBreakProfiles.length === 0 ? (
+                                  <span className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+                                    No break profiles yet (create in Break Time Setup below)
+                                  </span>
+                                ) : (
+                                  <select
+                                    value={d.breakTimeIds[0] ?? d.breakTimeId ?? ""}
+                                    onChange={(e) => {
+                                      const selected = e.target.value ? [e.target.value] : [];
+                                      setTtForm((p) => ({
+                                        ...p,
+                                        days: p.days.map((x) =>
+                                          x.dayOfWeek === d.dayOfWeek
+                                            ? { ...x, breakTimeIds: selected, breakTimeId: selected[0] ?? "", useBreakTime: selected.length > 0 }
+                                            : x,
+                                        ),
+                                      }));
+                                    }}
+                                    className="rounded-lg border border-[#d3e2f3] bg-white px-2.5 py-1 text-xs font-semibold text-[#1f4f79] outline-none"
+                                  >
+                                    <option value="">Select Break Profile</option>
+                                    {activeBreakProfiles.map((b) => (
+                                      <option key={b.id} value={b.id}>
+                                        {b.name} ({b.durationMinutes}m)
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1255,32 +1172,92 @@ export default function ShiftsPage() {
 
             <div className="rounded-lg border border-[--border] p-3">
               <div className="mb-2 text-sm font-semibold">Timetable List</div>
-              <div className="overflow-x-auto rounded-lg border border-[--border]">
-              <table className="min-w-full text-left text-sm">
-                <thead className="bg-[#f7fbff] text-xs uppercase text-[--muted-foreground]">
+              <div className="overflow-x-auto rounded-xl border border-slate-200 mt-6">
+              <table className="min-w-full text-left text-xs">
+                <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
                   <tr>
-                    <th className="px-3 py-2">Timetable</th>
-                    <th className="px-3 py-2">Weekly Structure</th>
-                    <th className="px-3 py-2">Actions</th>
+                    <th className="px-4 py-3">Timetable ID</th>
+                    <th className="px-4 py-3">Week Distribution</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-slate-100">
                   {timetables.map((t) => (
-                    <tr key={t.id} className="border-t border-[--border]">
-                      <td className="px-3 py-2">
-                        <div className="font-medium">{t.name}</div>
+                    <tr key={t.id} className="hover:bg-slate-50 transition">
+                      <td className="px-4 py-3 align-top font-bold text-slate-900">
+                        {t.name}
                       </td>
-                      <td className="px-3 py-2 text-xs text-[--muted-foreground]">{t.days.slice().sort((a, b) => a.dayOfWeek - b.dayOfWeek).map((d) => {
-                        const breakLabels = (d.breakTimeIds?.length ? d.breakTimeIds : d.breakTimeId ? [d.breakTimeId] : [])
-                          .map((id) => breakById.get(id) ?? id)
-                          .filter(Boolean)
-                          .join(", ");
-                        return d.isWeeklyOff ? `${WEEKDAY_LABELS[d.dayOfWeek]}: Weekly Off` : `${WEEKDAY_LABELS[d.dayOfWeek]}: Check-In ${d.checkInTime} (${d.checkInStart}-${d.checkInEnd}), Check-Out ${d.checkOutTime} (${d.checkOutStart}-${d.checkOutEnd})${d.crossDay ? " [Cross Day]" : ""}${d.useBreakTime && breakLabels ? ` [Break: ${breakLabels}]` : ""}`;
-                      }).join(" | ")}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex gap-2">
-                          <button type="button" onClick={() => setTtForm(timetableToForm(t))} className="rounded border border-[#c8dbf0] bg-white px-2 py-1 text-xs text-[#1f5c8f]">Edit</button>
-                          <button type="button" onClick={async () => { if (t.id === "default-weekly") return void setErr("The default timetable cannot be deleted (you can edit it)."); if (timetables.length <= 1) return void setErr("At least one timetable must exist."); try { setErr(null); const saved = await saveShiftConfigToApi({ timetables: timetables.filter((x) => x.id !== t.id) }); applyShiftConfig(saved); setMsg("Timetable removed."); } catch (error) { setErr(error instanceof Error ? error.message : "Failed to remove timetable."); } }} className="rounded border border-[#f2d0d0] bg-white px-2 py-1 text-xs text-[#b94141]">Delete</button>
+                      <td className="px-4 py-3">
+                        <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                          {t.days.slice().sort((a, b) => a.dayOfWeek - b.dayOfWeek).map((d) => {
+                            const isOff = d.isWeeklyOff;
+                            const breakLabels = (
+                              d.breakTimeIds?.length ? d.breakTimeIds : d.breakTimeId ? [d.breakTimeId] : []
+                            )
+                              .map((id) => breakById.get(id) ?? id)
+                              .filter(Boolean)
+                              .join(", ");
+                            const content = isOff ? (
+                              <span className="text-[10px] font-bold uppercase text-slate-400">Weekly Off</span>
+                            ) : (
+                              <div className="space-y-0.5">
+                                <div className="font-semibold text-slate-800">
+                                  <span className="text-emerald-700">IN {d.checkInTime}</span> — <span className="text-blue-700">OUT {d.checkOutTime}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-medium">
+                                  Window: {d.checkInStart} to {d.checkOutEnd}
+                                  {d.crossDay ? <span className="text-indigo-600 font-bold"> [Night]</span> : null}
+                                </div>
+                                {d.useBreakTime && breakLabels && (
+                                  <div className="text-[10px] text-amber-700 font-bold bg-amber-50 rounded px-1 w-fit mt-0.5 border border-amber-100">
+                                    Break: {breakLabels}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                            return (
+                              <div
+                                key={d.dayOfWeek}
+                                className={`rounded-lg border p-2 ${
+                                  isOff ? "border-slate-100 bg-slate-50/50" : "border-slate-200 bg-white shadow-2xs"
+                                }`}
+                              >
+                                <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                  {WEEKDAY_LABELS[d.dayOfWeek]}
+                                </div>
+                                {content}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right align-top">
+                        <div className="inline-flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setTtForm(timetableToForm(t))}
+                            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (t.id === "default-weekly") return void setErr("The default timetable cannot be deleted (you can edit it).");
+                              if (timetables.length <= 1) return void setErr("At least one timetable must exist.");
+                              try {
+                                setErr(null);
+                                const saved = await saveShiftConfigToApi({ timetables: timetables.filter((x) => x.id !== t.id) });
+                                applyShiftConfig(saved);
+                                setMsg("Timetable removed.");
+                              } catch (error) {
+                                setErr(error instanceof Error ? error.message : "Failed to remove timetable.");
+                              }
+                            }}
+                            className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition"
+                          >
+                            Delete
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1413,30 +1390,74 @@ export default function ShiftsPage() {
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
-                <label className="grid gap-1 text-xs text-[--muted-foreground] xl:col-span-2">
-                  <span className="text-sm font-medium text-[#1f4f79]">Break Name</span>
-                  <input value={breakForm.name} onChange={(e) => setBreakForm((p) => ({ ...p, name: e.target.value }))} placeholder="e.g. Lunch Break" className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]" />
+              <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="grid gap-1 text-xs text-[--muted-foreground] sm:col-span-2">
+                  <span className="text-sm font-medium text-[#1f4f79]">Break Name *</span>
+                  <input
+                    value={breakForm.name}
+                    onChange={(e) => setBreakForm((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="e.g. Lunch Break"
+                    className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]"
+                  />
                 </label>
-                <TimeField label="Start" value={breakForm.startTime} onChange={(v) => setBreakForm((p) => ({ ...p, startTime: v }))} />
-                <TimeField label="End" value={breakForm.endTime} onChange={(v) => setBreakForm((p) => ({ ...p, endTime: v }))} />
-                <label className="grid gap-1 text-xs text-[--muted-foreground]">
-                  <span className="text-sm font-medium text-[#1f4f79]">Duration (Minutes)</span>
-                  <input type="number" min={1} value={breakForm.durationMinutes} onChange={(e) => setBreakForm((p) => ({ ...p, durationMinutes: Number.parseInt(e.target.value || "0", 10) || 0 }))} className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]" />
-                </label>
-                <label className="grid gap-1 text-xs text-[--muted-foreground]">
+                <label className="grid gap-1 text-xs text-[--muted-foreground] sm:col-span-2">
                   <span className="text-sm font-medium text-[#1f4f79]">Calculate Type</span>
-                  <select value={breakForm.calculateType} onChange={(e) => setBreakForm((p) => ({ ...p, calculateType: e.target.value as BreakForm["calculateType"] }))} className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]">
+                  <select
+                    value={breakForm.calculateType}
+                    onChange={(e) => setBreakForm((p) => ({ ...p, calculateType: e.target.value as BreakForm["calculateType"] }))}
+                    className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]"
+                  >
                     <option value="auto_deduct">Auto deduct</option>
                     <option value="required_punch">Required punch</option>
                   </select>
                 </label>
+
+                <TimeField
+                  label="Start Time"
+                  value={breakForm.startTime}
+                  onChange={(v) => {
+                    setBreakForm((p) => {
+                      const startM = parseTimeToMinutes(v);
+                      const endM = parseTimeToMinutes(p.endTime);
+                      const dur = endM > startM ? endM - startM : p.durationMinutes;
+                      return { ...p, startTime: v, durationMinutes: dur };
+                    });
+                  }}
+                />
+                <TimeField
+                  label="End Time"
+                  value={breakForm.endTime}
+                  onChange={(v) => {
+                    setBreakForm((p) => {
+                      const startM = parseTimeToMinutes(p.startTime);
+                      const endM = parseTimeToMinutes(v);
+                      const dur = endM > startM ? endM - startM : p.durationMinutes;
+                      return { ...p, endTime: v, durationMinutes: dur };
+                    });
+                  }}
+                />
+                <label className="grid gap-1 text-xs text-[--muted-foreground]">
+                  <span className="text-sm font-medium text-[#1f4f79]">Duration (Minutes)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={breakForm.durationMinutes}
+                    onChange={(e) => setBreakForm((p) => ({ ...p, durationMinutes: Math.max(1, Number.parseInt(e.target.value || "0", 10) || 1) }))}
+                    className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]"
+                  />
+                </label>
                 <label className="grid gap-1 text-xs text-[--muted-foreground]">
                   <span className="text-sm font-medium text-[#1f4f79]">Minimum Break (m)</span>
-                  <input type="number" min={0} value={breakForm.minimumBreakMinutes} onChange={(e) => setBreakForm((p) => ({ ...p, minimumBreakMinutes: Number.parseInt(e.target.value || "0", 10) || 0 }))} className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]" />
+                  <input
+                    type="number"
+                    min={0}
+                    value={breakForm.minimumBreakMinutes}
+                    onChange={(e) => setBreakForm((p) => ({ ...p, minimumBreakMinutes: Math.max(0, Number.parseInt(e.target.value || "0", 10) || 0) }))}
+                    className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm text-[--foreground]"
+                  />
                 </label>
               </div>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#f0f4f8] pt-3">
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setBreakForm(breakBlank())} className="rounded-lg border border-[#d3e2f3] px-4 py-2 text-sm font-semibold text-[#5f7f9f] hover:bg-[#f8fbff]">Reset</button>
                   <button
@@ -1455,6 +1476,16 @@ export default function ShiftsPage() {
                       const start = parseTimeToMinutes(breakForm.startTime);
                       const end = parseTimeToMinutes(breakForm.endTime);
                       if (start === null || end === null) return void setErr("Invalid break start/end time.");
+                      if (end <= start) {
+                        return void setErr("Break End time must be later than Start time (e.g. 01:00 PM to 02:00 PM).");
+                      }
+                      const windowMinutes = end - start;
+                      if (breakForm.durationMinutes > windowMinutes) {
+                        return void setErr(`Break duration (${breakForm.durationMinutes}m) cannot exceed the break window between Start and End (${windowMinutes}m).`);
+                      }
+                      if (breakForm.minimumBreakMinutes > breakForm.durationMinutes) {
+                        return void setErr(`Minimum break (${breakForm.minimumBreakMinutes}m) cannot exceed duration (${breakForm.durationMinutes}m).`);
+                      }
                       const isDuplicate = breakProfiles.some((x) => x.id !== breakForm.id && x.name.trim().toLowerCase() === name.toLowerCase());
                       if (isDuplicate) return void setErr("Break profile with this name already exists.");
                       const id = breakForm.id ?? (slug(name) || `break-${Date.now()}`);

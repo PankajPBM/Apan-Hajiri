@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, CheckCircle2, AlertCircle } from "lucide-rea
 import { useCalendarPreference } from "@/components/date/calendar-context";
 import { formatCalendarDateTime } from "@/components/date/date-display";
 import { BsDateField } from "@/components/date/dual-date-input";
+import { TimePicker } from "@/components/time/time-picker";
 import { resolveApiBases } from "@/lib/api-bases";
 
 const PAGE_SIZE = 100;
@@ -38,7 +39,7 @@ function displayRemarks(item: TransactionRow): string {
       return note ? `${note} (pending approval)` : "Manual punch (pending approval)";
     }
   }
-  return item.remarks?.trim() || "—";
+  return item.remarks?.trim() || "-";
 }
 
 function describeStatusCode(value?: number | null): string {
@@ -76,7 +77,7 @@ function csvCell(value: string): string {
 
 function downloadCsv(filename: string, header: string[], rows: string[][]) {
   const lines = [header, ...rows].map((row) => row.map(csvCell).join(","));
-  const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -140,6 +141,7 @@ export default function AttendancePage() {
   const [selectedDept, setSelectedDept] = useState("");
   const [selectedDevice, setSelectedDevice] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const txTotalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const txCurrentPage = Math.min(txPage, txTotalPages);
@@ -290,17 +292,22 @@ export default function AttendancePage() {
   const exportTransactions = async () => {
     setExporting(true);
     try {
-      const qs = new URLSearchParams();
-      qs.set("from", fromDate);
-      qs.set("to", toDate);
-      qs.set("usePunchTime", "true");
-      qs.set("take", "20000");
-      if (search.trim()) qs.set("search", search.trim());
-      if (selectedArea) qs.set("area", selectedArea);
-      if (selectedDept) qs.set("department", selectedDept);
-      if (selectedDevice) qs.set("deviceSerial", selectedDevice);
-      const data = await requestJson<{ data: TransactionRow[] }>(`/api/transactions?${qs.toString()}`);
-      const items = Array.isArray(data?.data) ? data.data : [];
+      let items: TransactionRow[] = [];
+      if (selectedIds.size > 0) {
+        items = rows.filter((r) => selectedIds.has(r.id));
+      } else {
+        const qs = new URLSearchParams();
+        qs.set("from", fromDate);
+        qs.set("to", toDate);
+        qs.set("usePunchTime", "true");
+        qs.set("take", "20000");
+        if (search.trim()) qs.set("search", search.trim());
+        if (selectedArea) qs.set("area", selectedArea);
+        if (selectedDept) qs.set("department", selectedDept);
+        if (selectedDevice) qs.set("deviceSerial", selectedDevice);
+        const data = await requestJson<TransactionRow[] | { data: TransactionRow[] }>(`/api/transactions?${qs.toString()}`);
+        items = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
+      }
       const csvRows = items.map((item) => [
         item.employeeCode ?? "",
         item.employeeName ?? "",
@@ -309,10 +316,12 @@ export default function AttendancePage() {
         describeStatusCode(item.statusCode),
         describeVerifyMode(item),
         deviceMap[item.deviceSerialNumber ?? ""] ?? item.deviceSerialNumber ?? "",
-        displayRemarks(item),
+        displayRemarks(item) === "-" ? "" : displayRemarks(item),
       ]);
       downloadCsv(
-        `transactions_${fromDate}_to_${toDate}.csv`,
+        selectedIds.size > 0
+          ? `selected_transactions_${selectedIds.size}_records.csv`
+          : `transactions_${fromDate}_to_${toDate}.csv`,
         ["Employee ID", "Employee Name", "Department", "Punch Time", "Status", "Verify Type", "Device", "Remarks"],
         csvRows,
       );
@@ -334,79 +343,211 @@ export default function AttendancePage() {
 
   return (
     <div className="space-y-4">
-      <div className="tab-header">
-        <h1 className="text-xl font-bold text-[#1b4b73]">Transactions</h1>
-        <p className="text-xs text-[--muted-foreground]">Biometric logs and manual punch requests for approval.</p>
-      </div>
+      {/* 1. Header Overview */}
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-5 mb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                Attendance Transactions
+              </h1>
+              <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-100">
+                Live Audit Logs
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Real-time biometric punch verification, terminal origin tracking, and manual attendance approval workflows.
+            </p>
+          </div>
 
-      <section className="surface p-4 shadow-sm rounded-2xl border border-[#e2eaf1]">
-        <div className="tab-toolbar mb-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setManualMsg(null);
+                setManualOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-blue-700 shadow-xs transition"
+            >
+              + Manual Punch
+            </button>
+            <button
+              type="button"
+              onClick={() => void exportTransactions()}
+              disabled={exporting || (selectedIds.size === 0 && total === 0)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition"
+            >
+              {exporting
+                ? "Exporting..."
+                : selectedIds.size > 0
+                ? `Export Selected (${selectedIds.size})`
+                : "Export CSV"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void loadTransactions(1)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+            >
+              {loading ? "..." : "Refresh"}
+            </button>
+          </div>
+        </div>
+
+        {/* Filter Controls Toolbar */}
+        <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex gap-1.5 p-1 bg-slate-50 rounded-xl border border-slate-100">
+            <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
               {["day", "week", "month", "year"].map((p) => (
-                <button key={p} onClick={() => applyRangePreset(p as any)} className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${rangePreset === p ? "bg-[#1b4b73] text-white shadow-md shadow-[#1b4b73]/20" : "text-[#1b4b73] hover:bg-white"}`}>{p.charAt(0).toUpperCase() + p.slice(1)}</button>
+                <button
+                  key={p}
+                  onClick={() => applyRangePreset(p as any)}
+                  className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                    rangePreset === p
+                      ? "bg-white text-blue-700 shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  {p.charAt(0).toUpperCase() + p.slice(1)}
+                </button>
               ))}
             </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => { setFromDate(today); setToDate(today); setRangePreset("day"); }} className="rounded-xl border border-[#d3e1ee] bg-white px-3 py-2 text-xs font-bold text-[#1b4b73] hover:bg-slate-50 transition-colors">Today</button>
-              <button onClick={() => { setManualMsg(null); setManualOpen(true); }} className="rounded-xl bg-[#1e7a4f] px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-900/10 hover:bg-[#165a3d] transition-all">+ Manual Punch</button>
-              <button onClick={() => void exportTransactions()} disabled={exporting} className="rounded-xl border border-[#1b4b73] bg-white px-4 py-2 text-xs font-bold text-[#1b4b73] shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50">{exporting ? "Exporting..." : "Export CSV"}</button>
-              <button onClick={() => void loadTransactions(1)} className="rounded-xl bg-[#1b4b73] px-4 py-2 text-xs font-bold text-white shadow-lg shadow-blue-900/10 hover:bg-[#153a5c] transition-all">{loading ? "..." : "Refresh"}</button>
-            </div>
+
+            <button
+              onClick={() => {
+                setFromDate(today);
+                setToDate(today);
+                setRangePreset("day");
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Today
+            </button>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-            <label className="grid gap-1.5"><span className="text-[10px] font-bold uppercase tracking-wider text-[#4a6d8c]">From Date</span><BsDateField value={fromDate} onChange={setFromDate} /></label>
-            <label className="grid gap-1.5"><span className="text-[10px] font-bold uppercase tracking-wider text-[#4a6d8c]">To Date</span><BsDateField value={toDate} onChange={setToDate} /></label>
-            <label className="grid gap-1.5"><span className="text-[10px] font-bold uppercase tracking-wider text-[#4a6d8c]">Quick Search</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Employee ID or Name..." className="rounded-xl border border-[#cbd5e1] bg-slate-50 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 outline-none" /></label>
-            <label className="grid gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#4a6d8c]">Area</span>
-              <select value={selectedArea} onChange={e => setSelectedArea(e.target.value)} className="rounded-xl border border-[#cbd5e1] bg-slate-50 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 outline-none text-[#1b4b73] font-medium">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <label className="grid gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">From Date</span>
+              <BsDateField value={fromDate} onChange={setFromDate} />
+            </label>
+            <label className="grid gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">To Date</span>
+              <BsDateField value={toDate} onChange={setToDate} />
+            </label>
+            <label className="grid gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Quick Search</span>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="ID or Name..."
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-600"
+              />
+            </label>
+            <label className="grid gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Area</span>
+              <select
+                value={selectedArea}
+                onChange={(e) => setSelectedArea(e.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-blue-600"
+              >
                 <option value="">All Areas</option>
-                {areas.map(a => <option key={a.code} value={a.name}>{a.name}</option>)}
+                {areas.map((a) => (
+                  <option key={a.code} value={a.name}>
+                    {a.name}
+                  </option>
+                ))}
               </select>
             </label>
-            <label className="grid gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#4a6d8c]">Department</span>
-              <select value={selectedDept} onChange={e => setSelectedDept(e.target.value)} className="rounded-xl border border-[#cbd5e1] bg-slate-50 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 outline-none text-[#1b4b73] font-medium">
+            <label className="grid gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Department</span>
+              <select
+                value={selectedDept}
+                onChange={(e) => setSelectedDept(e.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-blue-600"
+              >
                 <option value="">All Departments</option>
-                {depts.map(d => <option key={d.code} value={d.name}>{d.name}</option>)}
+                {depts.map((d) => (
+                  <option key={d.code} value={d.name}>
+                    {d.name}
+                  </option>
+                ))}
               </select>
             </label>
-            <label className="grid gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#4a6d8c]">Device</span>
-              <select value={selectedDevice} onChange={e => setSelectedDevice(e.target.value)} className="rounded-xl border border-[#cbd5e1] bg-slate-50 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 outline-none text-[#1b4b73] font-medium">
+            <label className="grid gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Device</span>
+              <select
+                value={selectedDevice}
+                onChange={(e) => setSelectedDevice(e.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-blue-600"
+              >
                 <option value="">All Devices</option>
-                {devs.map(d => <option key={d.serialNumber} value={d.serialNumber}>{d.name || d.serialNumber}</option>)}
+                {devs.map((d) => (
+                  <option key={d.serialNumber} value={d.serialNumber}>
+                    {d.name || d.serialNumber}
+                  </option>
+                ))}
               </select>
             </label>
           </div>
         </div>
 
-        {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-700">{error}</div>}
+        {error && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700">{error}</div>}
+      </section>
 
-        <div className="mb-3 flex items-center justify-between text-[11px] font-bold text-slate-500 px-1">
-          <p>Showing {total===0?0:(txCurrentPage-1)*PAGE_SIZE+1}–{Math.min(txCurrentPage*PAGE_SIZE,total)} of {total} records</p>
+      {/* 2. Main Data Table Card */}
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs">
+        <div className="mb-3 flex items-center justify-between text-xs font-semibold text-slate-500">
+          <p>
+            Showing {total === 0 ? 0 : (txCurrentPage - 1) * PAGE_SIZE + 1}–{Math.min(txCurrentPage * PAGE_SIZE, total)} of {total} records
+          </p>
           <div className="flex items-center gap-2">
-            <button onClick={() => setTxPage(p => Math.max(1, p-1))} disabled={txCurrentPage===1||loading} className="rounded-lg border border-slate-200 bg-white p-1 hover:bg-slate-50 disabled:opacity-30"><ChevronLeft className="h-4 w-4" /></button>
-            <span>Page {txCurrentPage} / {txTotalPages}</span>
-            <button onClick={() => setTxPage(p => Math.min(txTotalPages, p+1))} disabled={txCurrentPage===txTotalPages||loading} className="rounded-lg border border-slate-200 bg-white p-1 hover:bg-slate-50 disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button>
+            <button
+              onClick={() => setTxPage((p) => Math.max(1, p - 1))}
+              disabled={txCurrentPage === 1 || loading}
+              className="rounded-md border border-slate-300 bg-white p-1 hover:bg-slate-50 disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4 text-slate-600" />
+            </button>
+            <span>
+              Page {txCurrentPage} / {txTotalPages}
+            </span>
+            <button
+              onClick={() => setTxPage((p) => Math.min(txTotalPages, p + 1))}
+              disabled={txCurrentPage === txTotalPages || loading}
+              className="rounded-md border border-slate-300 bg-white p-1 hover:bg-slate-50 disabled:opacity-40"
+            >
+              <ChevronRight className="h-4 w-4 text-slate-600" />
+            </button>
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-xl border border-[#e5effa]">
-          <table className="min-w-full text-left text-xs">
-            <thead className="bg-[#f8fbff] text-[10px] font-bold uppercase tracking-wider text-[#4a6d8d]">
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
               <tr>
+                <th className="w-10 px-3 py-3 text-center">
+                  <input
+                    type="checkbox"
+                    checked={sortedRows.length > 0 && sortedRows.every((r) => selectedIds.has(r.id))}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedIds(new Set(sortedRows.map((r) => r.id)));
+                      } else {
+                        setSelectedIds(new Set());
+                      }
+                    }}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    title={sortedRows.length > 0 && sortedRows.every((r) => selectedIds.has(r.id)) ? "Deselect all visible" : "Select all visible"}
+                  />
+                </th>
                 <th className="px-3 py-3">
                   <button
                     type="button"
                     onClick={() => updateSort("punchTime")}
-                    className="font-bold hover:text-[--foreground] inline-flex items-center gap-0.5"
+                    className="font-bold hover:text-slate-900 inline-flex items-center gap-1"
                   >
                     Punch Time
                     {sortField === "punchTime" && (
-                      <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
+                      <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                     )}
                   </button>
                 </th>
@@ -414,11 +555,11 @@ export default function AttendancePage() {
                   <button
                     type="button"
                     onClick={() => updateSort("employeeCode")}
-                    className="font-bold hover:text-[--foreground] inline-flex items-center gap-0.5"
+                    className="font-bold hover:text-slate-900 inline-flex items-center gap-1"
                   >
-                    Employee ID
+                    User ID
                     {sortField === "employeeCode" && (
-                      <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
+                      <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                     )}
                   </button>
                 </th>
@@ -426,11 +567,11 @@ export default function AttendancePage() {
                   <button
                     type="button"
                     onClick={() => updateSort("employeeName")}
-                    className="font-bold hover:text-[--foreground] inline-flex items-center gap-0.5"
+                    className="font-bold hover:text-slate-900 inline-flex items-center gap-1"
                   >
                     Employee Name
                     {sortField === "employeeName" && (
-                      <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
+                      <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                     )}
                   </button>
                 </th>
@@ -438,11 +579,11 @@ export default function AttendancePage() {
                   <button
                     type="button"
                     onClick={() => updateSort("employeeDepartment")}
-                    className="font-bold hover:text-[--foreground] inline-flex items-center gap-0.5"
+                    className="font-bold hover:text-slate-900 inline-flex items-center gap-1"
                   >
-                    Dept
+                    Department
                     {sortField === "employeeDepartment" && (
-                      <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
+                      <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                     )}
                   </button>
                 </th>
@@ -450,11 +591,11 @@ export default function AttendancePage() {
                   <button
                     type="button"
                     onClick={() => updateSort("statusCode")}
-                    className="font-bold hover:text-[--foreground] inline-flex items-center gap-0.5"
+                    className="font-bold hover:text-slate-900 inline-flex items-center gap-1"
                   >
                     Status
                     {sortField === "statusCode" && (
-                      <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
+                      <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                     )}
                   </button>
                 </th>
@@ -462,11 +603,11 @@ export default function AttendancePage() {
                   <button
                     type="button"
                     onClick={() => updateSort("verifyMode")}
-                    className="font-bold hover:text-[--foreground] inline-flex items-center gap-0.5"
+                    className="font-bold hover:text-slate-900 inline-flex items-center gap-1"
                   >
                     Verify Type
                     {sortField === "verifyMode" && (
-                      <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
+                      <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                     )}
                   </button>
                 </th>
@@ -474,11 +615,11 @@ export default function AttendancePage() {
                   <button
                     type="button"
                     onClick={() => updateSort("deviceSerialNumber")}
-                    className="font-bold hover:text-[--foreground] inline-flex items-center gap-0.5"
+                    className="font-bold hover:text-slate-900 inline-flex items-center gap-1"
                   >
                     Source
                     {sortField === "deviceSerialNumber" && (
-                      <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
+                      <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                     )}
                   </button>
                 </th>
@@ -486,11 +627,11 @@ export default function AttendancePage() {
                   <button
                     type="button"
                     onClick={() => updateSort("remarks")}
-                    className="font-bold hover:text-[--foreground] inline-flex items-center gap-0.5"
+                    className="font-bold hover:text-slate-900 inline-flex items-center gap-1"
                   >
                     Remarks
                     {sortField === "remarks" && (
-                      <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
+                      <span className="text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                     )}
                   </button>
                 </th>
@@ -499,7 +640,23 @@ export default function AttendancePage() {
             </thead>
             <tbody className="divide-y divide-[#e5effa]">
               {sortedRows.map((item) => (
-                <tr key={item.id} className="hover:bg-[#fcfdfe] transition-colors">
+                <tr key={item.id} className={selectedIds.has(item.id) ? "bg-blue-50/60 hover:bg-blue-50 transition-colors" : "hover:bg-[#fcfdfe] transition-colors"}>
+                  <td className="w-10 px-3 py-2.5 text-center">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(item.id)}
+                      onChange={(e) => {
+                        const next = new Set(selectedIds);
+                        if (e.target.checked) {
+                          next.add(item.id);
+                        } else {
+                          next.delete(item.id);
+                        }
+                        setSelectedIds(next);
+                      }}
+                      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </td>
                   <td className="whitespace-nowrap px-3 py-2.5">
                     <div className="font-bold text-[#1e293b]">{formatCalendarDateTime(item.punchTime, calendarType)}</div>
                     <div className="text-[9px] text-slate-400 font-medium">PC: {formatCalendarDateTime(item.rawTimePc, calendarType)}</div>
@@ -508,7 +665,17 @@ export default function AttendancePage() {
                   <td className="px-3 py-2.5 font-bold text-[#1e293b]">{item.employeeName || "-"}</td>
                   <td className="px-3 py-2.5 text-[#1e293b] font-medium">{item.employeeDepartment || "-"}</td>
                   <td className="px-3 py-2.5">
-                    <span className={`rounded-lg px-2 py-1 text-[9px] font-bold uppercase ${item.statusCode === 1 ? "bg-orange-50 text-orange-700 border border-orange-100" : "bg-blue-50 text-blue-700 border border-blue-100"}`}>
+                    <span
+                      className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase border ${
+                        item.statusCode === 0
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : item.statusCode === 1
+                          ? "bg-blue-50 text-blue-700 border-blue-200"
+                          : item.statusCode === 2 || item.statusCode === 3
+                          ? "bg-amber-50 text-amber-700 border-amber-200"
+                          : "bg-purple-50 text-purple-700 border-purple-200"
+                      }`}
+                    >
                       {describeStatusCode(item.statusCode)}
                     </span>
                   </td>
@@ -542,7 +709,7 @@ export default function AttendancePage() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center">
+                  <td colSpan={10} className="py-16 text-center">
                     <div className="mx-auto max-w-sm space-y-3">
                       <p className="text-sm font-medium text-slate-500">
                         {search.trim() ? "No matching transaction records found." : "No transactions found for the selected date range."}
@@ -586,7 +753,7 @@ export default function AttendancePage() {
               </select></label>
               <div className="grid grid-cols-2 gap-4">
                 <label className="grid gap-1.5"><span className="text-xs font-bold uppercase tracking-wider text-[#4a6d8c]">Type *</span><select value={manualForm.status} onChange={(e) => setManualForm((p) => ({ ...p, status: e.target.value }))} className="rounded-2xl border border-[#cbd5e1] bg-slate-50 px-4 py-3 text-sm font-bold text-[#1e293b] outline-none"><option value="In">Check-In</option><option value="Out">Check-Out</option></select></label>
-                <label className="grid gap-1.5"><span className="text-xs font-bold uppercase tracking-wider text-[#4a6d8c]">Time *</span><input type="time" value={manualForm.time} onChange={(e) => setManualForm((p) => ({ ...p, time: e.target.value }))} className="rounded-2xl border border-[#cbd5e1] bg-slate-50 px-4 py-3 text-sm font-bold text-[#1e293b] outline-none" /></label>
+                <label className="grid gap-1.5"><span className="text-xs font-bold uppercase tracking-wider text-[#4a6d8c]">Time *</span><TimePicker value={manualForm.time} onChange={(val) => setManualForm((p) => ({ ...p, time: val }))} /></label>
               </div>
               <label className="grid gap-1.5"><span className="text-xs font-bold uppercase tracking-wider text-[#4a6d8c]">Remarks</span><input value={manualForm.remarks} onChange={(e) => setManualForm((p) => ({ ...p, remarks: e.target.value }))} placeholder="Reason / note..." className="rounded-2xl border border-[#cbd5e1] bg-slate-50 px-4 py-3 text-sm font-medium text-[#1e293b] outline-none" /></label>
             </div>

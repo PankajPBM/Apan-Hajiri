@@ -30,9 +30,9 @@
     <FrontendExportDir>..\e-attendance-next\out</FrontendExportDir>
     <!-- Ship only English satellite resources (no cs/de/fr/ja/... waste folders) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <Version>1.1.14</Version>
-    <FileVersion>1.1.14.0</FileVersion>
-    <AssemblyVersion>1.1.14.0</AssemblyVersion>
+    <Version>1.1.15</Version>
+    <FileVersion>1.1.15.0</FileVersion>
+    <AssemblyVersion>1.1.15.0</AssemblyVersion>
     <Company>PB Tech Zone</Company>
     <Authors>PB Tech Zone</Authors>
     <Product>Apan Hajiri</Product>
@@ -52,6 +52,11 @@
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
   </ItemGroup>
+
+  <Target Name="BuildFrontendBeforeCompile" BeforeTargets="BeforeBuild">
+    <Message Importance="High" Text="[Frontend Build] Installing dependencies and building Next.js static export..." />
+    <Exec Command="npm install &amp;&amp; npm run build" WorkingDirectory="$(MSBuildProjectDirectory)\..\e-attendance-next" ConsoleToMSBuild="true" />
+  </Target>
 
   <Target Name="SyncBundledFrontend" AfterTargets="Build;Publish" Condition="Exists('$(MSBuildProjectDirectory)\$(FrontendExportDir)\index.html')">
     <ItemGroup>

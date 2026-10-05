@@ -5,13 +5,16 @@ import {
   Brush,
   Check,
   Clock3,
+  Copy,
   Cpu,
   DatabaseBackup,
   Download,
+  ExternalLink,
   Globe2,
   KeyRound,
   Lock,
   Pencil,
+  RefreshCw,
   Shield,
   SlidersHorizontal,
   Trash2,
@@ -23,6 +26,7 @@ import {
   extractBrandingSettings,
 } from "@/components/data/app-settings";
 import { LicensePanel } from "@/components/license-panel";
+import { TimePicker } from "@/components/time/time-picker";
 import { useCalendarPreference } from "@/components/date/calendar-context";
 import { formatCalendarDateTime } from "@/components/date/date-display";
 import { loadUsersFromApi, notifyAuthUpdated, readAuthSession, saveUsersToApi } from "@/components/data/auth-store";
@@ -176,8 +180,8 @@ const defaultSettings: SettingsState = {
 const tabFields: Record<SettingsTab, Array<keyof SettingsState>> = {
   general: ["organizationName", "timezone", "defaultBranch", "language"],
   attendance: ["holidayOt", "weeklyOffOt"],
-  device: ["pushEndpointPort", "webUiPort"],
-  branding: ["systemTitle", "primaryColor"],
+  device: [],
+  branding: ["systemTitle", "primaryColor", "supportEmail"],
   license: [],
   user: [],
   backup: [],
@@ -186,7 +190,7 @@ const tabFields: Record<SettingsTab, Array<keyof SettingsState>> = {
 const tabs: SettingsTabItem[] = [
   { id: "general", label: "General Settings", description: "Organization profile, timezone, branch, and language.", icon: Globe2 },
   { id: "attendance", label: "Attendance Rules", description: "Shift/timetable behavior and overtime policy controls.", icon: Clock3 },
-  { id: "device", label: "Device Settings", description: "Push endpoint port and connectivity.", icon: Cpu },
+  { id: "device", label: "Device Settings", description: "Push endpoint port and connectivity details.", icon: Cpu },
   { id: "branding", label: "Branding", description: "System name, logo, and visual identity.", icon: Brush },
   { id: "license", label: "License", description: "Trial, activation, expiry, and deactivation controls.", icon: KeyRound },
   { id: "user", label: "User", description: "Create users and assign feature access permissions.", icon: Users },
@@ -637,14 +641,16 @@ function validateSettingsForTab(tab: SettingsTab, settings: SettingsState): stri
   }
 
   if (tab === "device") {
-    if (parsePortValue(settings.pushEndpointPort) === null) {
-      issues.push("Push endpoint port must be a valid port between 1 and 65535.");
-    }
+    // Read-only connection details tab — no validation issues
+    return [];
   }
 
   if (tab === "branding") {
     if (!settings.systemTitle.trim()) {
       issues.push("System title is required.");
+    }
+    if (settings.supportEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(settings.supportEmail.trim())) {
+      issues.push("Support email format is invalid.");
     }
   }
 
@@ -810,6 +816,31 @@ export default function SettingsPage() {
       cancelled = true;
     };
   }, []);
+
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [deviceRefreshing, setDeviceRefreshing] = useState(false);
+
+  const copyToClipboard = (text: string, fieldName: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopiedField(fieldName);
+        setTimeout(() => setCopiedField(null), 2000);
+      }).catch(() => {});
+    }
+  };
+
+  const handleRefreshDeviceStatus = async () => {
+    setDeviceRefreshing(true);
+    try {
+      const runtime = await loadRuntimeSettings();
+      setRuntimeSettings(runtime);
+      showMessage("success", "Device network and runtime status refreshed.");
+    } catch {
+      showMessage("warning", "Could not fetch updated network status from backend.");
+    } finally {
+      setDeviceRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     applyBrandingSettings(extractBrandingSettings(settings));
@@ -1104,26 +1135,12 @@ export default function SettingsPage() {
         }
       }
 
-      let nextRuntimeSettings = runtimeSettings;
       if (tab === "device") {
-        const desiredPort = parsePortValue(settings.pushEndpointPort);
-        const desiredWebPort = parsePortValue(settings.webUiPort);
-        if (desiredPort === null || desiredWebPort === null) {
-          showMessage("error", "Both API and Web UI ports must be valid numbers.");
-          return;
-        }
-
-        if (!runtimeSettings || desiredPort !== runtimeSettings.port || desiredWebPort !== runtimeSettings.frontendPort) {
-          nextRuntimeSettings = await updateRuntimePort(desiredPort, desiredWebPort);
-          setRuntimeSettings(nextRuntimeSettings);
-        }
+        return;
       }
 
       const persistedSettings = tab === "user" ? settings : await saveSettingsToApi(settings);
-      const mergedSettings =
-        tab === "device" && nextRuntimeSettings
-          ? { ...persistedSettings, pushEndpointPort: String(nextRuntimeSettings.port) }
-          : persistedSettings;
+      const mergedSettings = persistedSettings;
 
       if (tab !== "user") {
         setSettings(mergedSettings);
@@ -1145,10 +1162,6 @@ export default function SettingsPage() {
         } else {
           showMessage("warning", "Settings were saved, but attendance policy sync endpoint was not reachable.");
         }
-      } else if (tab === "device" && nextRuntimeSettings?.restartRequired) {
-        showMessage("warning", nextRuntimeSettings.message || "Device settings saved. Restart application to apply the new API port.");
-      } else if (tab === "device" && nextRuntimeSettings?.message) {
-        showMessage("success", nextRuntimeSettings.message);
       } else {
         showMessage("success", `${currentTab.label} saved successfully.`);
       }
@@ -1252,29 +1265,56 @@ export default function SettingsPage() {
             {lastSavedAt ? <p className="mt-1 text-xs text-[--muted-foreground]">Last saved: {formatCalendarDateTime(lastSavedAt, calendarType)}</p> : null}
           </div>
 
-          <div className="mb-4 grid gap-3 xl:grid-cols-3">
-            <SettingsMetric
-              label="Section Fields"
-              value={tab === "user" ? `${users.length}` : `${sectionFieldCount}`}
-              detail={tab === "user" ? "Users currently available in this workspace." : "Configurable fields in the active settings section."}
-            />
-            <SettingsMetric
-              label="Pending Changes"
-              value={tab === "user" ? (showUserEditor ? "Editing" : "Synced") : `${dirtyFieldCount}`}
-              detail={tab === "user" ? "User access editor state for the current session." : "Fields changed since the last successful save."}
-              tone={tab === "user" ? (showUserEditor ? "warn" : "good") : dirtyFieldCount > 0 ? "warn" : "good"}
-            />
-            <SettingsMetric
-              label={tab === "device" ? "Runtime Status" : "Validation"}
-              value={tab === "device" && runtimeSettings ? `${runtimeSettings.serverIp}:${runtimeSettings.port}` : validationIssues.length > 0 ? `${validationIssues.length} issue(s)` : "Ready"}
-              detail={tab === "device" && runtimeSettings
-                ? `Web UI Port ${runtimeSettings.frontendPort}${runtimeSettings.restartRequired ? " • restart required" : ""}`
-                : validationIssues.length > 0
-                  ? validationIssues[0]
-                  : "Current section is ready to save."}
-              tone={tab === "device" ? "default" : validationIssues.length > 0 ? "warn" : "good"}
-            />
-          </div>
+          {tab !== "license" && tab !== "device" ? (
+            <div className="mb-4 grid gap-3 xl:grid-cols-3">
+              {tab === "backup" ? (
+                <>
+                  <SettingsMetric
+                    label="Total Backups"
+                    value={`${backupHistory.length}`}
+                    detail="Database snapshots saved in backup history."
+                    tone="default"
+                  />
+                  <SettingsMetric
+                    label="Schedule Status"
+                    value={backupSchedule ? (backupSchedule.enabled ? "Active" : "Disabled") : "..."}
+                    detail={backupSchedule?.enabled ? `Scheduled ${backupSchedule.frequency} at ${backupSchedule.runTime}` : "Automatic backups are disabled."}
+                    tone={backupSchedule?.enabled ? "good" : "warn"}
+                  />
+                  <SettingsMetric
+                    label="Latest Backup"
+                    value={backupHistory.length > 0 ? (backupHistory[0].status === "completed" ? "Completed" : backupHistory[0].status === "failed" ? "Failed" : "Running") : "No backups"}
+                    detail={backupHistory.length > 0 && backupHistory[0].status === "failed" ? (backupHistory[0].errorMessage ? "Backup encountered an error" : "Failed") : backupHistory.length > 0 ? formatBackupSize(backupHistory[0].fileSizeBytes) : "Ready for backup."}
+                    tone={backupHistory.length > 0 && backupHistory[0].status === "failed" ? "warn" : backupHistory.length > 0 && backupHistory[0].status === "completed" ? "good" : "default"}
+                  />
+                </>
+              ) : (
+                <>
+                  <SettingsMetric
+                    label="Section Fields"
+                    value={tab === "user" ? `${users.length}` : `${sectionFieldCount}`}
+                    detail={tab === "user" ? "Users currently available in this workspace." : "Configurable fields in the active settings section."}
+                  />
+                  <SettingsMetric
+                    label="Pending Changes"
+                    value={tab === "user" ? (showUserEditor ? "Editing" : "Synced") : `${dirtyFieldCount}`}
+                    detail={tab === "user" ? "User access editor state for the current session." : "Fields changed since the last successful save."}
+                    tone={tab === "user" ? (showUserEditor ? "warn" : "good") : dirtyFieldCount > 0 ? "warn" : "good"}
+                  />
+                  <SettingsMetric
+                    label="Validation"
+                    value={validationIssues.length > 0 ? `${validationIssues.length} issue(s)` : "Ready"}
+                    detail={
+                      validationIssues.length > 0
+                        ? validationIssues[0]
+                        : "Current section is ready to save."
+                    }
+                    tone={validationIssues.length > 0 ? "warn" : "good"}
+                  />
+                </>
+              )}
+            </div>
+          ) : null}
 
           {tab === "general" ? (
             <div className="space-y-4">
@@ -1348,42 +1388,175 @@ export default function SettingsPage() {
           ) : null}
 
           {tab === "device" ? (
-            <div className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl border border-sky-200 bg-[linear-gradient(135deg,#f8fdff,#eef7ff)] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#5a7b98]">Server IP</p>
-                  <p className="mt-2 text-lg font-semibold text-[#0d334d]">{runtimeSettings?.serverIp ?? "-"}</p>
-                  <p className="mt-1 text-xs text-[#5a7b98]">Use this in the device cloud server setting.</p>
+            <div className="space-y-6">
+              {/* Three Primary Connection Cards */}
+              <div className="grid gap-4 md:grid-cols-3">
+                {/* Server IP Card */}
+                <div className="flex flex-col justify-between rounded-2xl border border-sky-200 bg-[linear-gradient(135deg,#f8fdff,#eef7ff)] p-4 shadow-xs">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#5a7b98]">Server IP</span>
+                      <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-800">
+                        Active IP
+                      </span>
+                    </div>
+                    <p className="mt-2 text-2xl font-bold tracking-tight text-[#0d334d]">
+                      {runtimeSettings?.serverIp ?? "-"}
+                    </p>
+                    <p className="mt-1 text-xs text-[#5a7b98]">
+                      Enter this in the biometric device&apos;s Cloud Server / ADMS settings.
+                    </p>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-sky-100 flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-[#5a7b98]">Cloud Host IP</span>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(runtimeSettings?.serverIp ?? "127.0.0.1", "ip")}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-sky-300 bg-white px-2.5 py-1 text-xs font-semibold text-[#1a4a73] transition hover:bg-sky-50"
+                    >
+                      {copiedField === "ip" ? (
+                        <>
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                          <span className="text-emerald-700">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Copy IP</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">API Port</p>
-                  <p className="mt-2 text-lg font-semibold text-emerald-900">{runtimeSettings?.port ?? settings.pushEndpointPort}</p>
-                  <p className="mt-1 text-xs text-emerald-700">Changing this updates the actual device push/API port.</p>
+
+                {/* API Push Port Card */}
+                <div className="flex flex-col justify-between rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 shadow-xs">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-800">Push Endpoint (API) Port</span>
+                      <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
+                        ZKTeco Push
+                      </span>
+                    </div>
+                    <p className="mt-2 text-2xl font-bold tracking-tight text-emerald-950">
+                      {runtimeSettings?.port ?? settings.pushEndpointPort}
+                    </p>
+                    <p className="mt-1 text-xs text-emerald-800">
+                      Port where biometric attendance machines push attendance logs.
+                    </p>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-emerald-100 flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-emerald-700">Device Port</span>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(String(runtimeSettings?.port ?? settings.pushEndpointPort), "port")}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-50"
+                    >
+                      {copiedField === "port" ? (
+                        <>
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                          <span className="text-emerald-700">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Copy Port</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">Web UI Port</p>
-                  <p className="mt-2 text-lg font-semibold text-amber-900">{runtimeSettings?.frontendPort ?? "-"}</p>
-                  <p className="mt-1 text-xs text-amber-700">Keep this different from the API port.</p>
+
+                {/* Web UI Port Card */}
+                <div className="flex flex-col justify-between rounded-2xl border border-amber-200 bg-amber-50/80 p-4 shadow-xs">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-amber-800">Web UI Port</span>
+                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                        Web Browser
+                      </span>
+                    </div>
+                    <p className="mt-2 text-2xl font-bold tracking-tight text-amber-950">
+                      {runtimeSettings?.frontendPort ?? "-"}
+                    </p>
+                    <p className="mt-1 text-xs text-amber-800">
+                      Port used for opening the web dashboard in your browser.
+                    </p>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-amber-100 flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-amber-700">Dashboard Link</span>
+                    <a
+                      href={`http://${runtimeSettings?.serverIp ?? "localhost"}:${runtimeSettings?.frontendPort ?? 8001}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-50"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      <span>Open Link</span>
+                    </a>
+                  </div>
                 </div>
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Push Endpoint Port" hint="Port where biometric devices push attendance logs.">
-                  <input
-                    value={settings.pushEndpointPort}
-                    onChange={(event) => setField("pushEndpointPort", event.target.value)}
-                    className="w-full rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm"
-                  />
-                </Field>
-                <Field label="Web UI Port" hint="Port for the web dashboard. Keep different from API port.">
-                  <input
-                    value={settings.webUiPort ?? String(runtimeSettings?.frontendPort ?? defaultSettings.webUiPort)}
-                    onChange={(event) => setField("webUiPort", event.target.value)}
-                    className="w-full rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm"
-                  />
-                </Field>
+
+              {/* Machine Setup Guide Card */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800">Biometric Device Setup Guide</h3>
+                    <p className="text-xs text-slate-500">
+                      Enter these exact parameters in your device&apos;s menu (<span className="font-semibold text-slate-700">Comm. &gt; Cloud Server / ADMS / PUSH</span>)
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
+                    PUSH Protocol
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Server Mode</span>
+                    <p className="mt-1 text-sm font-bold text-slate-800">Cloud Server / ADMS</p>
+                    <p className="text-[11px] text-slate-400">or PUSH Protocol</p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Server Address</span>
+                    <p className="mt-1 text-sm font-bold text-sky-700 font-mono">{runtimeSettings?.serverIp ?? "127.0.0.1"}</p>
+                    <p className="text-[11px] text-slate-400">LAN / Server IP</p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Server Port</span>
+                    <p className="mt-1 text-sm font-bold text-emerald-700 font-mono">{runtimeSettings?.port ?? settings.pushEndpointPort}</p>
+                    <p className="text-[11px] text-slate-400">Push Endpoint</p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Enable Proxy</span>
+                    <p className="mt-1 text-sm font-bold text-slate-800">OFF (Disabled)</p>
+                    <p className="text-[11px] text-slate-400">Do not use proxy</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-xl border border-sky-100 bg-sky-50/50 p-3 text-xs text-sky-900">
+                  <span className="font-semibold">Note:</span> After updating parameters on the physical biometric attendance machine, restart or disconnect/reconnect the network cable on the machine so it establishes connection to this server.
+                </div>
               </div>
-              <div className="rounded-2xl border border-sky-200 bg-[linear-gradient(135deg,#f8fdff,#fefeff)] px-4 py-3 text-sm text-[#1e4c78]">
-                Notice: Save this section after changing the API port. If the backend asks for restart, restart the application once so devices start using the new port.
+
+              {/* Action Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[--border] pt-4">
+                <p className="text-xs text-[--muted-foreground]">
+                  Network listeners are managed by the E-Attendance system service.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleRefreshDeviceStatus}
+                  disabled={deviceRefreshing}
+                  className="inline-flex items-center gap-2 rounded-lg border border-[--border] bg-[--card] px-4 py-2 text-sm font-medium transition hover:bg-[--muted] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <RefreshCw className={`h-4 w-4 ${deviceRefreshing ? "animate-spin text-sky-600" : ""}`} />
+                  {deviceRefreshing ? "Refreshing..." : "Refresh Network Status"}
+                </button>
               </div>
             </div>
           ) : null}
@@ -1422,6 +1595,15 @@ export default function SettingsPage() {
                     className="w-full rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm"
                   />
                 </Field>
+                <Field label="Support Email" hint="Support contact email shown in system information.">
+                  <input
+                    type="email"
+                    value={settings.supportEmail}
+                    onChange={(event) => setField("supportEmail", event.target.value)}
+                    placeholder="pbtechzone77@gmail.com"
+                    className="w-full rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm"
+                  />
+                </Field>
                 <Field label="Primary Color" hint="Brand accent color used across buttons and highlights.">
                   <div className="flex items-center gap-3 rounded-lg border border-[--input] bg-[--card] px-3 py-2">
                     <input
@@ -1435,6 +1617,13 @@ export default function SettingsPage() {
                       onChange={(event) => setField("primaryColor", event.target.value)}
                       className="w-full bg-transparent text-sm outline-none"
                     />
+                  </div>
+                </Field>
+                <Field label="System Logo" hint="Official application brand logo (fixed to ensure app branding remains intact).">
+                  <div className="flex items-center gap-3 rounded-lg border border-[--input] bg-[--muted] px-3 py-2">
+                    <img src="/apan_logo.png" alt="Apan Hajiri" className="h-7 w-7 object-contain" />
+                    <span className="text-xs font-medium text-[--foreground]">Apan Hajiri Official Logo (/apan_logo.png)</span>
+                    <span className="ml-auto rounded-full bg-[#e6f0fe] px-2 py-0.5 text-[10px] font-semibold text-[#1e4c78]">Protected</span>
                   </div>
                 </Field>
               </div>
@@ -1480,11 +1669,9 @@ export default function SettingsPage() {
                       </label>
                       <label className="grid gap-1 text-xs text-[--muted-foreground]">
                         <span className="text-[11px] font-semibold text-[#1f4f79]">Run Time (server local time)</span>
-                        <input
-                          type="time"
+                        <TimePicker
                           value={backupSchedule.runTime}
-                          onChange={(event) => setBackupSchedule((prev) => (prev ? { ...prev, runTime: event.target.value } : prev))}
-                          className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm"
+                          onChange={(val) => setBackupSchedule((prev) => (prev ? { ...prev, runTime: val } : prev))}
                         />
                       </label>
                       <label className="grid gap-1 text-xs text-[--muted-foreground]">
@@ -1493,8 +1680,15 @@ export default function SettingsPage() {
                           type="number"
                           min={1}
                           max={365}
-                          value={backupSchedule.retentionCount}
-                          onChange={(event) => setBackupSchedule((prev) => (prev ? { ...prev, retentionCount: Number.parseInt(event.target.value || "1", 10) } : prev))}
+                          value={backupSchedule.retentionCount || ""}
+                          onChange={(event) => {
+                            const val = event.target.value;
+                            const num = val === "" ? 0 : Number.parseInt(val, 10);
+                            setBackupSchedule((prev) => (prev ? { ...prev, retentionCount: Number.isNaN(num) ? 1 : num } : prev));
+                          }}
+                          onBlur={() => {
+                            setBackupSchedule((prev) => (prev && (!prev.retentionCount || prev.retentionCount < 1) ? { ...prev, retentionCount: 1 } : prev));
+                          }}
                           className="rounded-lg border border-[--input] bg-white px-3 py-2 text-sm"
                         />
                       </label>
@@ -1571,7 +1765,9 @@ export default function SettingsPage() {
                               {entry.status}
                             </span>
                             {entry.status === "failed" && entry.errorMessage ? (
-                              <div className="mt-1 text-[11px] text-red-700">{entry.errorMessage}</div>
+                              <div className="mt-1 max-w-[280px] break-words text-[11px] leading-tight text-red-700" title={entry.errorMessage}>
+                                {entry.errorMessage}
+                              </div>
                             ) : null}
                           </td>
                           <td className="px-3 py-2 text-xs text-[--muted-foreground]">{entry.trigger}</td>
@@ -1882,7 +2078,7 @@ export default function SettingsPage() {
             </div>
           ) : null}
 
-          {validationIssues.length > 0 && tab !== "user" && tab !== "license" && tab !== "backup" ? (
+          {validationIssues.length > 0 && tab !== "user" && tab !== "license" && tab !== "backup" && tab !== "device" ? (
             <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               {validationIssues[0]}
             </div>
@@ -1890,7 +2086,7 @@ export default function SettingsPage() {
 
           {actionMessage ? <div className={`mt-4 rounded-lg border px-3 py-2 text-sm ${messageClass}`}>{actionMessage}</div> : null}
 
-          {tab !== "license" && tab !== "backup" ? (
+          {tab !== "license" && tab !== "backup" && tab !== "device" ? (
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-[--border] pt-4">
               <button
                 type="button"
@@ -1920,7 +2116,7 @@ export default function SettingsPage() {
             </div>
           ) : null}
 
-          {auditReport && tab !== "license" && tab !== "backup" ? (
+          {auditReport && tab !== "license" && tab !== "backup" && tab !== "device" ? (
             <div className="mt-4 rounded-lg border border-[--border] bg-[--card] p-3">
               <div className="mb-2">
                 <h3 className="text-sm font-semibold">Security Audit Report</h3>

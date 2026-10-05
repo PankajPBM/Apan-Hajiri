@@ -4,13 +4,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import {
+  AlertTriangle,
   BrushCleaning,
+  Check,
+  ChevronDown,
   Clock3,
+  Copy,
   Cpu,
   ChevronLeft,
   ChevronRight,
   ListChecks,
   MessageCircle,
+  Plus,
   RotateCcw,
   Search,
   Send,
@@ -58,25 +63,37 @@ type DeviceItem = {
 
 // Columns the user can show/hide from the device table via the preferences (gear) menu.
 // (The selection checkbox, Serial Number, Device Name and Action columns are always shown.)
-const DEVICE_COLUMN_PREFS_KEY = "e_attendance_device_columns";
+const DEVICE_COLUMN_PREFS_KEY = "e_attendance_device_columns_v4";
 const DEVICE_TOGGLEABLE_COLUMNS: { key: string; label: string }[] = [
   { key: "area", label: "Area" },
   { key: "department", label: "Department" },
-  { key: "ipAddress", label: "Device IP" },
-  { key: "model", label: "Device Model" },
-  { key: "state", label: "State" },
+  { key: "ipAddress", label: "IP Address" },
+  { key: "model", label: "Model" },
+  { key: "state", label: "Status" },
   { key: "syncMode", label: "Realtime Sync" },
   { key: "lastActivity", label: "Last Activity" },
-  { key: "userQty", label: "User Qty" },
-  { key: "fpQty", label: "FP Qty" },
-  { key: "faceQty", label: "Face Qty" },
-  { key: "palmQty", label: "Palm Qty" },
-  { key: "transactionQty", label: "Transaction Qty" },
-  { key: "cmdQty", label: "Cmd" },
+  { key: "userQty", label: "Users" },
+  { key: "fpQty", label: "Fingerprints" },
+  { key: "faceQty", label: "Faces" },
+  { key: "palmQty", label: "Palms" },
+  { key: "transactionQty", label: "Punch Logs" },
+  { key: "cmdQty", label: "Commands" },
 ];
-const DEFAULT_DEVICE_COLUMN_PREFS: Record<string, boolean> = Object.fromEntries(
-  DEVICE_TOGGLEABLE_COLUMNS.map((column) => [column.key, true]),
-);
+const DEFAULT_DEVICE_COLUMN_PREFS: Record<string, boolean> = {
+  area: true,
+  department: false, // Default unchecked as requested
+  ipAddress: true,
+  model: false, // Default unchecked as requested
+  state: true,
+  syncMode: false, // Default unchecked as requested
+  lastActivity: true,
+  userQty: true,
+  fpQty: true,
+  faceQty: true,
+  palmQty: false, // Default unchecked as requested
+  transactionQty: true,
+  cmdQty: true,
+};
 
 type CommandItem = {
   id: string;
@@ -87,6 +104,123 @@ type CommandItem = {
   replyText?: string;
   status: "pending" | "sent" | "replied";
 };
+
+type ParsedZkReply = {
+  isParsed: boolean;
+  raw: string;
+  summary: { label: string; value: string; highlight?: boolean }[];
+  totalPairs: number;
+};
+
+function normalizeCapacityLimit(base: string, rawVal: string | number, fallback = 0): number {
+  const n = typeof rawVal === "number" ? rawVal : parseInt(String(rawVal).trim(), 10);
+  if (isNaN(n) || n <= 0) return fallback;
+  const b = base.toLowerCase();
+
+  // Attendance Log: ZKTeco shorthand unit is 10,000 when <= 100 (e.g. 20 -> 200,000, 50 -> 500,000)
+  if (b.includes("attlog") || b.includes("transaction")) {
+    return n <= 100 ? n * 10000 : n;
+  }
+
+  // Users and Cards: ZKTeco shorthand unit is 100 when <= 500 (e.g. 100 -> 10,000)
+  if (b.includes("user") || b.includes("card")) {
+    return n <= 500 ? n * 100 : n;
+  }
+
+  // Fingerprints: ZKTeco shorthand unit is 100 when <= 500 (e.g. 30 -> 3,000)
+  if (b.includes("fp") || b.includes("finger")) {
+    return n <= 500 ? n * 100 : n;
+  }
+
+  // Face: ZKTeco shorthand unit is 100 when <= 500 (e.g. 15 -> 1,500)
+  if (b.includes("face")) {
+    return n <= 500 ? n * 100 : n;
+  }
+
+  // Palm / Vein: ZKTeco shorthand unit is 100 when <= 500 (e.g. 30 -> 3,000)
+  if (b.includes("palm") || b.includes("pv")) {
+    return n <= 500 ? n * 100 : n;
+  }
+
+  // Photo: ZKTeco shorthand unit is 100 when <= 500 (e.g. 75 -> 7,500)
+  if (b.includes("photo")) {
+    return n <= 500 ? n * 100 : n;
+  }
+
+  return n;
+}
+
+function parseZkReply(raw: string): ParsedZkReply {
+  if (!raw || typeof raw !== "string") {
+    return { isParsed: false, raw: raw || "", summary: [], totalPairs: 0 };
+  }
+
+  // Split tokens by & or space or newline
+  const tokens = raw.replace(/&/g, " ").split(/\s+/).filter(Boolean);
+  const map: Record<string, string> = {};
+
+  for (const token of tokens) {
+    const eqIdx = token.indexOf("=");
+    if (eqIdx > 0) {
+      const key = token.slice(0, eqIdx).replace(/^~/, "");
+      const val = token.slice(eqIdx + 1);
+      if (key && val !== undefined) {
+        map[key] = val;
+      }
+    }
+  }
+
+  const keys = Object.keys(map);
+  if (keys.length < 2) {
+    return { isParsed: false, raw, summary: [], totalPairs: keys.length };
+  }
+
+  const summary: { label: string; value: string; highlight?: boolean }[] = [];
+
+  if (map["Return"] !== undefined) {
+    const isSuccess = map["Return"] === "0";
+    summary.push({
+      label: "Result",
+      value: isSuccess ? "Success (0)" : `Code ${map["Return"]}`,
+      highlight: isSuccess,
+    });
+  }
+  if (map["CMD"]) summary.push({ label: "Command", value: map["CMD"] });
+  if (map["DeviceName"]) summary.push({ label: "Device", value: map["DeviceName"] });
+  if (map["FWVersion"]) summary.push({ label: "Firmware", value: map["FWVersion"] });
+  if (map["IPAddress"]) summary.push({ label: "IP", value: map["IPAddress"] });
+  if (map["MAC"]) summary.push({ label: "MAC", value: map["MAC"] });
+  if (map["UserCount"] !== undefined) {
+    const maxVal = map["MaxUserCount"] ? normalizeCapacityLimit("user", map["MaxUserCount"], 10000) : null;
+    const max = maxVal ? ` / ${maxVal.toLocaleString()}` : "";
+    summary.push({ label: "Users", value: `${map["UserCount"]}${max}` });
+  }
+  if (map["TransactionCount"] !== undefined) {
+    const maxVal = map["MaxAttLogCount"] ? normalizeCapacityLimit("attlog", map["MaxAttLogCount"], 200000) : null;
+    const max = maxVal ? ` / ${maxVal.toLocaleString()}` : "";
+    summary.push({ label: "Logs", value: `${map["TransactionCount"]}${max}` });
+  }
+  if (map["FPCount"] !== undefined || map["FingerCount"] !== undefined) {
+    const used = map["FPCount"] ?? map["FingerCount"];
+    const maxRaw = map["MaxFingerCount"] ?? map["MaxFPCount"];
+    const maxVal = maxRaw ? normalizeCapacityLimit("fp", maxRaw, 3000) : null;
+    const max = maxVal ? ` / ${maxVal.toLocaleString()}` : "";
+    summary.push({ label: "Fingerprints", value: `${used}${max}` });
+  }
+  if (map["FaceCount"] !== undefined) {
+    const maxVal = map["MaxFaceCount"] ? normalizeCapacityLimit("face", map["MaxFaceCount"], 1500) : null;
+    const max = maxVal ? ` / ${maxVal.toLocaleString()}` : "";
+    summary.push({ label: "Faces", value: `${map["FaceCount"]}${max}` });
+  }
+  if (map["PalmCount"] !== undefined) {
+    const maxVal = map["MaxPalmCount"] ? normalizeCapacityLimit("palm", map["MaxPalmCount"], 3000) : null;
+    const max = maxVal ? ` / ${maxVal.toLocaleString()}` : "";
+    summary.push({ label: "Palms", value: `${map["PalmCount"]}${max}` });
+  }
+  if (map["Platform"]) summary.push({ label: "Platform", value: map["Platform"] });
+
+  return { isParsed: true, raw, summary, totalPairs: keys.length };
+}
 
 type DiscoveredDevice = {
   serialNumber: string;
@@ -405,6 +539,15 @@ export default function DevicesPage() {
   }
 
   const [devices, setDevices] = useState<DeviceItem[]>([]);
+  const deviceKpis = useMemo(() => {
+    const total = devices.length;
+    const online = devices.filter((d) => d.isOnline).length;
+    const offline = total - online;
+    const totalUsers = devices.reduce((sum, d) => sum + (d.userQty || 0), 0);
+    const totalLogs = devices.reduce((sum, d) => sum + (d.transactionQty || 0), 0);
+    const totalCommands = devices.reduce((sum, d) => sum + (d.cmdQty || 0), 0);
+    return { total, online, offline, totalUsers, totalLogs, totalCommands };
+  }, [devices]);
   const [sortField, setSortField] = useState<string>("serialNumber");
   const [sortAsc, setSortAsc] = useState<boolean>(true);
 
@@ -445,10 +588,43 @@ export default function DevicesPage() {
   // reboot/sync/delete so confirmations look and behave consistently with the rest of the app.
   const [confirmState, setConfirmState] = useState<{ message: string; onConfirm: () => void; danger?: boolean } | null>(null);
   const askConfirm = (message: string, onConfirm: () => void, danger = false) => setConfirmState({ message, onConfirm, danger });
-  const [dataCleanOpen, setDataCleanOpen] = useState(false);
+  type DataCleanMode = "attendance" | "captured-image" | "all";
+  type DataCleanWarningState = {
+    mode: DataCleanMode;
+    targets: string[];
+    deviceNames: string[];
+  };
+  const [dataCleanWarning, setDataCleanWarning] = useState<DataCleanWarningState | null>(null);
+  const [dataCleanSubmitting, setDataCleanSubmitting] = useState(false);
+  const [expandedCommandIds, setExpandedCommandIds] = useState<Record<string, boolean>>({});
+  const [copiedCommandId, setCopiedCommandId] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await loadAll();
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 600);
+    }
+  };
+
+  const toggleCommandExpand = (id: string) => {
+    setExpandedCommandIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const copyToClipboard = async (id: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedCommandId(id);
+      setTimeout(() => setCopiedCommandId(null), 2000);
+    } catch {
+      // fallback
+    }
+  };
   const [clearPendingOpen, setClearPendingOpen] = useState(false);
   const [commandQueueOpen, setCommandQueueOpen] = useState(false);
-  const [dataCleanMode, setDataCleanMode] = useState<"attendance" | "captured-image" | "all">("attendance");
   const [editOpen, setEditOpen] = useState(false);
   const [firmwareUpgradeOpen, setFirmwareUpgradeOpen] = useState(false);
   const [firmwareFile, setFirmwareFile] = useState<File | null>(null);
@@ -1030,33 +1206,10 @@ export default function DevicesPage() {
     }
   };
 
-  const runDataClean = async (mode: "attendance" | "captured-image" | "all") => {
-    if (!selectedSerial) {
-      setError("Select a device first.");
-      return;
-    }
-
-    const mapping = {
-      attendance: { action: "clear-log", label: "Clear Attendance Data" },
-      "captured-image": { action: "clear-photo", label: "Clear Captured Image" },
-      all: { action: "clear-data", label: "Clear All Data" },
-    } as const;
-
-    const pick = mapping[mode];
-    // No extra confirm here — the Data Clean modal (Cancel/Clean buttons) is itself the
-    // confirmation step; a second native popup on top of it was a redundant double-confirmation.
-    await queuePreset(selectedSerial, pick.action);
-  };
-
   const syncUsersToDevice = async (serial: string) => {
     await requestJson(`/api/device/sync/${encodeURIComponent(serial)}`, {
       method: "POST",
     });
-  };
-
-  const executeDataClean = async () => {
-    await runDataClean(dataCleanMode);
-    setDataCleanOpen(false);
   };
 
   const executeClearPending = async () => {
@@ -1228,6 +1381,52 @@ export default function DevicesPage() {
     return selectedSerial ? [selectedSerial] : [];
   };
 
+  const openDataCleanWarning = (mode: DataCleanMode) => {
+    const targets = getControlTargets();
+    if (targets.length === 0) {
+      setError("Please select at least one device first.");
+      return;
+    }
+    const deviceNames = targets.map((serial) => {
+      const dev = devices.find((d) => d.serialNumber === serial);
+      return dev ? `${dev.name} (${serial})` : serial;
+    });
+    setDataCleanWarning({ mode, targets, deviceNames });
+  };
+
+  const runDataClean = async (mode: DataCleanMode) => {
+    openDataCleanWarning(mode);
+  };
+
+  const executeConfirmedDataClean = async () => {
+    if (!dataCleanWarning) return;
+    const { mode, targets } = dataCleanWarning;
+    const mapping = {
+      attendance: { action: "clear-log", label: "Attendance Logs" },
+      "captured-image": { action: "clear-photo", label: "Captured Images" },
+      all: { action: "clear-data", label: "All Device Data" },
+    } as const;
+    const { action, label } = mapping[mode];
+
+    setDataCleanSubmitting(true);
+    setError(null);
+    try {
+      for (const serial of targets) {
+        await queuePreset(serial, action);
+      }
+      setDataCleanWarning(null);
+      await loadManaged();
+      if (selectedSerial && targets.includes(selectedSerial)) {
+        await loadCommands();
+      }
+      setSuccessMessage(`Data Clean command (${label}) queued successfully for ${targets.length} device(s).`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to execute data clean command.");
+    } finally {
+      setDataCleanSubmitting(false);
+    }
+  };
+
   const openFirmwareUpgrade = () => {
     const targets = getControlTargets();
     setFirmwareTargetSerials(targets);
@@ -1277,7 +1476,6 @@ export default function DevicesPage() {
   };
 
   const getDeviceTimeZoneValue = () => "345";
-
 
   const parseCommandFields = (replyText: string) => {
     const pairs: Array<{ key: string; value: string }> = [];
@@ -1415,7 +1613,8 @@ export default function DevicesPage() {
 
       if (usedVal !== undefined && totalVal !== undefined) {
         const label = getLabel(baseKey);
-        finalPairs.push({ key: `${label} Capacity`, value: `${usedVal} / ${totalVal}` });
+        const normTotal = normalizeCapacityLimit(baseKey, totalVal);
+        finalPairs.push({ key: `${label} Capacity`, value: `${usedVal} / ${normTotal.toLocaleString()}` });
         processedKeys.add(key);
         // Find and mark the counterpart as processed
         const usedKey = (baseKey + "count").toLowerCase();
@@ -1430,6 +1629,16 @@ export default function DevicesPage() {
           }
         });
         continue;
+      }
+
+      const lowerKey = p.key.toLowerCase().replace(/^~/, "");
+      if (lowerKey.startsWith("max")) {
+        const normVal = normalizeCapacityLimit(lowerKey.slice(3), p.value);
+        if (normVal > 0) {
+          finalPairs.push({ key: p.key, value: normVal.toLocaleString() });
+          processedKeys.add(key);
+          continue;
+        }
       }
 
       finalPairs.push(p);
@@ -1540,11 +1749,11 @@ export default function DevicesPage() {
       }
     } else if (action === "device-capacity") {
       const targetDevice = devices.find((d) => d.serialNumber === serial);
-      const initialUserMax = targetDevice?.maxUserQty ?? 10000;
-      const initialFpMax = targetDevice?.maxFpQty ?? 10000;
-      const initialFaceMax = targetDevice?.maxFaceQty ?? 6000;
-      const initialPalmMax = targetDevice?.maxPalmQty ?? 3000;
-      const initialAttMax = targetDevice?.maxTransactionQty ?? 200000;
+      const initialUserMax = targetDevice?.maxUserQty ? normalizeCapacityLimit("user", targetDevice.maxUserQty, 10000) : 10000;
+      const initialFpMax = targetDevice?.maxFpQty ? normalizeCapacityLimit("fp", targetDevice.maxFpQty, 3000) : 3000;
+      const initialFaceMax = targetDevice?.maxFaceQty ? normalizeCapacityLimit("face", targetDevice.maxFaceQty, 1500) : 1500;
+      const initialPalmMax = targetDevice?.maxPalmQty ? normalizeCapacityLimit("palm", targetDevice.maxPalmQty, 3000) : 3000;
+      const initialAttMax = targetDevice?.maxTransactionQty ? normalizeCapacityLimit("attlog", targetDevice.maxTransactionQty, 200000) : 200000;
 
       setCapacityModalData({
         open: true,
@@ -1552,12 +1761,12 @@ export default function DevicesPage() {
         deviceName: targetDevice?.name ?? serial,
         model: targetDevice?.model ?? "",
         loading: true,
-        user: { current: targetDevice?.userQty ?? 0, max: 10000 },
-        fingerprint: { current: targetDevice?.fpQty ?? 0, max: 6000 },
-        face: { current: targetDevice?.faceQty ?? 0, max: 6000 },
-        palm: { current: targetDevice?.palmQty ?? 0, max: 3000 },
-        attLog: { current: targetDevice?.transactionQty ?? 0, max: 200000 },
-        card: { current: 0, max: 10000 },
+        user: { current: targetDevice?.userQty ?? 0, max: initialUserMax },
+        fingerprint: { current: targetDevice?.fpQty ?? 0, max: initialFpMax },
+        face: { current: targetDevice?.faceQty ?? 0, max: initialFaceMax },
+        palm: { current: targetDevice?.palmQty ?? 0, max: initialPalmMax },
+        attLog: { current: targetDevice?.transactionQty ?? 0, max: initialAttMax },
+        card: { current: 0, max: initialUserMax },
         attPhoto: { current: 0, max: 7500 },
       });
 
@@ -1588,6 +1797,22 @@ export default function DevicesPage() {
           const currentCard = parseVal(findField("UserCardCount", "~UserCardCount", "CardCount"), 0);
           const currentPhoto = parseVal(findField("ATTPhotoCount", "~ATTPhotoCount", "AttPhotoCount"), 0);
 
+          const maxUserRaw = findField("~MaxUserCount", "MaxUserCount", "~MaxUser", "MaxUser");
+          const maxFpRaw = findField("~MaxFingerCount", "MaxFingerCount", "~MaxFpCount", "MaxFpCount");
+          const maxFaceRaw = findField("~MaxFaceCount", "MaxFaceCount");
+          const maxPalmRaw = findField("~MaxPalmCount", "MaxPalmCount");
+          const maxAttRaw = findField("~MaxAttLogCount", "MaxAttLogCount", "~MaxTransactionCount", "MaxTransactionCount");
+          const maxCardRaw = findField("~MaxCardCount", "MaxCardCount", "UserCardCount");
+          const maxPhotoRaw = findField("~MaxAttPhotoCount", "MaxAttPhotoCount");
+
+          const resolvedUserMax = maxUserRaw ? normalizeCapacityLimit("user", maxUserRaw, initialUserMax) : initialUserMax;
+          const resolvedFpMax = maxFpRaw ? normalizeCapacityLimit("fp", maxFpRaw, initialFpMax) : initialFpMax;
+          const resolvedFaceMax = maxFaceRaw ? normalizeCapacityLimit("face", maxFaceRaw, initialFaceMax) : initialFaceMax;
+          const resolvedPalmMax = maxPalmRaw ? normalizeCapacityLimit("palm", maxPalmRaw, initialPalmMax) : initialPalmMax;
+          const resolvedAttMax = maxAttRaw ? normalizeCapacityLimit("attlog", maxAttRaw, initialAttMax) : initialAttMax;
+          const resolvedCardMax = maxCardRaw ? normalizeCapacityLimit("card", maxCardRaw, resolvedUserMax) : resolvedUserMax;
+          const resolvedPhotoMax = maxPhotoRaw ? normalizeCapacityLimit("photo", maxPhotoRaw, 7500) : 7500;
+
           setDevices((prev) =>
             prev.map((d) =>
               d.serialNumber === serial
@@ -1609,13 +1834,13 @@ export default function DevicesPage() {
             deviceName: targetDevice?.name ?? serial,
             model: targetDevice?.model ?? "",
             loading: false,
-            user: { current: currentUser, max: 10000 },
-            fingerprint: { current: currentFp, max: 6000 },
-            face: { current: currentFace, max: 6000 },
-            palm: { current: currentPalm, max: 3000 },
-            card: { current: currentCard, max: 10000 },
-            attLog: { current: currentAtt, max: 200000 },
-            attPhoto: { current: currentPhoto, max: 7500 },
+            user: { current: currentUser, max: resolvedUserMax },
+            fingerprint: { current: currentFp, max: resolvedFpMax },
+            face: { current: currentFace, max: resolvedFaceMax },
+            palm: { current: currentPalm, max: resolvedPalmMax },
+            card: { current: currentCard, max: resolvedCardMax },
+            attLog: { current: currentAtt, max: resolvedAttMax },
+            attPhoto: { current: currentPhoto, max: resolvedPhotoMax },
             isOfflineFetched: false,
           });
         } else {
@@ -1841,17 +2066,35 @@ export default function DevicesPage() {
   };
 
   return (
-    <div className="space-y-4 bg-[#ecf3fa] px-2 pb-2 pt-0 sm:px-4 sm:pb-4 sm:pt-1 lg:px-6 lg:pb-6 lg:pt-1">
-      <section className="w-full rounded-[28px] border border-[#d8e6f4] bg-white p-4 shadow-[0_24px_40px_-22px_rgba(20,55,80,0.6)] sm:p-5 lg:p-5">
-        <div className="tab-header mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="inline-flex items-center gap-2 text-2xl font-semibold text-[#103856]">
-            <Cpu className="h-6 w-6 text-[#2f70a8]" />
-            Device Manager
-          </h1>
+    <div className="space-y-4">
+      <section className="rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 shadow-2xs">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-5 mb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                Device Network & Hardware
+              </h1>
+              <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-100">
+                ZKTeco Push Hub
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Real-time monitoring, command dispatching, firmware upgrades, and data synchronization for biometric terminals.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void openAddFlow()}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 shadow-xs transition"
+          >
+            <Plus className="h-4 w-4" />
+            Add Device
+          </button>
         </div>
 
         {error ? (
-          <div className="mb-4 rounded-xl border border-[#f2c6c6] bg-[#fff0f0] px-3 py-2 text-sm text-[#8d2f2f]">
+          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700">
             <div>{error}</div>
             {deviceLimitNotice ? (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
@@ -1864,239 +2107,336 @@ export default function DevicesPage() {
                   href={UPGRADE_WHATSAPP_URL}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 rounded-full border border-[#ebb4b4] bg-white px-3 py-1 font-semibold text-[#8d2f2f] hover:bg-[#fff7f7]"
+                  className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50"
                 >
-                  <MessageCircle className="h-3.5 w-3.5 text-[#0b8f3a]" />
+                  <MessageCircle className="h-3.5 w-3.5 text-emerald-600" />
                   Upgrade on WhatsApp
                 </a>
               </div>
             ) : null}
           </div>
         ) : null}
+        {successMessage ? (
+          <div className="mb-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-medium text-emerald-800">
+            <span>{successMessage}</span>
+            <button
+              type="button"
+              onClick={() => setSuccessMessage(null)}
+              className="rounded-md p-1 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-900 transition"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : null}
 
         {tab === "managed" ? (
           <>
-            <div className="tab-toolbar mb-4 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex w-full min-w-0 items-center rounded-full border border-[#bfd9f2] bg-white px-4 py-1 shadow-[0_2px_8px_rgba(0,0,0,0.02)] sm:w-auto sm:min-w-[280px]">
-                <Search className="h-4 w-4 text-[#7c9ec2]" />
-                <input
-                  value={searchInput}
-                  onChange={(event) => setSearchInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      applySearch();
-                    }
-                  }}
-                  placeholder="Search serial/name/ip..."
-                  className="min-w-0 flex-1 border-0 bg-transparent px-2 py-2 text-sm outline-none sm:w-[220px]"
-                />
-                <button
-                  type="button"
-                  onClick={applySearch}
-                  className="ml-1 rounded-full border border-[#4084c0] bg-[#1b5585] px-4 py-1.5 text-xs font-medium text-white"
-                >
-                  Search
-                </button>
+            {/* Executive Device KPI Cards */}
+            <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-xl border border-sky-200 bg-[linear-gradient(135deg,#f8fcff,#edf6ff)] p-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-sky-800">Total Devices</span>
+                  <Cpu className="h-4 w-4 text-sky-600" />
+                </div>
+                <p className="mt-1 text-2xl font-bold text-sky-950">{deviceKpis.total}</p>
+                <p className="text-[11px] text-sky-700/80">Configured in system</p>
               </div>
+              <div className="rounded-xl border border-emerald-200 bg-[linear-gradient(135deg,#f4fdf8,#e7f9ef)] p-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800">Online Status</span>
+                  <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                </div>
+                <div className="mt-1 flex items-baseline gap-1.5">
+                  <p className="text-2xl font-bold text-emerald-950">{deviceKpis.online}</p>
+                  <span className="text-xs font-semibold text-emerald-700">
+                    ({deviceKpis.total > 0 ? Math.round((deviceKpis.online / deviceKpis.total) * 100) : 0}%)
+                  </span>
+                </div>
+                <p className="text-[11px] text-emerald-700/80">Connected & responsive</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">Offline</span>
+                  <WifiOff className="h-4 w-4 text-slate-400" />
+                </div>
+                <p className={`mt-1 text-2xl font-bold ${deviceKpis.offline > 0 ? "text-rose-600" : "text-slate-800"}`}>
+                  {deviceKpis.offline}
+                </p>
+                <p className="text-[11px] text-slate-500">Unreachable devices</p>
+              </div>
+              <div className="rounded-xl border border-indigo-200 bg-[linear-gradient(135deg,#faf8ff,#f1edff)] p-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-800">Biometrics & Logs</span>
+                  <ListChecks className="h-4 w-4 text-indigo-600" />
+                </div>
+                <p className="mt-1 text-2xl font-bold text-indigo-950">{deviceKpis.totalUsers} users</p>
+                <p className="text-[11px] text-indigo-700/80">{deviceKpis.totalLogs.toLocaleString()} punch logs stored</p>
+              </div>
+            </div>
 
-              <div className="tab-toolbar-controls w-full lg:w-auto">
-                <button type="button" onClick={() => void openAddFlow()} className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-4 py-2 text-xs font-medium text-[#1a4a73] hover:bg-[#e1efff]">
-                  Add
-                </button>
-                <button
-                  type="button"
-                  disabled={!activeDevice}
-                  onClick={openEditForSelected}
-                  className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-4 py-2 text-xs font-medium text-[#1a4a73] hover:bg-[#e1efff] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Wrench className="h-3.5 w-3.5 text-[#2b6392]" />
-                  <span>Edit Device</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!hasTargets}
-                  onClick={() => void executeControlAction("sync-data")}
-                  className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-4 py-2 text-xs font-medium text-[#1a4a73] hover:bg-[#e1efff] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Send className="h-3.5 w-3.5 text-[#2b6392]" />
-                  <span>Sync Data</span>
-                </button>
-                <div className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-2 py-1">
-                  <select
-                    value={controlAction}
-                    onChange={(event) => {
-                      const next = event.target.value as DeviceControlAction;
-                      setControlAction(next);
-                      if (next && next !== "upgrade-firmware") {
-                        void executeControlAction(next);
-                      } else if (next === "upgrade-firmware") {
-                        setControlAction("");
-                        openFirmwareUpgrade();
-                      }
-                    }}
-                    disabled={!hasTargets}
-                    className="rounded-full border border-[#bbd6f5] bg-[#f4f9ff] px-3 py-1.5 text-xs font-medium text-[#12426b] disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <option value="">Control</option>
-                    <option value="read-info">Read Information</option>
-                    <option value="device-capacity">Device Capacity</option>
-                    <option value="reboot-device">Reboot Device</option>
-                    <option value="sync-time">Sync Time</option>
-                    <option value="sync-data">Sync Data</option>
-                    <option value="upgrade-firmware">Upgrade Firmware</option>
-                  </select>
-                </div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-2 py-1">
-                  <select
-                    value={fetchAction}
-                    onChange={(event) => {
-                      const next = event.target.value as DeviceFetchAction;
-                      setFetchAction(next);
-                      if (next) {
-                        void executeControlAction(next);
-                        setFetchAction("");
-                      }
-                    }}
-                    disabled={!hasTargets}
-                    className="rounded-full border border-[#bbd6f5] bg-[#f4f9ff] px-3 py-1.5 text-xs font-medium text-[#12426b] disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <option value="">Fetch Data</option>
-                    <option value="fetch-all-data">Fetch All Data</option>
-                    <option value="fetch-all-log-data">Fetch All Log Data</option>
-                    <option value="fetch-users">Fetch Users</option>
-                  </select>
-                </div>
-                <button
-                  type="button"
-                  disabled={!activeDevice}
-                  onClick={() => setDeleteOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-4 py-2 text-xs font-medium text-[#1a4a73] hover:bg-[#e1efff] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Trash2 className="h-3.5 w-3.5 text-[#2b6392]" />
-                  <span>Delete</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDataCleanOpen(true)}
-                  disabled={!activeDevice}
-                  className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-4 py-2 text-xs font-medium text-[#1a4a73] hover:bg-[#e1efff] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <BrushCleaning className="h-3.5 w-3.5 text-[#2b6392]" />
-                  <span>Data Clean</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!hasTargets}
-                  onClick={() => setClearPendingOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-4 py-2 text-xs font-medium text-[#1a4a73] hover:bg-[#e1efff] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Clock3 className="h-3.5 w-3.5 text-[#2b6392]" />
-                  <span>Clear Pending Command</span>
-                </button>
-                <button type="button" onClick={() => void openCommandQueue()} className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-4 py-2 text-xs font-medium text-[#1a4a73] hover:bg-[#e1efff]">
-                  <ListChecks className="h-3.5 w-3.5 text-[#2b6392]" />
-                  <span>Command Queue</span>
-                </button>
-                <button type="button" onClick={() => void loadAll()} className="inline-flex items-center gap-2 rounded-full border border-[#bcd3f0] bg-white px-4 py-2 text-xs font-medium text-[#1a4a73] hover:bg-[#e1efff]">
-                  <RotateCcw className="h-3.5 w-3.5 text-[#2b6392]" />
-                  <span>Refresh</span>
-                </button>
-                <div className="relative">
-                  <button
-                    ref={colMenuButtonRef}
-                    type="button"
-                    onClick={() => {
-                      setColMenuOpen((prev) => {
-                        const next = !prev;
-                        if (next) {
-                          const rect = colMenuButtonRef.current?.getBoundingClientRect();
-                          if (rect) {
-                            setColMenuPos({ right: window.innerWidth - rect.right, top: rect.bottom + 6 });
-                          }
-                        } else {
-                          setColMenuPos(null);
+            {/* Unified Smart Control Toolbar */}
+            <div className="mb-4 rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-2xs space-y-3">
+              {/* Row 1: Search & Filters */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
+                  <div className="relative flex-1 max-w-sm">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <input
+                      value={searchInput}
+                      onChange={(event) => setSearchInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          applySearch();
                         }
-                        return next;
-                      });
-                    }}
-                    title="Column preferences"
-                    aria-label="Column preferences"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#bcd3f0] bg-white text-[#1a4a73] transition-colors hover:border-[#8eb9e3] hover:bg-[#e1efff]"
+                      }}
+                      placeholder="Search serial, name, IP..."
+                      style={{ paddingLeft: "2.25rem", paddingRight: "4.5rem" }}
+                      className="w-full rounded-lg border border-slate-300 bg-white py-1.5 text-xs text-slate-900 outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={applySearch}
+                      className="absolute right-1 top-1 bottom-1 flex items-center rounded-md bg-blue-600 px-3 text-[11px] font-semibold text-white hover:bg-blue-700 transition"
+                    >
+                      Search
+                    </button>
+                  </div>
+
+                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50/80 px-2.5 py-1 text-xs">
+                    <span className="font-semibold text-slate-600">Status:</span>
+                    <select
+                      value={status}
+                      onChange={(event) => setStatus(event.target.value as "all" | "online" | "offline")}
+                      className="bg-transparent font-medium text-slate-800 outline-none cursor-pointer"
+                    >
+                      <option value="all">All ({devices.length})</option>
+                      <option value="online">Online ({deviceKpis.online})</option>
+                      <option value="offline">Offline ({deviceKpis.offline})</option>
+                    </select>
+                  </div>
+
+                  {(searchInput || status !== "all") && (
+                    <button
+                      type="button"
+                      onClick={resetManagedFilters}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 transition"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Reset filters
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <span className="rounded-md bg-slate-100 px-2 py-1 font-medium text-slate-700">
+                    {filteredDevices.length} device{filteredDevices.length !== 1 ? "s" : ""}
+                  </span>
+                  {selectedDeviceSerials.length > 0 && (
+                    <span className="rounded-md bg-blue-50 px-2 py-1 font-semibold text-blue-700 border border-blue-200">
+                      {selectedDeviceSerials.length} selected
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Row 2: Action Controls */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={!activeDevice}
+                    onClick={openEditForSelected}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 disabled:opacity-40 disabled:hover:bg-white disabled:hover:border-slate-300 transition"
                   >
-                    <Settings2 className="h-4 w-4" />
+                    <Wrench className="h-3.5 w-3.5 text-slate-500" />
+                    <span>Edit</span>
                   </button>
-                  {colMenuOpen && colMenuPos && typeof document !== "undefined"
-                    ? createPortal(
-                        <>
-                          <div
-                            className="fixed inset-0 z-40"
-                            onClick={() => {
-                              setColMenuOpen(false);
-                              setColMenuPos(null);
-                            }}
-                          />
-                          <div
-                            className="w-56 rounded-xl border border-[#d2e3f5] bg-white p-2 shadow-[0_20px_30px_-12px_rgba(10,40,70,0.45)]"
-                            style={{ position: "fixed", right: colMenuPos.right, top: colMenuPos.top, zIndex: 9999 }}
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <div className="flex items-center justify-between px-2 py-1">
-                              <span className="text-xs font-semibold uppercase text-[#5a7892]">Columns</span>
-                              <button
-                                type="button"
-                                onClick={resetColPrefs}
-                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-[#1a4a73] hover:bg-[#eef6ff]"
-                              >
-                                <RotateCcw className="h-3 w-3" />
-                                Reset
-                              </button>
-                            </div>
-                            <div className="max-h-64 overflow-auto">
-                              {DEVICE_TOGGLEABLE_COLUMNS.map((column) => (
-                                <label
-                                  key={column.key}
-                                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[#1e4162] hover:bg-[#f6fbff]"
+                  <button
+                    type="button"
+                    disabled={!hasTargets}
+                    onClick={() => void executeControlAction("sync-data")}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-40 disabled:hover:bg-emerald-50 transition"
+                  >
+                    <Send className="h-3.5 w-3.5 text-emerald-600" />
+                    <span>Sync Data</span>
+                  </button>
+                  <div className="inline-flex items-center">
+                    <select
+                      value={controlAction}
+                      onChange={(event) => {
+                        const next = event.target.value as DeviceControlAction;
+                        setControlAction(next);
+                        if (next && next !== "upgrade-firmware") {
+                          void executeControlAction(next);
+                        } else if (next === "upgrade-firmware") {
+                          setControlAction("");
+                          openFirmwareUpgrade();
+                        }
+                      }}
+                      disabled={!hasTargets}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none hover:border-slate-400 disabled:opacity-40 transition"
+                    >
+                      <option value="">Device Controls</option>
+                      <option value="read-info">Read Information</option>
+                      <option value="device-capacity">Device Capacity</option>
+                      <option value="reboot-device">Reboot Device</option>
+                      <option value="sync-time">Sync Time</option>
+                      <option value="sync-data">Sync Data</option>
+                      <option value="upgrade-firmware">Upgrade Firmware</option>
+                    </select>
+                  </div>
+                  <div className="inline-flex items-center">
+                    <select
+                      value={fetchAction}
+                      onChange={(event) => {
+                        const next = event.target.value as DeviceFetchAction;
+                        setFetchAction(next);
+                        if (next) {
+                          void executeControlAction(next);
+                          setFetchAction("");
+                        }
+                      }}
+                      disabled={!hasTargets}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none hover:border-slate-400 disabled:opacity-40 transition"
+                    >
+                      <option value="">Fetch Options</option>
+                      <option value="fetch-all-data">Fetch All Data</option>
+                      <option value="fetch-all-log-data">Fetch All Log Data</option>
+                      <option value="fetch-users">Fetch Users</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void openCommandQueue()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                  >
+                    <ListChecks className="h-3.5 w-3.5 text-blue-600" />
+                    <span>Command Queue</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!hasTargets}
+                    onClick={() => setClearPendingOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
+                  >
+                    <Clock3 className="h-3.5 w-3.5 text-amber-600" />
+                    <span>Clear Pending</span>
+                  </button>
+                  <div className="relative">
+                    <select
+                      value=""
+                      onChange={(event) => {
+                        const nextMode = event.target.value as DataCleanMode | "";
+                        if (!nextMode) return;
+                        openDataCleanWarning(nextMode);
+                      }}
+                      disabled={!hasTargets}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none hover:border-slate-400 disabled:opacity-40 transition cursor-pointer"
+                    >
+                      <option value="">Data Clean</option>
+                      <option value="attendance">Clear Attendance Data</option>
+                      <option value="captured-image">Clear Captured Images</option>
+                      <option value="all">Clear All Data</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!activeDevice}
+                    onClick={() => setDeleteOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-40 transition"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Delete</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleManualRefresh()}
+                    disabled={isRefreshing}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-75 transition cursor-pointer"
+                    title="Refresh device list"
+                  >
+                    <RotateCcw className={`h-3.5 w-3.5 text-slate-500 ${isRefreshing ? "animate-spin text-blue-600" : ""}`} />
+                    <span>{isRefreshing ? "Refreshing..." : "Refresh"}</span>
+                  </button>
+                  <div className="relative">
+                    <button
+                      ref={colMenuButtonRef}
+                      type="button"
+                      onClick={() => {
+                        setColMenuOpen((prev) => {
+                          const next = !prev;
+                          if (next) {
+                            const rect = colMenuButtonRef.current?.getBoundingClientRect();
+                            if (rect) {
+                              setColMenuPos({ right: window.innerWidth - rect.right, top: rect.bottom + 6 });
+                            }
+                          } else {
+                            setColMenuPos(null);
+                          }
+                          return next;
+                        });
+                      }}
+                      title="Column preferences"
+                      aria-label="Column preferences"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 transition"
+                    >
+                      <Settings2 className="h-4 w-4" />
+                    </button>
+                    {colMenuOpen && colMenuPos && typeof document !== "undefined"
+                      ? createPortal(
+                          <>
+                            <div
+                              className="fixed inset-0 z-40"
+                              onClick={() => {
+                                setColMenuOpen(false);
+                                setColMenuPos(null);
+                              }}
+                            />
+                            <div
+                              className="w-56 rounded-xl border border-[#d2e3f5] bg-white p-2 shadow-[0_20px_30px_-12px_rgba(10,40,70,0.45)]"
+                              style={{ position: "fixed", right: colMenuPos.right, top: colMenuPos.top, zIndex: 9999 }}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <div className="flex items-center justify-between px-2 py-1">
+                                <span className="text-xs font-semibold uppercase text-[#5a7892]">Columns</span>
+                                <button
+                                  type="button"
+                                  onClick={resetColPrefs}
+                                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-[#1a4a73] hover:bg-[#eef6ff]"
                                 >
-                                  <input
-                                    type="checkbox"
-                                    checked={Boolean(colPrefs[column.key])}
-                                    onChange={(event) => updateColPref(column.key, event.target.checked)}
-                                  />
-                                  {column.label}
-                                </label>
-                              ))}
+                                  <RotateCcw className="h-3 w-3" />
+                                  Reset
+                                </button>
+                              </div>
+                              <div className="max-h-64 overflow-auto">
+                                {DEVICE_TOGGLEABLE_COLUMNS.map((column) => (
+                                  <label
+                                    key={column.key}
+                                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[#1e4162] hover:bg-[#f6fbff]"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(colPrefs[column.key])}
+                                      onChange={(event) => updateColPref(column.key, event.target.checked)}
+                                    />
+                                    {column.label}
+                                  </label>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        </>,
-                        document.body,
-                      )
-                    : null}
+                          </>,
+                          document.body,
+                        )
+                      : null}
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="tab-toolbar-controls mb-4 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-[#3d6385]">State:</span>
-                <select
-                  value={status}
-                  onChange={(event) => setStatus(event.target.value as "all" | "online" | "offline")}
-                  className="rounded-full border border-[#bbd6f5] bg-[#eaf3fd] px-4 py-1.5 text-xs font-medium text-[#12426b]"
-                >
-                  <option value="all">All</option>
-                  <option value="online">Online</option>
-                  <option value="offline">Offline</option>
-                </select>
-              </div>
-              <button type="button" onClick={resetManagedFilters} className="inline-flex items-center gap-1 text-xs text-[#3572a5] underline decoration-dashed underline-offset-2">
-                <RotateCcw className="h-3.5 w-3.5" />
-                reset
-              </button>
-            </div>
-
-
-
-            <div className="overflow-x-auto rounded-[22px] border border-[#e0ecf7] bg-white" onContextMenu={(event) => event.preventDefault()}>
+            <div className="overflow-x-auto rounded-[22px] border border-[#e0ecf7] bg-white shadow-2xs" onContextMenu={(event) => event.preventDefault()}>
               <table className="min-w-[1080px] border-collapse text-left text-xs">
                 <thead>
                   <tr className="border-b border-[#cfe1f5] bg-[#f2f8ff] text-[11.5px] font-semibold uppercase tracking-wider text-[#25567f]">
@@ -2167,7 +2507,7 @@ export default function DevicesPage() {
                         onClick={() => updateSort("ipAddress")}
                         className="whitespace-nowrap font-semibold tracking-wide hover:text-[#0f2f4d] inline-flex items-center gap-1 transition-colors"
                       >
-                        Device IP
+                        IP Address
                         {sortField === "ipAddress" && (
                           <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                         )}
@@ -2181,7 +2521,7 @@ export default function DevicesPage() {
                         onClick={() => updateSort("model")}
                         className="whitespace-nowrap font-semibold tracking-wide hover:text-[#0f2f4d] inline-flex items-center gap-1 transition-colors"
                       >
-                        Device Model
+                        Model
                         {sortField === "model" && (
                           <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                         )}
@@ -2195,7 +2535,7 @@ export default function DevicesPage() {
                         onClick={() => updateSort("state")}
                         className="whitespace-nowrap font-semibold tracking-wide hover:text-[#0f2f4d] inline-flex items-center gap-1 transition-colors"
                       >
-                        State
+                        Status
                         {sortField === "state" && (
                           <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                         )}
@@ -2231,13 +2571,13 @@ export default function DevicesPage() {
                     </th>
                     ) : null}
                     {colPrefs.userQty ? (
-                    <th className="px-3 py-4 font-semibold">
+                    <th className="px-3 py-4 text-center font-semibold">
                       <button
                         type="button"
                         onClick={() => updateSort("userQty")}
                         className="whitespace-nowrap font-semibold tracking-wide hover:text-[#0f2f4d] inline-flex items-center gap-1 transition-colors"
                       >
-                        User Qty
+                        Users
                         {sortField === "userQty" && (
                           <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                         )}
@@ -2245,13 +2585,13 @@ export default function DevicesPage() {
                     </th>
                     ) : null}
                     {colPrefs.fpQty ? (
-                    <th className="px-3 py-4 font-semibold">
+                    <th className="px-3 py-4 text-center font-semibold">
                       <button
                         type="button"
                         onClick={() => updateSort("fpQty")}
                         className="whitespace-nowrap font-semibold tracking-wide hover:text-[#0f2f4d] inline-flex items-center gap-1 transition-colors"
                       >
-                        FP Qty
+                        Fingerprints
                         {sortField === "fpQty" && (
                           <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                         )}
@@ -2259,13 +2599,13 @@ export default function DevicesPage() {
                     </th>
                     ) : null}
                     {colPrefs.faceQty ? (
-                    <th className="px-3 py-4 font-semibold">
+                    <th className="px-3 py-4 text-center font-semibold">
                       <button
                         type="button"
                         onClick={() => updateSort("faceQty")}
                         className="whitespace-nowrap font-semibold tracking-wide hover:text-[#0f2f4d] inline-flex items-center gap-1 transition-colors"
                       >
-                        Face Qty
+                        Faces
                         {sortField === "faceQty" && (
                           <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                         )}
@@ -2273,13 +2613,13 @@ export default function DevicesPage() {
                     </th>
                     ) : null}
                     {colPrefs.palmQty ? (
-                    <th className="px-3 py-4 font-semibold">
+                    <th className="px-3 py-4 text-center font-semibold">
                       <button
                         type="button"
                         onClick={() => updateSort("palmQty")}
                         className="whitespace-nowrap font-semibold tracking-wide hover:text-[#0f2f4d] inline-flex items-center gap-1 transition-colors"
                       >
-                        Palm Qty
+                        Palms
                         {sortField === "palmQty" && (
                           <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                         )}
@@ -2287,13 +2627,13 @@ export default function DevicesPage() {
                     </th>
                     ) : null}
                     {colPrefs.transactionQty ? (
-                    <th className="px-3 py-4 font-semibold">
+                    <th className="px-3 py-4 text-center font-semibold">
                       <button
                         type="button"
                         onClick={() => updateSort("transactionQty")}
                         className="whitespace-nowrap font-semibold tracking-wide hover:text-[#0f2f4d] inline-flex items-center gap-1 transition-colors"
                       >
-                        Transaction Qty
+                        Punch Logs
                         {sortField === "transactionQty" && (
                           <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                         )}
@@ -2301,13 +2641,13 @@ export default function DevicesPage() {
                     </th>
                     ) : null}
                     {colPrefs.cmdQty ? (
-                    <th className="px-3 py-4 font-semibold">
+                    <th className="px-3 py-4 text-center font-semibold">
                       <button
                         type="button"
                         onClick={() => updateSort("cmdQty")}
                         className="whitespace-nowrap font-semibold tracking-wide hover:text-[#0f2f4d] inline-flex items-center gap-1 transition-colors"
                       >
-                        Cmd
+                        Commands
                         {sortField === "cmdQty" && (
                           <span className="ml-0.5 text-[10px]">{sortAsc ? "▲" : "▼"}</span>
                         )}
@@ -2323,7 +2663,7 @@ export default function DevicesPage() {
                       key={device.id}
                       onClick={() => setSelectedSerial(device.serialNumber)}
                       onContextMenu={(event) => onDeviceRightClick(event, device)}
-                      className={`cursor-pointer border-b border-[#e5effa] text-[#1e4162] last:border-b-0 ${selectedSerial === device.serialNumber ? "bg-[#fafdff]" : ""} ${selectedDeviceSerials.includes(device.serialNumber) ? "bg-[#f0f8ff]" : ""}`}
+                      className={`cursor-pointer border-b border-[#e5effa] text-[#1e4162] last:border-b-0 hover:bg-[#f6fbff] transition-colors ${selectedSerial === device.serialNumber ? "bg-[#f4faff]" : ""} ${selectedDeviceSerials.includes(device.serialNumber) ? "bg-[#eaf4fe]" : ""}`}
                     >
                       <td className="px-3 py-3">
                         <input
@@ -2334,41 +2674,91 @@ export default function DevicesPage() {
                           aria-label={`Select ${device.serialNumber}`}
                         />
                       </td>
-                      <td className="px-3 py-3">
-                        <button type="button" onClick={() => setSelectedSerial(device.serialNumber)} className="text-left hover:underline font-medium">
+                      <td className="whitespace-nowrap px-3 py-3">
+                        <button type="button" onClick={() => setSelectedSerial(device.serialNumber)} className="text-left hover:underline font-mono font-semibold text-[#0d3454]">
                           {device.serialNumber}
                         </button>
                       </td>
-                      <td className="px-3 py-3">{device.name || device.serialNumber}</td>
-                      {colPrefs.area ? <td className="px-3 py-3">{device.area || device.location || "None"}</td> : null}
-                      {colPrefs.department ? <td className="px-3 py-3">{device.department || "None"}</td> : null}
-                      {colPrefs.ipAddress ? <td className="px-3 py-3">{device.ipAddress || "None"}</td> : null}
-                      {colPrefs.model ? <td className="px-3 py-3">{device.model || "None"}</td> : null}
+                      <td className="whitespace-nowrap px-3 py-3 font-medium text-[#1e4162]">{device.name || device.serialNumber}</td>
+                      {colPrefs.area ? <td className="whitespace-nowrap px-3 py-3 text-slate-600">{device.area || device.location || "None"}</td> : null}
+                      {colPrefs.department ? <td className="whitespace-nowrap px-3 py-3 text-slate-600">{device.department || "None"}</td> : null}
+                      {colPrefs.ipAddress ? <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-[#285073]">{device.ipAddress || "None"}</td> : null}
+                      {colPrefs.model ? <td className="whitespace-nowrap px-3 py-3 text-slate-600">{device.model || "None"}</td> : null}
                       {colPrefs.state ? (
-                      <td className="px-3 py-3">
-                        <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${statusClass(device.state)}`}>{device.state}</span>
+                      <td className="whitespace-nowrap px-3 py-3">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase border ${
+                            device.isOnline
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-rose-50 text-rose-700 border-rose-200"
+                          }`}
+                          title={device.lastSeenUtc ? `Last seen: ${formatCalendarDateTime(device.lastSeenUtc, calendarType)}` : undefined}
+                        >
+                          <span className={`inline-block h-1.5 w-1.5 rounded-full mr-1.5 ${device.isOnline ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
+                          {device.state}
+                        </span>
                       </td>
                       ) : null}
                       {colPrefs.syncMode ? (
-                      <td className="px-3 py-3">
+                      <td className="whitespace-nowrap px-3 py-3">
                         <span
-                          className={`rounded-full px-3 py-1 text-[11px] font-semibold ${
+                          className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold border ${
                             device.isRegistrationDevice
-                              ? "bg-[#e7f6eb] text-[#1f6b36]"
-                              : "bg-[#f5f7fa] text-[#4a5f75]"
+                              ? "bg-[#e7f6eb] text-[#1f6b36] border-[#c4e8cb]"
+                              : "bg-[#f5f7fa] text-[#4a5f75] border-slate-200"
                           }`}
                         >
                           {syncModeLabel(device.isRegistrationDevice)}
                         </span>
                       </td>
                       ) : null}
-                      {colPrefs.lastActivity ? <td className="px-3 py-3">{formatCalendarDateTime(device.lastSeenUtc, calendarType, "None")}</td> : null}
-                      {colPrefs.userQty ? <td className="px-3 py-3">{device.userQty}</td> : null}
-                      {colPrefs.fpQty ? <td className="px-3 py-3">{device.fpQty}</td> : null}
-                      {colPrefs.faceQty ? <td className="px-3 py-3">{device.faceQty}</td> : null}
-                      {colPrefs.palmQty ? <td className="px-3 py-3">{device.palmQty}</td> : null}
-                      {colPrefs.transactionQty ? <td className="px-3 py-3">{device.transactionQty}</td> : null}
-                      {colPrefs.cmdQty ? <td className="px-3 py-3">{device.cmdQty > 0 ? device.cmdQty : "None"}</td> : null}
+                      {colPrefs.lastActivity ? (
+                        <td className="whitespace-nowrap px-3 py-3 font-mono text-[11.5px] text-slate-700">
+                          {formatCalendarDateTime(device.lastSeenUtc, calendarType, "None")}
+                        </td>
+                      ) : null}
+                      {colPrefs.userQty ? (
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          <span className="inline-flex min-w-[28px] items-center justify-center rounded-md bg-blue-50/80 px-2 py-0.5 font-semibold text-blue-700 border border-blue-200/50">
+                            {device.userQty}
+                          </span>
+                        </td>
+                      ) : null}
+                      {colPrefs.fpQty ? (
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          <span className="inline-flex min-w-[28px] items-center justify-center rounded-md bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">
+                            {device.fpQty}
+                          </span>
+                        </td>
+                      ) : null}
+                      {colPrefs.faceQty ? (
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          <span className="inline-flex min-w-[28px] items-center justify-center rounded-md bg-purple-50/80 px-2 py-0.5 font-semibold text-purple-700 border border-purple-200/50">
+                            {device.faceQty}
+                          </span>
+                        </td>
+                      ) : null}
+                      {colPrefs.palmQty ? (
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          <span className="inline-flex min-w-[28px] items-center justify-center rounded-md bg-amber-50/80 px-2 py-0.5 font-semibold text-amber-700 border border-amber-200/50">
+                            {device.palmQty}
+                          </span>
+                        </td>
+                      ) : null}
+                      {colPrefs.transactionQty ? (
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          <span className="inline-flex min-w-[36px] items-center justify-center rounded-md bg-emerald-50/80 px-2 py-0.5 font-semibold text-emerald-800 border border-emerald-200/50">
+                            {device.transactionQty.toLocaleString()}
+                          </span>
+                        </td>
+                      ) : null}
+                      {colPrefs.cmdQty ? (
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          <span className="inline-flex min-w-[28px] items-center justify-center rounded-md bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">
+                            {device.cmdQty > 0 ? device.cmdQty : "0"}
+                          </span>
+                        </td>
+                      ) : null}
                       <td className="px-3 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button
@@ -2493,22 +2883,90 @@ export default function DevicesPage() {
               </p>
             ) : null}
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               {commands.length === 0 ? <p className="text-sm text-[--muted-foreground]">Cmd: None</p> : null}
-              {commands.map((item) => (
-                <div key={item.id} className="rounded-lg border border-[--border] bg-[--muted] p-3 text-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="font-medium">{item.commandText}</p>
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${item.status === "pending" ? "badge-pending" : item.status === "sent" ? "badge-online" : "badge-offline"}`}>
-                      {item.status}
-                    </span>
+              {commands.map((item) => {
+                const parsed = item.replyText ? parseZkReply(item.replyText) : null;
+                const isExpanded = Boolean(expandedCommandIds[item.id]);
+                const isCopied = copiedCommandId === item.id;
+
+                return (
+                  <div key={item.id} className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-200">
+                          {item.commandText}
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          {formatCalendarDateTime(item.createdUtc, calendarType)} {item.sentUtc ? `| Sent: ${formatCalendarDateTime(item.sentUtc, calendarType, item.sentUtc)}` : ""}
+                        </span>
+                      </div>
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${
+                        item.status === "replied"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : item.status === "sent"
+                          ? "bg-blue-50 text-blue-700 border-blue-200"
+                          : "bg-amber-50 text-amber-700 border-amber-200"
+                      }`}>
+                        {item.status}
+                      </span>
+                    </div>
+
+                    {item.replyText ? (
+                      <div className="mt-2.5 space-y-2 border-t border-slate-100 pt-2.5">
+                        {parsed && parsed.isParsed && parsed.summary.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {parsed.summary.map((chip, idx) => (
+                              <span
+                                key={idx}
+                                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium ${
+                                  chip.highlight
+                                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                    : "bg-slate-100 text-slate-700 border border-slate-200"
+                                }`}
+                              >
+                                <span className="font-semibold text-slate-500">{chip.label}:</span>
+                                <span>{chip.value}</span>
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        <div className="flex items-center justify-between pt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => toggleCommandExpand(item.id)}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition"
+                          >
+                            <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} />
+                            <span>{isExpanded ? "Hide raw payload" : "View raw payload"}</span>
+                            {parsed && parsed.isParsed && !isExpanded ? (
+                              <span className="text-[10px] text-slate-400 font-normal">({parsed.totalPairs} parameters)</span>
+                            ) : null}
+                          </button>
+
+                          {isExpanded ? (
+                            <button
+                              type="button"
+                              onClick={() => void copyToClipboard(item.id, item.replyText || "")}
+                              className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50 transition"
+                            >
+                              {isCopied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3 text-slate-500" />}
+                              <span>{isCopied ? "Copied" : "Copy"}</span>
+                            </button>
+                          ) : null}
+                        </div>
+
+                        {isExpanded ? (
+                          <div className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-[11px] font-mono text-emerald-400 break-all leading-relaxed max-h-48 overflow-y-auto">
+                            {item.replyText}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
-                  <p className="mt-1 text-xs text-[--muted-foreground]">
-                    {formatCalendarDateTime(item.createdUtc, calendarType)} {item.sentUtc ? `| sent: ${formatCalendarDateTime(item.sentUtc, calendarType, item.sentUtc)}` : ""}
-                  </p>
-                  {item.replyText ? <p className="mt-1 text-xs text-[--muted-foreground]">reply: {item.replyText}</p> : null}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ) : null}
@@ -2896,14 +3354,14 @@ export default function DevicesPage() {
       ) : null}
 
       {deleteOpen ? (
-        <div className="fixed inset-0 z-40 grid place-items-center bg-black/35 p-4">
-          <div className="surface w-full max-w-md p-5 shadow-2xl">
-            <h2 className="mb-3 text-lg font-semibold">Delete Device</h2>
-            <p className="text-sm text-[--muted-foreground]">
-              Are you sure you want to delete <strong>{activeDevice?.serialNumber ?? "selected device"}</strong>?
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <h2 className="mb-2 text-lg font-bold text-slate-900">Delete Device</h2>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to delete <strong>{activeDevice?.serialNumber ?? "selected device"}</strong>? This action cannot be undone.
             </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setDeleteOpen(false)} className="rounded-lg border border-[--border] bg-[--card] px-4 py-2 text-sm">
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setDeleteOpen(false)} className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
                 Cancel
               </button>
               <button
@@ -2914,39 +3372,77 @@ export default function DevicesPage() {
                   }
                   setDeleteOpen(false);
                 }}
-                className="rounded-lg bg-[#aa3e3e] px-4 py-2 text-sm font-medium text-white"
+                className="rounded-lg bg-rose-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 shadow-xs transition"
               >
-                Delete
+                Delete Device
               </button>
             </div>
           </div>
         </div>
       ) : null}
 
-      {dataCleanOpen ? (
-        <div className="fixed inset-0 z-40 grid place-items-center bg-black/35 p-4">
-          <div className="surface w-full max-w-md p-5 shadow-2xl">
-            <h2 className="mb-3 text-lg font-semibold">Data Clean</h2>
-            <div className="space-y-2 text-sm">
-              <label className="flex items-center gap-2">
-                <input type="radio" checked={dataCleanMode === "attendance"} onChange={() => setDataCleanMode("attendance")} />
-                Clear Attendance Data
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="radio" checked={dataCleanMode === "captured-image"} onChange={() => setDataCleanMode("captured-image")} />
-                Clear Captured Image
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="radio" checked={dataCleanMode === "all"} onChange={() => setDataCleanMode("all")} />
-                Clear All Data
-              </label>
+      {dataCleanWarning ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-3.5">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-600">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-bold text-slate-900">
+                  {dataCleanWarning.mode === "attendance"
+                    ? "Warning: Clear Attendance Data"
+                    : dataCleanWarning.mode === "captured-image"
+                    ? "Warning: Clear Captured Images"
+                    : "CRITICAL: Clear All Device Data"}
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Target: <strong className="text-slate-800">{dataCleanWarning.deviceNames.join(", ")}</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={dataCleanSubmitting}
+                onClick={() => setDataCleanWarning(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setDataCleanOpen(false)} className="rounded-lg border border-[--border] bg-[--card] px-4 py-2 text-sm">
+
+            <div className="mt-4 rounded-xl border border-rose-100 bg-rose-50/70 p-3.5 text-xs text-rose-950 leading-relaxed">
+              {dataCleanWarning.mode === "attendance" ? (
+                <p>
+                  This will queue a hardware command (<code>CLEAR LOG</code>) to delete punch transactions from the device hardware memory to free up device flash storage. <strong>Your software database attendance history and payroll records will remain 100% safe and untouched.</strong>
+                </p>
+              ) : dataCleanWarning.mode === "captured-image" ? (
+                <p>
+                  This will queue a hardware command (<code>CLEAR PHOTO</code>) to delete captured face snapshot photos from the device hardware memory. <strong>Database attendance records remain 100% safe and untouched.</strong>
+                </p>
+              ) : (
+                <p>
+                  <strong>CRITICAL WARNING:</strong> This will queue a full reset command (<code>CLEAR DATA</code>) to wipe registered user profiles, fingerprint templates, and face templates from the physical device hardware. <strong>Your employee profiles, departments, and attendance history in the software database remain safe and untouched.</strong>
+                </p>
+              )}
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={dataCleanSubmitting}
+                onClick={() => setDataCleanWarning(null)}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+              >
                 Cancel
               </button>
-              <button type="button" onClick={() => void executeDataClean()} className="rounded-lg bg-[--primary] px-4 py-2 text-sm font-medium text-[--primary-foreground]">
-                Clean
+              <button
+                type="button"
+                disabled={dataCleanSubmitting}
+                onClick={() => void executeConfirmedDataClean()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 shadow-xs transition disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>{dataCleanSubmitting ? "Executing..." : "Confirm & Clear"}</span>
               </button>
             </div>
           </div>
@@ -2954,11 +3450,11 @@ export default function DevicesPage() {
       ) : null}
 
       {confirmState ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4">
-          <div className="surface w-full max-w-sm p-5 shadow-2xl">
-            <p className="text-sm">{confirmState.message}</p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setConfirmState(null)} className="rounded-lg border border-[--border] bg-[--card] px-4 py-2 text-sm">
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <p className="text-xs text-slate-700 leading-relaxed font-medium">{confirmState.message}</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setConfirmState(null)} className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
                 Cancel
               </button>
               <button
@@ -2968,7 +3464,7 @@ export default function DevicesPage() {
                   setConfirmState(null);
                   run();
                 }}
-                className={`rounded-lg px-4 py-2 text-sm font-medium ${confirmState.danger ? "bg-red-600 text-white hover:bg-red-700" : "bg-[--primary] text-[--primary-foreground]"}`}
+                className={`rounded-lg px-4 py-1.5 text-xs font-semibold shadow-xs transition ${confirmState.danger ? "bg-rose-600 text-white hover:bg-rose-700" : "bg-blue-600 text-white hover:bg-blue-700"}`}
               >
                 Confirm
               </button>
@@ -2978,20 +3474,20 @@ export default function DevicesPage() {
       ) : null}
 
       {clearPendingOpen ? (
-        <div className="fixed inset-0 z-40 grid place-items-center bg-black/35 p-4">
-          <div className="surface w-full max-w-md p-5 shadow-2xl">
-            <h2 className="mb-3 text-lg font-semibold">Clear Pending Command</h2>
-            <p className="text-sm text-[--muted-foreground]">
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <h2 className="mb-2 text-base font-bold text-slate-900">Clear Pending Commands</h2>
+            <p className="text-xs text-slate-600 leading-relaxed">
               {selectedDeviceSerials.length > 0
-                ? `Clear all pending commands for ${selectedDeviceSerials.length} selected device(s)?`
-                : "Clear all pending commands for selected device?"}
+                ? `Clear all queued pending commands for ${selectedDeviceSerials.length} selected device(s)?`
+                : "Clear all queued pending commands for the selected device?"}
             </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setClearPendingOpen(false)} className="rounded-lg border border-[--border] bg-[--card] px-4 py-2 text-sm">
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setClearPendingOpen(false)} className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
                 Cancel
               </button>
-              <button type="button" onClick={() => void executeClearPending()} className="rounded-lg bg-[--primary] px-4 py-2 text-sm font-medium text-[--primary-foreground]">
-                Clear
+              <button type="button" onClick={() => void executeClearPending()} className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 shadow-xs transition">
+                Clear Commands
               </button>
             </div>
           </div>
@@ -2999,16 +3495,28 @@ export default function DevicesPage() {
       ) : null}
 
       {commandQueueOpen ? (
-        <div className="fixed inset-0 z-40 grid place-items-center bg-black/35 p-4">
-          <div className="surface w-full max-w-2xl p-5 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Command Queue</h2>
-              <button type="button" onClick={() => setCommandQueueOpen(false)} className="rounded-md border border-[--border] p-1.5">
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <ListChecks className="h-5 w-5 text-blue-600" />
+                <h2 className="text-base font-bold text-slate-900">Command Queue & History</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCommandQueueOpen(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+              >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-              <select value={selectedSerial} onChange={(event) => setSelectedSerial(event.target.value)} className="rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm">
+
+            <div className="grid gap-2.5 md:grid-cols-[1fr_1fr_auto]">
+              <select
+                value={selectedSerial}
+                onChange={(event) => setSelectedSerial(event.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-600"
+              >
                 <option value="">Select device serial</option>
                 {devices.map((d) => (
                   <option key={d.id} value={d.serialNumber}>
@@ -3016,60 +3524,165 @@ export default function DevicesPage() {
                   </option>
                 ))}
               </select>
-              <input value={customCommand} onChange={(event) => setCustomCommand(event.target.value)} placeholder="Enter custom command" className="rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm" />
-              <button type="button" onClick={() => void sendCustomCommand()} className="inline-flex items-center justify-center gap-2 rounded-lg border border-[--border] bg-[--card] px-3 py-2 text-sm">
-                <Send className="h-4 w-4" />
+              <input
+                value={customCommand}
+                onChange={(event) => setCustomCommand(event.target.value)}
+                placeholder="Enter custom command (e.g. CHECK, INFO)"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-600"
+              />
+              <button
+                type="button"
+                onClick={() => void sendCustomCommand()}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition"
+              >
+                <Send className="h-3.5 w-3.5" />
                 Send
               </button>
             </div>
-            <div className="mt-4 max-h-[300px] space-y-2 overflow-auto rounded-lg border border-[--border] bg-[--muted] p-3">
-              {commands.length === 0 ? <p className="text-sm text-[--muted-foreground]">No command history.</p> : null}
-              {commands.map((item) => (
-                <div key={item.id} className="border-b border-[--border] pb-2 text-xs last:border-b-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">{item.commandText}</span>
-                    <span>{item.status}</span>
-                  </div>
-                  <div className="text-[--muted-foreground]">
-                    {formatCalendarDateTime(item.createdUtc, calendarType)} {item.replyText ? `| Return: ${item.replyText}` : ""}
-                  </div>
+
+            <div className="mt-4 max-h-[440px] space-y-3 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+              {commands.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-500">
+                  No command history found for this device.
                 </div>
-              ))}
+              ) : null}
+              {commands.map((item) => {
+                const parsed = item.replyText ? parseZkReply(item.replyText) : null;
+                const isExpanded = Boolean(expandedCommandIds[item.id]);
+                const isCopied = copiedCommandId === item.id;
+
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs transition hover:border-slate-300"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-200">
+                          {item.commandText}
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          {formatCalendarDateTime(item.createdUtc, calendarType)}
+                        </span>
+                      </div>
+                      <span
+                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${
+                          item.status === "replied"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : item.status === "sent"
+                            ? "bg-blue-50 text-blue-700 border-blue-200"
+                            : "bg-amber-50 text-amber-700 border-amber-200"
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                    </div>
+
+                    {item.replyText ? (
+                      <div className="mt-2.5 space-y-2 border-t border-slate-100 pt-2.5">
+                        {parsed && parsed.isParsed && parsed.summary.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {parsed.summary.map((chip, idx) => (
+                              <span
+                                key={idx}
+                                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium ${
+                                  chip.highlight
+                                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                    : "bg-slate-100 text-slate-700 border border-slate-200"
+                                }`}
+                              >
+                                <span className="font-semibold text-slate-500">{chip.label}:</span>
+                                <span>{chip.value}</span>
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        <div className="flex items-center justify-between pt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => toggleCommandExpand(item.id)}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition"
+                          >
+                            <ChevronDown
+                              className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                                isExpanded ? "rotate-180" : ""
+                              }`}
+                            />
+                            <span>{isExpanded ? "Hide raw payload" : "View raw payload"}</span>
+                            {parsed && parsed.isParsed && !isExpanded ? (
+                              <span className="text-[10px] text-slate-400 font-normal">
+                                ({parsed.totalPairs} parameters)
+                              </span>
+                            ) : null}
+                          </button>
+
+                          {isExpanded ? (
+                            <button
+                              type="button"
+                              onClick={() => void copyToClipboard(item.id, item.replyText || "")}
+                              className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50 transition"
+                            >
+                              {isCopied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3 text-slate-500" />}
+                              <span>{isCopied ? "Copied" : "Copy"}</span>
+                            </button>
+                          ) : null}
+                        </div>
+
+                        {isExpanded ? (
+                          <div className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-[11px] font-mono text-emerald-400 break-all leading-relaxed max-h-48 overflow-y-auto">
+                            {item.replyText}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-[11px] text-slate-400 italic">Awaiting device response...</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
       ) : null}
 
       {editOpen && editDevice ? (
-        <div className="fixed inset-0 z-40 grid place-items-center bg-black/35 p-4">
-          <div className="surface w-full max-w-lg p-5 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Edit Device</h2>
-              <button type="button" onClick={() => setEditOpen(false)} className="rounded-md border border-[--border] p-1.5">
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl overflow-hidden text-slate-900">
+            <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Wrench className="h-5 w-5 text-blue-600" />
+                <h2 className="text-base font-bold text-slate-900">Edit Device</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditOpen(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+              >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3.5 md:grid-cols-2">
               <label className="space-y-1">
-                <span className="text-xs font-medium text-[--muted-foreground]">Device Name</span>
+                <span className="text-xs font-semibold text-slate-700">Device Name</span>
                 <input
                   value={editDevice.name}
                   onChange={(event) => setEditDevice((prev) => (prev ? { ...prev, name: event.target.value } : prev))}
                   placeholder="Device Name"
-                  className="w-full rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
                 />
               </label>
               <label className="space-y-1">
-                <span className="text-xs font-medium text-[--muted-foreground]">Serial Number</span>
+                <span className="text-xs font-semibold text-slate-700">Serial Number</span>
                 <input
                   value={editDevice.serialNumber}
                   readOnly
-                  className="w-full rounded-lg border border-[--input] bg-[--muted] px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-mono text-slate-600 cursor-not-allowed"
                 />
               </label>
               <label className="space-y-1">
-                <span className="text-xs font-medium text-[--muted-foreground]">Area</span>
+                <span className="text-xs font-semibold text-slate-700">Area</span>
                 <select
                   value={editDevice.areaCode}
                   onChange={(event) => {
@@ -3077,7 +3690,7 @@ export default function DevicesPage() {
                     const departmentCode = pickDefaultDepartmentCode(areaCode, departmentOptions);
                     setEditDevice((prev) => (prev ? { ...prev, areaCode, departmentCode } : prev));
                   }}
-                  className="w-full rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600"
                 >
                   {areaOptions.map((a) => (
                     <option key={a.id} value={a.code}>
@@ -3087,20 +3700,20 @@ export default function DevicesPage() {
                 </select>
               </label>
               <label className="space-y-1">
-                <span className="text-xs font-medium text-[--muted-foreground]">Device IP</span>
+                <span className="text-xs font-semibold text-slate-700">Device IP</span>
                 <input
                   value={editDevice.ipAddress}
                   onChange={(event) => setEditDevice((prev) => (prev ? { ...prev, ipAddress: event.target.value } : prev))}
                   placeholder="Device IP"
-                  className="w-full rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono text-slate-900 outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
                 />
               </label>
               <label className="space-y-1 md:col-span-2">
-                <span className="text-xs font-medium text-[--muted-foreground]">Department</span>
+                <span className="text-xs font-semibold text-slate-700">Department</span>
                 <select
                   value={editDevice.departmentCode}
                   onChange={(event) => setEditDevice((prev) => (prev ? { ...prev, departmentCode: event.target.value } : prev))}
-                  className="w-full rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600"
                 >
                   {(departmentOptions.filter((d) => d.areaCode === editDevice.areaCode).length === 0 ? departmentOptions : departmentOptions.filter((d) => d.areaCode === editDevice.areaCode)).map((d) => (
                     <option key={d.id} value={d.code}>
@@ -3110,40 +3723,41 @@ export default function DevicesPage() {
                 </select>
               </label>
               <label className="space-y-1 md:col-span-2">
-                <span className="text-xs font-medium text-[--muted-foreground]">Registration Device</span>
+                <span className="text-xs font-semibold text-slate-700">Registration Device</span>
                 <select
                   value={editDevice.registrationDevice ? "yes" : "no"}
                   onChange={(event) => setEditDevice((prev) => (prev ? { ...prev, registrationDevice: event.target.value === "yes" } : prev))}
-                  className="w-full rounded-lg border border-[--input] bg-[--card] px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600"
                 >
                   <option value="yes">Registration Device: Yes</option>
                   <option value="no">Registration Device: No</option>
                 </select>
               </label>
               <label className="space-y-1 md:col-span-2">
-                <span className="text-xs font-medium text-[--muted-foreground]">Device Model</span>
+                <span className="text-xs font-semibold text-slate-700">Device Model</span>
                 <input
                   value={editDevice.model}
                   readOnly
                   placeholder="Device Model"
-                  className="w-full rounded-lg border border-[--input] bg-[--muted] px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 cursor-not-allowed"
                 />
               </label>
             </div>
 
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <button type="button" onClick={() => void queuePreset(editDevice.serialNumber, "clear-data")} className="inline-flex items-center gap-1 rounded-lg border border-[--border] bg-[--card] px-3 py-2 text-sm">
-                <Wrench className="h-4 w-4" />
-                Data Clean
+            <div className="mt-6 flex items-center justify-end gap-2.5 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={() => setEditOpen(false)}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+              >
+                Cancel
               </button>
-              <button type="button" onClick={() => void triggerFetchAllData(editDevice.serialNumber, true)} className="rounded-lg border border-[--border] bg-[--card] px-3 py-2 text-sm">
-                Fetch All
-              </button>
-              <button type="button" onClick={() => void clearPending(editDevice.serialNumber)} className="rounded-lg border border-[--border] bg-[--card] px-3 py-2 text-sm">
-                Clear Pending Command
-              </button>
-              <button type="button" onClick={() => void submitEditDevice()} className="rounded-lg bg-[--primary] px-3 py-2 text-sm font-medium text-[--primary-foreground]">
-                Save
+              <button
+                type="button"
+                onClick={() => void submitEditDevice()}
+                className="rounded-lg bg-blue-600 px-5 py-2 text-xs font-semibold text-white hover:bg-blue-700 shadow-xs transition"
+              >
+                Save Changes
               </button>
             </div>
           </div>
