@@ -189,6 +189,11 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/E.Attendance.Web/E.Attendance.Web.c
   echo -e "${BLUE}[INFO] Detected local repository source at ${SCRIPT_DIR}...${NC}"
   BUILD_SRC="$SCRIPT_DIR"
   CLEANUP_BUILD_SRC=false
+  if [ -d "$SCRIPT_DIR/.git" ]; then
+    echo -e "${BLUE}[INFO] Resetting local repository to latest commit from origin/${BRANCH}...${NC}"
+    git -C "$SCRIPT_DIR" fetch origin "$BRANCH" 2>/dev/null || true
+    git -C "$SCRIPT_DIR" reset --hard "origin/$BRANCH" 2>/dev/null || true
+  fi
 else
   BUILD_SRC="/tmp/apan-hajiri-build"
   CLEANUP_BUILD_SRC=true
@@ -219,6 +224,12 @@ else
   fi
 fi
 
+echo -e "${BLUE}[INFO] Cleaning build cache (bin/obj)...${NC}"
+rm -rf "$BUILD_SRC/E.Attendance.Web/bin" "$BUILD_SRC/E.Attendance.Web/obj"
+rm -rf "$BUILD_SRC/E.Attendance.Core/bin" "$BUILD_SRC/E.Attendance.Core/obj"
+rm -rf "$BUILD_SRC/E.Attendance.Data/bin" "$BUILD_SRC/E.Attendance.Data/obj"
+rm -rf "$BUILD_SRC/E.Attendance.Services/bin" "$BUILD_SRC/E.Attendance.Services/obj"
+
 echo -e "${BLUE}[INFO] Building Next.js static frontend...${NC}"
 cd "$BUILD_SRC/e-attendance-next"
 npm install --silent
@@ -229,13 +240,12 @@ mkdir -p "$BUILD_SRC/E.Attendance.Web/wwwroot"
 rm -rf "$BUILD_SRC/E.Attendance.Web/wwwroot/*"
 cp -r "$BUILD_SRC/e-attendance-next/out/"* "$BUILD_SRC/E.Attendance.Web/wwwroot/"
 
-echo -e "${BLUE}[INFO] Publishing ASP.NET backend for Linux x64...${NC}"
+echo -e "${BLUE}[INFO] Publishing ASP.NET backend for Linux...${NC}"
 cd "$BUILD_SRC"
 mkdir -p "$INSTALL_DIR"
 
 dotnet publish "$BUILD_SRC/E.Attendance.Web/E.Attendance.Web.csproj" \
   -c Release \
-  -r linux-x64 \
   --self-contained false \
   -o "$INSTALL_DIR"
 
