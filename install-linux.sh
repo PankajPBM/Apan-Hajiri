@@ -78,9 +78,14 @@ install_debian_deps() {
     ufw \
     tar
 
-  # Install Node.js (v20 LTS) if not installed
-  if ! command -v node >/dev/null 2>&1; then
-    echo -e "${BLUE}[INFO] Installing Node.js 20 LTS for frontend build...${NC}"
+  # Ensure Node.js >= 20 LTS is installed (Next.js requires >= 20.9.0)
+  NODE_MAJOR=0
+  if command -v node >/dev/null 2>&1; then
+    NODE_MAJOR=$(node -v 2>/dev/null | tr -d 'v' | cut -d'.' -f1 || echo 0)
+  fi
+
+  if [ "$NODE_MAJOR" -lt 20 ]; then
+    echo -e "${BLUE}[INFO] Node.js 20+ required (detected v${NODE_MAJOR:-none}). Upgrading to Node.js 20 LTS...${NC}"
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg --yes
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
@@ -111,7 +116,13 @@ install_rhel_deps() {
   systemctl enable postgresql
   systemctl start postgresql
 
-  if ! command -v node >/dev/null 2>&1; then
+  NODE_MAJOR=0
+  if command -v node >/dev/null 2>&1; then
+    NODE_MAJOR=$(node -v 2>/dev/null | tr -d 'v' | cut -d'.' -f1 || echo 0)
+  fi
+
+  if [ "$NODE_MAJOR" -lt 20 ]; then
+    dnf module reset -y nodejs || true
     dnf module enable -y nodejs:20 || true
     dnf install -y nodejs
   fi
