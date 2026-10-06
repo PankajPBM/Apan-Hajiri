@@ -24,6 +24,20 @@ To release a new version: run `.\bump-version.ps1 <version>`, rebuild (Release),
 installer, and add an entry below. Or run `.\build-installer.ps1 -Version <version>` to bump,
 build Release, and compile the installer in one flow.
 
+## [1.1.16] - 2026-10-06
+
+Reports table layout & styling enhancements, branding rename to Apan Hajiri, print page fix, and clickable contact links.
+
+### Added
+- **Branding Update (Apan Hajiri):** Renamed system tray context menu, application titles, shortcuts, and taskbar jump lists to "Apan Hajiri".
+- **Reports Vertical Dividing Lines:** Added distinct vertical column dividing borders across all report categories for enhanced tabular legibility.
+- **Reports Color Coding:** Synchronized color highlights across Check In / Check Out (Sky Blue), Late In / Early Out (Amber), and Holidays / Off-days (Rose) in data grid, PDF export, and browser print view.
+- **Reports Category Default:** Set "Monthly Check In/Check Out" as the default preselected category on initial page load and filter resets.
+- **Topbar Contact Icons:** Replaced text website and WhatsApp links with interactive icon buttons in the "About System" user profile dropdown.
+
+### Fixed
+- **Reports Print Blank Pages:** Eliminated extra blank pages between employee report summaries and at the end of the printed document.
+
 ## [1.1.15] - 2026-09-26
 
 Database backup path resolution fix, Settings page enhancements, and device port conflict prevention.

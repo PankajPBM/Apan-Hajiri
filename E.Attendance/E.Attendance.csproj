@@ -23,9 +23,9 @@
     <RollForward>LatestMinor</RollForward>
     <!-- Ship only English satellite resources (no cs/de/fr/ja/... waste folders) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <Version>1.1.15</Version>
-    <FileVersion>1.1.15.0</FileVersion>
-    <AssemblyVersion>1.1.15.0</AssemblyVersion>
+    <Version>1.1.16</Version>
+    <FileVersion>1.1.16.0</FileVersion>
+    <AssemblyVersion>1.1.16.0</AssemblyVersion>
     <Company>PB Tech Zone</Company>
     <Authors>PB Tech Zone</Authors>
     <AssemblyTitle>Apan Hajiri</AssemblyTitle>

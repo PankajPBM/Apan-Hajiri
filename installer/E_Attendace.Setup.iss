@@ -1,6 +1,6 @@
 #define MyAppId "{{AF12B76A-7F83-4F7F-8CA6-8C32A67D39C1}"
 #define MyAppName "Apan Hajiri"
-#define MyAppVersion "1.1.15"
+#define MyAppVersion "1.1.16"
 #define MyAppPublisher "PB Tech Zone"
 #define MyAppPublisherPhone "+9779814891277"
 #define MyAppPublisherEmail "pbtechzone77@gmail.com"
