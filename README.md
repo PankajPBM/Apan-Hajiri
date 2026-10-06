@@ -42,17 +42,30 @@ Release builds and installer packaging are done in Visual Studio.
 
 ## Linux Installation (One-Command Setup)
 
-On any fresh Ubuntu, Debian, or RHEL-based Linux server, run:
+### Option A: Private Repo (One-Line with GitHub Token)
+
+Generate a Personal Access Token (PAT) with `repo` scope on GitHub, then run:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/PankajPBM/Apan-Hajiri/main/install-linux.sh | sudo bash
+GITHUB_TOKEN="ghp_your_token_here"
+curl -sSL -H "Authorization: token $GITHUB_TOKEN" \
+  https://raw.githubusercontent.com/PankajPBM/Apan-Hajiri/main/install-linux.sh \
+  | sudo GITHUB_TOKEN="$GITHUB_TOKEN" bash
 ```
 
-This single command automatically:
-1. Installs PostgreSQL, .NET 10, and dependencies
-2. Creates the `E_Attendace` database and credentials
+### Option B: Clone First, Then Run Installer
+
+```bash
+git clone https://github.com/PankajPBM/Apan-Hajiri.git
+cd Apan-Hajiri
+sudo ./install-linux.sh
+```
+
+This automatically:
+1. Installs PostgreSQL, .NET 10, Node.js, and dependencies
+2. Creates the `E_Attendace` database and seeds default admin credentials (`admin` / `PB@TechZone`)
 3. Builds and installs Apan Hajiri to `/opt/apan-hajiri`
-4. Configures and starts the `apan-hajiri` systemd service
+4. Configures and enables the `apan-hajiri` systemd service (auto-starts on boot)
 5. Configures firewall rules for Web UI (port 8081) and ZKTeco biometric sync (port 4370)
 
 ## Requirements

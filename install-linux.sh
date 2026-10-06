@@ -3,12 +3,13 @@
 # Apan Hajiri - Automated Linux Installer
 # GitHub: https://github.com/PankajPBM/Apan-Hajiri
 #
-# Usage:
-#   curl -sSL https://raw.githubusercontent.com/PankajPBM/Apan-Hajiri/main/install-linux.sh | sudo bash
+# Usage for Private Repo:
+#   GITHUB_TOKEN=your_pat curl -sSL -H "Authorization: token your_pat" \
+#     https://raw.githubusercontent.com/PankajPBM/Apan-Hajiri/main/install-linux.sh | sudo -E bash
 #
-# Custom parameters:
-#   HTTP_PORT=8081 DB_PASSWORD=MyPassword curl -sSL ... | sudo bash
-# ==============================================================================
+# Usage from cloned repo:
+#   git clone https://github.com/PankajPBM/Apan-Hajiri.git
+#   cd Apan-Hajiri && sudo ./install-linux.sh
 
 set -euo pipefail
 
@@ -168,37 +169,69 @@ if [ -f "$PG_HBA" ]; then
 fi
 
 # ------------------------------------------------------------------------------
-# [4/7] Clone repository and build application
+# [4/7] Clone repository and build application (Supports Private & Public Repos)
 # ------------------------------------------------------------------------------
 echo -e "${BLUE}[4/7] Fetching source code and building Apan Hajiri...${NC}"
-BUILD_TMP="/tmp/apan-hajiri-build"
-rm -rf "$BUILD_TMP"
-mkdir -p "$BUILD_TMP"
 
-git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$BUILD_TMP"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/E.Attendance.Web/E.Attendance.Web.csproj" ]; then
+  echo -e "${BLUE}[INFO] Detected local repository source at ${SCRIPT_DIR}...${NC}"
+  BUILD_SRC="$SCRIPT_DIR"
+  CLEANUP_BUILD_SRC=false
+else
+  BUILD_SRC="/tmp/apan-hajiri-build"
+  CLEANUP_BUILD_SRC=true
+  rm -rf "$BUILD_SRC"
+  mkdir -p "$BUILD_SRC"
+
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    CLONE_URL="https://${GITHUB_TOKEN}@github.com/PankajPBM/Apan-Hajiri.git"
+  else
+    CLONE_URL="$REPO_URL"
+  fi
+
+  echo -e "${BLUE}[INFO] Cloning repository...${NC}"
+  if ! git clone --depth 1 --branch "$BRANCH" "$CLONE_URL" "$BUILD_SRC" 2>/tmp/git_clone.err; then
+    echo -e "${YELLOW}[NOTICE] Direct clone failed — repository is private.${NC}"
+    if [ -t 0 ] && [ -z "${GITHUB_TOKEN:-}" ]; then
+      read -r -p "Enter GitHub Personal Access Token (PAT): " GITHUB_TOKEN || true
+      if [ -n "${GITHUB_TOKEN:-}" ]; then
+        CLONE_URL="https://${GITHUB_TOKEN}@github.com/PankajPBM/Apan-Hajiri.git"
+        git clone --depth 1 --branch "$BRANCH" "$CLONE_URL" "$BUILD_SRC"
+      fi
+    else
+      echo -e "${RED}[ERROR] Could not clone private repository.${NC}"
+      echo "Pass your token using: GITHUB_TOKEN=your_token curl -sSL ... | sudo -E bash"
+      cat /tmp/git_clone.err || true
+      exit 1
+    fi
+  fi
+fi
 
 echo -e "${BLUE}[INFO] Building Next.js static frontend...${NC}"
-cd "$BUILD_TMP/e-attendance-next"
+cd "$BUILD_SRC/e-attendance-next"
 npm install --silent
 npm run build
 
 echo -e "${BLUE}[INFO] Syncing frontend export to backend wwwroot...${NC}"
-mkdir -p "$BUILD_TMP/E.Attendance.Web/wwwroot"
-rm -rf "$BUILD_TMP/E.Attendance.Web/wwwroot/*"
-cp -r "$BUILD_TMP/e-attendance-next/out/"* "$BUILD_TMP/E.Attendance.Web/wwwroot/"
+mkdir -p "$BUILD_SRC/E.Attendance.Web/wwwroot"
+rm -rf "$BUILD_SRC/E.Attendance.Web/wwwroot/*"
+cp -r "$BUILD_SRC/e-attendance-next/out/"* "$BUILD_SRC/E.Attendance.Web/wwwroot/"
 
 echo -e "${BLUE}[INFO] Publishing ASP.NET backend for Linux x64...${NC}"
-cd "$BUILD_TMP"
+cd "$BUILD_SRC"
 mkdir -p "$INSTALL_DIR"
 
-dotnet publish "$BUILD_TMP/E.Attendance.Web/E.Attendance.Web.csproj" \
+dotnet publish "$BUILD_SRC/E.Attendance.Web/E.Attendance.Web.csproj" \
   -c Release \
   -r linux-x64 \
   --self-contained false \
   -o "$INSTALL_DIR"
 
-# Clean temporary build files
-rm -rf "$BUILD_TMP"
+# Clean temporary build files if cloned
+if [ "$CLEANUP_BUILD_SRC" = true ]; then
+  rm -rf "$BUILD_SRC" /tmp/git_clone.err 2>/dev/null || true
+fi
 
 # ------------------------------------------------------------------------------
 # [5/7] Configure appsettings.json
