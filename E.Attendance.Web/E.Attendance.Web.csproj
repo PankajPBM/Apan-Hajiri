@@ -28,7 +28,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon Condition="'$(OS)' == 'Windows_NT'">..\icon\E_Att.ico</ApplicationIcon>
-    <FrontendExportDir>..\e-attendance-next\out</FrontendExportDir>
+    <FrontendExportDir>../e-attendance-next/out</FrontendExportDir>
     <!-- Ship only English satellite resources (no cs/de/fr/ja/... waste folders) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <Version>1.1.16</Version>
@@ -54,9 +54,9 @@
     </Content>
   </ItemGroup>
 
-  <Target Name="BuildFrontendBeforeCompile" BeforeTargets="BeforeBuild">
+  <Target Name="BuildFrontendBeforeCompile" BeforeTargets="BeforeBuild" Condition="'$(SkipFrontendBuild)' != 'true'">
     <Message Importance="High" Text="[Frontend Build] Installing dependencies and building Next.js static export..." />
-    <Exec Command="npm install &amp;&amp; npm run build" WorkingDirectory="$(MSBuildProjectDirectory)\..\e-attendance-next" ConsoleToMSBuild="true" />
+    <Exec Command="npm install &amp;&amp; npm run build" WorkingDirectory="$(MSBuildProjectDirectory)/../e-attendance-next" ConsoleToMSBuild="true" />
   </Target>
 
   <Target Name="SyncBundledFrontend" AfterTargets="Build;Publish" Condition="Exists('$(MSBuildProjectDirectory)\$(FrontendExportDir)\index.html')">
