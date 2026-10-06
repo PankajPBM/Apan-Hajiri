@@ -20294,3 +20294,5 @@ internal static class ProgramHelpers
             nextAssignments));
     }
 }
+
+public partial class Program { }
