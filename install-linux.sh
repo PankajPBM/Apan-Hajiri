@@ -241,10 +241,27 @@ fi
 chown -R apan-hajiri:apan-hajiri "$INSTALL_DIR"
 chmod +x "$INSTALL_DIR/E.Attendance.Web"
 
+# Ensure schema and initial admin account exist in PostgreSQL
+sudo -u postgres psql -d "${DB_NAME}" <<EOSQL || true
+CREATE SCHEMA IF NOT EXISTS "${DB_NAME}";
+CREATE TABLE IF NOT EXISTS "${DB_NAME}"."auth_users" (
+  "Id" SERIAL PRIMARY KEY,
+  "UserName" VARCHAR(50) UNIQUE NOT NULL,
+  "PasswordHash" VARCHAR(64) NOT NULL,
+  "FullName" VARCHAR(100),
+  "Role" VARCHAR(50) DEFAULT 'Admin',
+  "Status" VARCHAR(20) DEFAULT 'active',
+  "FeatureAccessJson" TEXT DEFAULT '{}'
+);
+INSERT INTO "${DB_NAME}"."auth_users" ("UserName", "PasswordHash", "FullName", "Role", "Status", "FeatureAccessJson")
+VALUES ('admin', md5('PB@TechZone'), 'Admin User', 'Admin', 'active', '{}')
+ON CONFLICT ("UserName") DO NOTHING;
+EOSQL
+
 # ------------------------------------------------------------------------------
-# [6/7] Create and Start systemd Service
+# [6/7] Create and Start systemd Service (Auto-run on boot & auto-restart)
 # ------------------------------------------------------------------------------
-echo -e "${BLUE}[6/7] Creating systemd service unit...${NC}"
+echo -e "${BLUE}[6/7] Creating and enabling systemd auto-start service...${NC}"
 cat <<EOF > "/etc/systemd/system/${SERVICE_NAME}.service"
 [Unit]
 Description=Apan Hajiri Web & Biometric Service
@@ -252,11 +269,11 @@ After=network.target postgresql.service
 Wants=postgresql.service
 
 [Service]
-Type=notify
+Type=simple
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=${INSTALL_DIR}/E.Attendance.Web
 Restart=always
-RestartSec=10
+RestartSec=5
 KillSignal=SIGINT
 SyslogIdentifier=apan-hajiri
 User=apan-hajiri
@@ -292,7 +309,7 @@ echo "======================================================================"
 echo -e "${NC}"
 echo -e "${BOLD}Access the Web Application:${NC}"
 echo -e "  URL:             ${CYAN}http://${SERVER_IP}:${HTTP_PORT}${NC}"
-echo -e "  Default Login:   ${YELLOW}admin${NC} / ${YELLOW}admin123${NC}"
+echo -e "  Default Login:   ${YELLOW}admin${NC} / ${YELLOW}PB@TechZone${NC}"
 echo ""
 echo -e "${BOLD}Database Connection Details:${NC}"
 echo -e "  Database:        ${DB_NAME}"
