@@ -40,6 +40,21 @@ npm run build
 
 Release builds and installer packaging are done in Visual Studio.
 
+## Linux Installation (One-Command Setup)
+
+On any fresh Ubuntu, Debian, or RHEL-based Linux server, run:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/PankajPBM/Apan-Hajiri/main/install-linux.sh | sudo bash
+```
+
+This single command automatically:
+1. Installs PostgreSQL, .NET 10, and dependencies
+2. Creates the `E_Attendace` database and credentials
+3. Builds and installs Apan Hajiri to `/opt/apan-hajiri`
+4. Configures and starts the `apan-hajiri` systemd service
+5. Configures firewall rules for Web UI (port 8081) and ZKTeco biometric sync (port 4370)
+
 ## Requirements
 
 - .NET 10 SDK

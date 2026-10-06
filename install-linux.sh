@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Apan Hajiri - Automated Linux Installer
+# GitHub: https://github.com/PankajPBM/Apan-Hajiri
+#
+# Usage:
+#   curl -sSL https://raw.githubusercontent.com/PankajPBM/Apan-Hajiri/main/install-linux.sh | sudo bash
+#
+# Custom parameters:
+#   HTTP_PORT=8081 DB_PASSWORD=MyPassword curl -sSL ... | sudo bash
+# ==============================================================================
+
+set -euo pipefail
+
+# Visual colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+INSTALL_DIR="/opt/apan-hajiri"
+SERVICE_NAME="apan-hajiri"
+DB_NAME="E_Attendace"
+DB_USER="E_Attendace"
+DB_PORT="${DB_PORT:-5432}"
+HTTP_PORT="${HTTP_PORT:-8081}"
+REPO_URL="https://github.com/PankajPBM/Apan-Hajiri.git"
+BRANCH="${BRANCH:-main}"
+
+# Generate random secure password if not provided
+if [ -z "${DB_PASSWORD:-}" ]; then
+  DB_PASSWORD="AH_$(tr -dc A-Za-z0-9 </dev/urandom 2>/dev/null | head -c 16 || openssl rand -hex 8)"
+fi
+
+echo -e "${CYAN}${BOLD}"
+echo "======================================================================"
+echo "          Apan Hajiri - Automated Linux Installer (v1.1.16)           "
+echo "======================================================================"
+echo -e "${NC}"
+
+# Check for root privilege
+if [ "$EUID" -ne 0 ]; then
+  echo -e "${RED}[ERROR] Please run this script as root or with sudo:${NC}"
+  echo "  curl -sSL https://raw.githubusercontent.com/PankajPBM/Apan-Hajiri/main/install-linux.sh | sudo bash"
+  exit 1
+fi
+
+# Detect OS
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  OS_ID=$ID
+  OS_VERSION_ID=${VERSION_ID:-}
+else
+  echo -e "${RED}[ERROR] Unsupported Linux distribution. Could not find /etc/os-release.${NC}"
+  exit 1
+fi
+
+echo -e "${BLUE}[1/7] Detected OS:${NC} ${PRETTY_NAME:-$OS_ID}"
+
+# Function: Install dependencies on Debian/Ubuntu
+install_debian_deps() {
+  export DEBIAN_FRONTEND=noninteractive
+  echo -e "${BLUE}[2/7] Updating package index and installing base dependencies...${NC}"
+  apt-get update -y
+  apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    git \
+    gnupg \
+    ca-certificates \
+    lsb-release \
+    postgresql \
+    postgresql-contrib \
+    ufw \
+    tar
+
+  # Install Node.js (v20 LTS) if not installed
+  if ! command -v node >/dev/null 2>&1; then
+    echo -e "${BLUE}[INFO] Installing Node.js 20 LTS for frontend build...${NC}"
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg --yes
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
+    apt-get update -y
+    apt-get install -y nodejs
+  fi
+
+  # Install .NET SDK 10 / ASP.NET Core
+  if ! command -v dotnet >/dev/null 2>&1; then
+    echo -e "${BLUE}[INFO] Installing Microsoft .NET via dotnet-install.sh...${NC}"
+    wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+    chmod +x /tmp/dotnet-install.sh
+    /tmp/dotnet-install.sh --channel 10.0 --install-dir /usr/share/dotnet
+    ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+    rm -f /tmp/dotnet-install.sh
+  fi
+}
+
+# Function: Install dependencies on RHEL/Fedora/Rocky/AlmaLinux
+install_rhel_deps() {
+  echo -e "${BLUE}[2/7] Installing base dependencies on RHEL/CentOS/Rocky...${NC}"
+  dnf install -y curl wget git tar postgresql-server postgresql-contrib
+
+  # Init Postgres if not initialized
+  if [ ! -f /var/lib/pgsql/data/PG_VERSION ]; then
+    postgresql-setup --initdb || true
+  fi
+  systemctl enable postgresql
+  systemctl start postgresql
+
+  if ! command -v node >/dev/null 2>&1; then
+    dnf module enable -y nodejs:20 || true
+    dnf install -y nodejs
+  fi
+
+  if ! command -v dotnet >/dev/null 2>&1; then
+    wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+    chmod +x /tmp/dotnet-install.sh
+    /tmp/dotnet-install.sh --channel 10.0 --install-dir /usr/share/dotnet
+    ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+    rm -f /tmp/dotnet-install.sh
+  fi
+}
+
+case "$OS_ID" in
+  ubuntu|debian|raspbian)
+    install_debian_deps
+    ;;
+  centos|rhel|rocky|almalinux|fedora)
+    install_rhel_deps
+    ;;
+  *)
+    echo -e "${YELLOW}[WARN] Unknown distribution '$OS_ID'. Attempting Debian-style setup...${NC}"
+    install_debian_deps
+    ;;
+esac
+
+# ------------------------------------------------------------------------------
+# [3/7] Configure PostgreSQL Database
+# ------------------------------------------------------------------------------
+echo -e "${BLUE}[3/7] Setting up PostgreSQL database '${DB_NAME}'...${NC}"
+systemctl enable postgresql
+systemctl start postgresql
+
+# Create database user and database if not existing
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
+  sudo -u postgres psql -c "CREATE USER \"${DB_USER}\" WITH PASSWORD '${DB_PASSWORD}';"
+
+# Always update password to match configured DB_PASSWORD
+sudo -u postgres psql -c "ALTER USER \"${DB_USER}\" WITH PASSWORD '${DB_PASSWORD}';"
+
+# Create database owned by user
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
+  sudo -u postgres psql -c "CREATE DATABASE \"${DB_NAME}\" OWNER \"${DB_USER}\";"
+
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE \"${DB_NAME}\" TO \"${DB_USER}\";"
+
+# Ensure PostgreSQL allows local md5/scram password connections
+PG_HBA=$(sudo -u postgres psql -t -P format=unaligned -c "SHOW hba_file;")
+if [ -f "$PG_HBA" ]; then
+  if ! grep -q "E_Attendace" "$PG_HBA"; then
+    echo "host    E_Attendace     E_Attendace     127.0.0.1/32            scram-sha-256" >> "$PG_HBA"
+    echo "host    E_Attendace     E_Attendace     ::1/128                 scram-sha-256" >> "$PG_HBA"
+    systemctl reload postgresql || true
+  fi
+fi
+
+# ------------------------------------------------------------------------------
+# [4/7] Clone repository and build application
+# ------------------------------------------------------------------------------
+echo -e "${BLUE}[4/7] Fetching source code and building Apan Hajiri...${NC}"
+BUILD_TMP="/tmp/apan-hajiri-build"
+rm -rf "$BUILD_TMP"
+mkdir -p "$BUILD_TMP"
+
+git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$BUILD_TMP"
+
+echo -e "${BLUE}[INFO] Building Next.js static frontend...${NC}"
+cd "$BUILD_TMP/e-attendance-next"
+npm install --silent
+npm run build
+
+echo -e "${BLUE}[INFO] Syncing frontend export to backend wwwroot...${NC}"
+mkdir -p "$BUILD_TMP/E.Attendance.Web/wwwroot"
+rm -rf "$BUILD_TMP/E.Attendance.Web/wwwroot/*"
+cp -r "$BUILD_TMP/e-attendance-next/out/"* "$BUILD_TMP/E.Attendance.Web/wwwroot/"
+
+echo -e "${BLUE}[INFO] Publishing ASP.NET backend for Linux x64...${NC}"
+cd "$BUILD_TMP"
+mkdir -p "$INSTALL_DIR"
+
+dotnet publish "$BUILD_TMP/E.Attendance.Web/E.Attendance.Web.csproj" \
+  -c Release \
+  -r linux-x64 \
+  --self-contained false \
+  -o "$INSTALL_DIR"
+
+# Clean temporary build files
+rm -rf "$BUILD_TMP"
+
+# ------------------------------------------------------------------------------
+# [5/7] Configure appsettings.json
+# ------------------------------------------------------------------------------
+echo -e "${BLUE}[5/7] Configuring application settings...${NC}"
+cat <<EOF > "$INSTALL_DIR/appsettings.json"
+{
+  "ConnectionStrings": {
+    "PostgreSQLConnection": "Host=127.0.0.1;Port=${DB_PORT};Database=${DB_NAME};Username=${DB_USER};Password=${DB_PASSWORD};Search Path=${DB_NAME};Include Error Detail=True;Maximum Pool Size=100;Connection Lifetime=300"
+  },
+  "DatabaseSettings": {
+    "UsePostgreSql": true,
+    "ServiceName": "postgresql",
+    "CommandTimeout": 30,
+    "MaxRetryCount": 3
+  },
+  "Kestrel": {
+    "Endpoints": {
+      "Http": {
+        "Url": "http://0.0.0.0:${HTTP_PORT}"
+      }
+    }
+  },
+  "DeviceSettings": {
+    "DefaultTimeZone": "+5:45",
+    "SyncIntervalSeconds": 60,
+    "CommandQueueBatchSize": 10,
+    "PollDelaySeconds": 10,
+    "AllowUnknownEmployeeAutoCreate": false
+  },
+  "AllowedHosts": "*"
+}
+EOF
+
+# Create dedicated service user if not exists
+if ! id -u apan-hajiri >/dev/null 2>&1; then
+  useradd --system --no-create-home --shell /usr/sbin/nologin apan-hajiri || true
+fi
+
+chown -R apan-hajiri:apan-hajiri "$INSTALL_DIR"
+chmod +x "$INSTALL_DIR/E.Attendance.Web"
+
+# ------------------------------------------------------------------------------
+# [6/7] Create and Start systemd Service
+# ------------------------------------------------------------------------------
+echo -e "${BLUE}[6/7] Creating systemd service unit...${NC}"
+cat <<EOF > "/etc/systemd/system/${SERVICE_NAME}.service"
+[Unit]
+Description=Apan Hajiri Web & Biometric Service
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=notify
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${INSTALL_DIR}/E.Attendance.Web
+Restart=always
+RestartSec=10
+KillSignal=SIGINT
+SyslogIdentifier=apan-hajiri
+User=apan-hajiri
+Group=apan-hajiri
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable "${SERVICE_NAME}"
+systemctl restart "${SERVICE_NAME}"
+
+# ------------------------------------------------------------------------------
+# [7/7] Firewall Configuration
+# ------------------------------------------------------------------------------
+echo -e "${BLUE}[7/7] Configuring firewall rules...${NC}"
+if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+  ufw allow "${HTTP_PORT}/tcp" comment "Apan Hajiri Web & API"
+  ufw allow 4370/udp comment "ZKTeco UDP Standalone"
+  echo -e "${GREEN}[INFO] Allowed port ${HTTP_PORT}/tcp and 4370/udp in UFW firewall.${NC}"
+fi
+
+# Detect Server IP
+SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+
+echo -e "\n${GREEN}${BOLD}"
+echo "======================================================================"
+echo "          Apan Hajiri Installation Successfully Completed!            "
+echo "======================================================================"
+echo -e "${NC}"
+echo -e "${BOLD}Access the Web Application:${NC}"
+echo -e "  URL:             ${CYAN}http://${SERVER_IP}:${HTTP_PORT}${NC}"
+echo -e "  Default Login:   ${YELLOW}admin${NC} / ${YELLOW}admin123${NC}"
+echo ""
+echo -e "${BOLD}Database Connection Details:${NC}"
+echo -e "  Database:        ${DB_NAME}"
+echo -e "  User:            ${DB_USER}"
+echo -e "  Password:        ${DB_PASSWORD}"
+echo -e "  Port:            ${DB_PORT}"
+echo ""
+echo -e "${BOLD}Service Management Commands:${NC}"
+echo -e "  Check status:    ${CYAN}sudo systemctl status ${SERVICE_NAME}${NC}"
+echo -e "  Restart service: ${CYAN}sudo systemctl restart ${SERVICE_NAME}${NC}"
+echo -e "  View logs:       ${CYAN}sudo journalctl -u ${SERVICE_NAME} -f${NC}"
+echo -e "  Config file:     ${CYAN}${INSTALL_DIR}/appsettings.json${NC}"
+echo ""
+echo -e "${GREEN}All tables will be automatically created on first startup.${NC}"
+echo "======================================================================"
