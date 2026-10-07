@@ -19148,6 +19148,12 @@ static int ParseOptionInt(IReadOnlyDictionary<string, string> map, params string
 
 static string ResolveContentRootPath()
 {
+    if (File.Exists(Path.Combine(AppContext.BaseDirectory, "appsettings.json")) ||
+        Directory.Exists(Path.Combine(AppContext.BaseDirectory, "wwwroot")))
+    {
+        return AppContext.BaseDirectory;
+    }
+
     var candidates = new List<string>();
 
     void AddCandidate(string? path)
