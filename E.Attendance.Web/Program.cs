@@ -9376,8 +9376,8 @@ static string ResolvePostgresConnectionString(string configuredConnectionString)
 
     var host = string.IsNullOrWhiteSpace(configured.Host) ? "127.0.0.1" : configured.Host;
     
-    // User requested strict adherence to port 1277.
-    var configuredPort = 1277;
+    // Respect configured port if specified (e.g. 5432 on Linux), otherwise default to 1277.
+    var configuredPort = configured.Port > 0 ? configured.Port : 1277;
     
     configured.Host = host;
     configured.Port = configuredPort;
