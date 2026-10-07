@@ -45,10 +45,19 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 builder.Host.UseWindowsService();
 builder.Services.AddControllers();
 
-var appDataRoot = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-    "E_Attendance");
-Directory.CreateDirectory(appDataRoot);
+string appDataRoot;
+try
+{
+    appDataRoot = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "E_Attendance");
+    Directory.CreateDirectory(appDataRoot);
+}
+catch
+{
+    appDataRoot = Path.Combine(AppContext.BaseDirectory, "Data");
+    Directory.CreateDirectory(appDataRoot);
+}
 
 // Self-contained JWT signing key: generated once per install and persisted alongside the
 // license data, so tokens survive app restarts but a fresh install/service reinstall starts clean.

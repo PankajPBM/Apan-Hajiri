@@ -381,7 +381,7 @@ Wants=postgresql.service
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${INSTALL_DIR}/E.Attendance.Web
+ExecStart=/usr/bin/dotnet ${INSTALL_DIR}/E.Attendance.Web.dll --contentRoot ${INSTALL_DIR}
 Restart=always
 RestartSec=5
 KillSignal=SIGINT
@@ -389,6 +389,8 @@ SyslogIdentifier=apan-hajiri
 User=apan-hajiri
 Group=apan-hajiri
 Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=DOTNET_ROOT=/usr/share/dotnet
+Environment=PATH=/usr/share/dotnet:/usr/bin:/bin
 Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
 
 [Install]
