@@ -27,7 +27,8 @@ SERVICE_NAME="apan-hajiri"
 DB_NAME="E_Attendace"
 DB_USER="E_Attendace"
 DB_PORT="${DB_PORT:-5432}"
-HTTP_PORT="${HTTP_PORT:-8081}"
+WEB_PORT="${WEB_PORT:-8001}"
+API_PORT="${API_PORT:-8081}"
 REPO_URL="https://github.com/PankajPBM/Apan-Hajiri.git"
 BRANCH="${BRANCH:-main}"
 
@@ -312,8 +313,11 @@ cat <<EOF > "$INSTALL_DIR/appsettings.json"
   },
   "Kestrel": {
     "Endpoints": {
-      "Http": {
-        "Url": "http://0.0.0.0:${HTTP_PORT}"
+      "WebUI": {
+        "Url": "http://0.0.0.0:${WEB_PORT}"
+      },
+      "Api": {
+        "Url": "http://0.0.0.0:${API_PORT}"
       }
     }
   },
@@ -327,6 +331,17 @@ cat <<EOF > "$INSTALL_DIR/appsettings.json"
   "AllowedHosts": "*"
 }
 EOF
+
+# Ensure runtime websettings.json exists in system common app data
+APPDATA_DIR="/usr/share/E_Attendance"
+mkdir -p "$APPDATA_DIR"
+cat <<EOF > "$APPDATA_DIR/websettings.json"
+{
+  "Port": ${API_PORT},
+  "FrontendPort": ${WEB_PORT}
+}
+EOF
+chown -R apan-hajiri:apan-hajiri "$APPDATA_DIR" 2>/dev/null || true
 
 # Create dedicated service user if not exists
 if ! id -u apan-hajiri >/dev/null 2>&1; then
@@ -389,9 +404,10 @@ systemctl restart "${SERVICE_NAME}"
 # ------------------------------------------------------------------------------
 echo -e "${BLUE}[7/7] Configuring firewall rules...${NC}"
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-  ufw allow "${HTTP_PORT}/tcp" comment "Apan Hajiri Web & API"
+  ufw allow "${WEB_PORT}/tcp" comment "Apan Hajiri Web UI"
+  ufw allow "${API_PORT}/tcp" comment "Apan Hajiri API & ADMS"
   ufw allow 4370/udp comment "ZKTeco UDP Standalone"
-  echo -e "${GREEN}[INFO] Allowed port ${HTTP_PORT}/tcp and 4370/udp in UFW firewall.${NC}"
+  echo -e "${GREEN}[INFO] Allowed ports ${WEB_PORT}/tcp, ${API_PORT}/tcp, and 4370/udp in UFW firewall.${NC}"
 fi
 
 # Detect Server IP
@@ -402,8 +418,9 @@ echo "======================================================================"
 echo "          Apan Hajiri Installation Successfully Completed!            "
 echo "======================================================================"
 echo -e "${NC}"
-echo -e "${BOLD}Access the Web Application:${NC}"
-echo -e "  URL:             ${CYAN}http://${SERVER_IP}:${HTTP_PORT}${NC}"
+echo -e "${BOLD}Access Points:${NC}"
+echo -e "  Web Application: ${CYAN}http://${SERVER_IP}:${WEB_PORT}${NC}"
+echo -e "  API & Devices:   ${CYAN}http://${SERVER_IP}:${API_PORT}${NC}"
 echo -e "  Default Login:   ${YELLOW}admin${NC} / ${YELLOW}PB@TechZone${NC}"
 echo ""
 echo -e "${BOLD}Database Connection Details:${NC}"
